@@ -40,7 +40,8 @@ const DELTA_MIN = 100;                // 两态 vs 单态对数似然比下限
 const LAMBDA_RATIO_MIN = 8;           // 学不出对比度 = 屏幕数据不足以支撑结论
 const NIGHT_MIN_BINS = 12;            // 逐夜时长 ∈ [3h, 14h]
 const NIGHT_MAX_BINS = 56;
-const NIGHT_DEV_BINS = 10;            // 逐夜偏离本人中位 ≤ 2.5h
+const NIGHT_DEV_BINS = 10;            // 逐夜就寝偏离本人中位 ≤ 2.5h（就寝信号弱，紧）
+const NIGHT_WAKE_DEV_BINS = 14;       // 逐夜起床偏离本人中位 ≤ 3.5h（起床信号强，且用户此刻在场）
 const RECENTRE_MAX_BINS = 12;         // 中位数重估偏离先验 > 3h = 作息可疑（防自我强化）
 const MAX_ITERS = 12;
 
@@ -310,47 +311,49 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   }
 
   // ── 4) 逐夜闸门：时长 [3,14]h + 偏离本人中位 ≤ 2.5h（§5.2/§5.3）──
-  const nightOk = (a: Assign): boolean => {
+  // ── 5) 目标夜选择（第 28 轮重设计：数据驱动，不按钟点卡）──
+  // 此前的门是"ob ≥ 习惯起床 −1h"——按钟点卡：起床 07:00 的用户 5:30–6:00
+  // 打开 App 会被判"可能还在睡"直接拒绝且不回退，早晨永远没有卡片。
+  // 新规则：用户此刻正拿着手机打开 App，"已经醒了"就是最硬的行为证据——
+  // 只要当前窗里存在一段【已结束的、形态可信的】睡眠段就提议它。
+  // "还在睡"的保护不靠钟点：凌晨打开时，拟合出的起床时刻会落在观测末端、
+  // 偏离本人中位 >3.5h，被下面的起床偏离闸门拒绝。
+  const targetOk = (a: Assign): boolean => {
     const dur = a.ta - a.ts;
     if (dur < NIGHT_MIN_BINS || dur > NIGHT_MAX_BINS) return false;
-    return Math.abs(a.ts - medTs) <= NIGHT_DEV_BINS && Math.abs(a.ta - medTa) <= NIGHT_DEV_BINS;
+    if (Math.abs(a.ts - medTs) > NIGHT_DEV_BINS) return false;      // 就寝侧紧（信号弱）
+    if (Math.abs(a.ta - medTa) > NIGHT_WAKE_DEV_BINS) return false; // 起床侧松（信号强+在场）
+    return true;
   };
 
-  // ── 5) 目标夜选择 ──
-  // 当前窗（窗 0）观测已到习惯起床 → 目标就是它（早晨打开的主场景）；
-  // 否则：还在"今晚就寝之前"（同一日历日且未到就寝时刻）→ 目标改取最近一个
-  // 【完整】窗（傍晚打开，提议昨夜——与旧启发式行为对齐）；
-  // 已过就寝（深夜/凌晨在睡）→ 拒绝，绝不把"前晚"当"昨晚"
-  const targetDay0 = days[0];
-  const wakeReached = targetDay0.ob >= cw0 - 4 || targetDay0.ob >= medTa - 4;
-  let targetIdx = 0;
-  if (!wakeReached) {
-    const nowD = new Date(now);
-    const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
-    const wsD = new Date(windowStart0);
-    const sameCalDay = nowD.getFullYear() === wsD.getFullYear()
-      && nowD.getMonth() === wsD.getMonth() && nowD.getDate() === wsD.getDate();
-    const bedClockMin = (cb0 * 15 + wsMin) % 1440;
-    if (!(sameCalDay && nowMin < bedClockMin)) {
-      return { status: 'rejected', reason: '观测未到习惯起床时刻（可能还在睡）' };
+  let targetIdx = -1;
+  {
+    const d0 = days[0];
+    const a0Idx = activeIdx.indexOf(0);
+    if (a0Idx >= 0 && d0.totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a0Idx])) {
+      targetIdx = 0;   // 早晨主场景：昨晚就落在当前窗
+    } else {
+      // 当前窗不构成完整夜：若还在"今晚就寝之前"（同一日历日且未到就寝时刻），
+      // 改用最近一个【完整】窗（傍晚打开，提议昨夜——与旧启发式行为对齐）；
+      // 深夜/凌晨打开（真还在睡）→ 拒绝，绝不把"前晚"当"昨晚"
+      const nowD = new Date(now);
+      const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+      const wsD = new Date(windowStart0);
+      const sameCalDay = nowD.getFullYear() === wsD.getFullYear()
+        && nowD.getMonth() === wsD.getMonth() && nowD.getDate() === wsD.getDate();
+      const bedClockMin = (cb0 * 15 + wsMin) % 1440;
+      const a1Idx = activeIdx.indexOf(1);
+      if (sameCalDay && nowMin < bedClockMin && days[1].ob === BINS
+          && a1Idx >= 0 && days[1].totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a1Idx])) {
+        targetIdx = 1;
+      }
     }
-    if (days[1].ob !== BINS) {
-      return { status: 'rejected', reason: '上一窗不完整且当前窗未到起床' };
-    }
-    targetIdx = 1;
+  }
+  if (targetIdx < 0) {
+    return { status: 'rejected', reason: '未检测到已结束的睡眠段（可能还在睡，或作息数据不足）' };
   }
   const targetDay = days[targetIdx];
-  const targetActiveIdx = activeIdx.indexOf(targetIdx);
-  if (targetActiveIdx < 0) {
-    return { status: 'rejected', reason: '目标夜没有亮屏事件' };
-  }
-  const target = assigns[targetActiveIdx];
-  if (targetDay.totalK < TARGET_MIN_EVENTS) {
-    return { status: 'rejected', reason: '目标夜几乎没有亮屏事件' };
-  }
-  if (!nightOk(target)) {
-    return { status: 'rejected', reason: '目标夜时长/偏离超出可信范围' };
-  }
+  const target = assigns[activeIdx.indexOf(targetIdx)];
 
   const bedtimeMs = windowStart0 - targetIdx * 86400000 + target.ts * BIN_MS;
   const wakeMs = windowStart0 - targetIdx * 86400000 + target.ta * BIN_MS;

@@ -106,18 +106,25 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   );
   const proposal = modelResult.phase === 'failed' ? heuristicProposal : modelResult.proposal;
 
+  // 提议只在"需要的时候"在场（第 28 轮）：醒来后 12 小时内有效，过后自动隐去
+  //（昨晚的提议挂到晚上就变成干扰）；次日由新的目标夜重新产生。
+  // 交互（确认/改一下/忽略）即刻隐去（handledDate）——两套机制互补
+  const PROPOSAL_FRESH_MS = 12 * 3600000;
+  const visibleProposal =
+    proposal && Date.now() - proposal.wakeMs <= PROPOSAL_FRESH_MS ? proposal : null;
+
   const markHandled = () => {
-    if (!proposal) return;
-    try { localStorage.setItem('somnacare_proposal_handled', proposal.targetDate); } catch { /* ignore */ }
-    setHandledDate(proposal.targetDate);
+    if (!visibleProposal) return;
+    try { localStorage.setItem('somnacare_proposal_handled', visibleProposal.targetDate); } catch { /* ignore */ }
+    setHandledDate(visibleProposal.targetDate);
   };
 
   // 确认：用共享构建器落库（recordSource: 'usage'），完成小结与一键就寝同款
   const handleAcceptProposal = () => {
-    if (!proposal) return;
+    if (!visibleProposal) return;
     const built = buildRecordFromWindow({
-      sleepStartMs: proposal.bedtimeMs,
-      wakeMs: proposal.wakeMs,
+      sleepStartMs: visibleProposal.bedtimeMs,
+      wakeMs: visibleProposal.wakeMs,
       targetDurationHours,
       id: `usage-${Date.now()}`,
       recordSource: 'usage',
@@ -131,11 +138,11 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   };
 
   const handleEditProposal = () => {
-    if (!proposal) return;
+    if (!visibleProposal) return;
     onOpenManualLogPrefilled?.({
-      date: proposal.targetDate,
-      bedtime: proposal.bedtime,
-      wakeTime: proposal.wakeTime,
+      date: visibleProposal.targetDate,
+      bedtime: visibleProposal.bedtime,
+      wakeTime: visibleProposal.wakeTime,
     });
     markHandled();
   };
@@ -209,7 +216,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   return (
     <>
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-lg transition-all relative overflow-hidden`}>
-        {!sleepStartTime && proposal ? (
+        {!sleepStartTime && visibleProposal ? (
           /* ── 提议态：昨晚手机使用 → 待确认（P3）。确认 = 1 次点击 ── */
           <div className="space-y-3.5">
             <div className="flex items-center justify-between">
@@ -225,14 +232,14 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
             </div>
 
             <div className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-4 flex items-center justify-between gap-2`}>
-              <span className="text-sm font-black font-mono text-white">{proposal.bedtime} 放下</span>
+              <span className="text-sm font-black font-mono text-white">{visibleProposal.bedtime} 放下</span>
               <span className={`${theme.accentText} font-black`}>→</span>
-              <span className="text-sm font-black font-mono text-white">{proposal.wakeTime} 拿起</span>
+              <span className="text-sm font-black font-mono text-white">{visibleProposal.wakeTime} 拿起</span>
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-slate-300 px-1">
-              <span>约 {formatDurationChinese(proposal.windowMinutes)}</span>
-              {proposal.nightPickups > 0 && <span>夜间拿起手机 {proposal.nightPickups} 次</span>}
+              <span>约 {formatDurationChinese(visibleProposal.windowMinutes)}</span>
+              {visibleProposal.nightPickups > 0 && <span>睡眠中亮屏 {visibleProposal.nightPickups} 次</span>}
             </div>
 
             <button

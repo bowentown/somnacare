@@ -182,6 +182,21 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   check('A8 作息漂移：提议的是最近一晚（01:30），不是历史作息',
     r8 !== null && circularDiff(minutesOf(r8.bedtime), 90) <= 75 && circularDiff(minutesOf(r8.bedtime), 23 * 60) > 75,
     r8 ? `${r8.bedtime}/${r8.wakeTime}` : '');
+
+  // A9 早起早晨回归（第 28 轮，用户实测缺陷）：习惯起床 07:00，最近一晚
+  // 05:20 就醒了，05:30 打开 App → 必须提议（旧版"ob ≥ 习惯起床−1h"钟点门
+  // 会拒掉 5:30–6:00 的打开且不回退——早晨永远没有卡片）
+  const r9 = ok(runNight({ now: atTime(5, 30), seed: 89, lastNightWakeMin: 5 * 60 + 20 }));
+  check('A9 早起 05:30 打开：必须提议昨晚',
+    r9 !== null && circularDiff(minutesOf(r9.wakeTime), 5 * 60 + 20) <= 60,
+    r9 ? `${r9.bedtime}/${r9.wakeTime}` : '');
+
+  // A10 短夜（00:00–05:00，起床偏离中位 2h）：05:30 打开 → 仍要提议
+  // （起床侧闸门放宽到 3.5h 的原因——短夜是真实作息，不是拟合错误）
+  const r10 = ok(runNight({ now: atTime(5, 30), seed: 90, lastNightBedMin: 0, lastNightWakeMin: 5 * 60 }));
+  check('A10 短夜 00:00–05:00：05:30 打开仍提议',
+    r10 !== null && circularDiff(minutesOf(r10.bedtime), 0) <= 60 && circularDiff(minutesOf(r10.wakeTime), 5 * 60) <= 60,
+    r10 ? `${r10.bedtime}/${r10.wakeTime}` : '');
 }
 
 // ── B 组：应拒绝（且不回退旧算法）──
