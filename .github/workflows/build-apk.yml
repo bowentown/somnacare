@@ -68,6 +68,10 @@ jobs:
 
       - name: Verify Generated CSS Classes
         run: npm run verify:css
+      - name: Runtime smoke tests (Playwright)
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
       - name: Install Capacitor CLI / Core / Android (pinned major)
         run: |
           # 三个运行时插件（local-notifications/filesystem/share）已在 package.json

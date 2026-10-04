@@ -19,6 +19,7 @@ import {
   Plus,
   Trash2,
   X,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { SleepRecord, SleepAnalysisResult, ChatMessage, UserProfile } from '../types/sleep';
 import { generateLocalClinicalAnalysis, generateLocalChatReply, classifyIntent, generatePersonalInsights, PersonalInsight } from '../utils/clinicalSleepEngine';
@@ -136,6 +137,17 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
 
   // ── 会话管理（第 25 轮）──
   const [showSessions, setShowSessions] = useState(false);
+  // 聊天卡收起/展开（第 36 轮，用户要求）：收起后变一小栏（标题+最新消息预览），
+  // 洞察卡等上方内容回到视野；偏好持久化
+  const [chatCollapsed, setChatCollapsed] = useState(() => {
+    try { return localStorage.getItem('somnacare_chat_collapsed') === '1'; } catch { return false; }
+  });
+  const toggleChatCollapsed = () => {
+    setChatCollapsed((v) => {
+      try { localStorage.setItem('somnacare_chat_collapsed', v ? '0' : '1'); } catch { /* ignore */ }
+      return !v;
+    });
+  };
   const sessionsA11y = useModalA11y(showSessions, () => setShowSessions(false), '会话列表');
 
   const handleNewSession = () => {
@@ -752,7 +764,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       </div>
 
       {/* 2. Interactive AI Consultation Chat */}
-      <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} flex flex-col h-[560px]`}>
+      <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} flex flex-col ${chatCollapsed ? 'h-auto' : 'h-[560px]'}`}>
         {/* 会话栏：点标题开列表（切换/删除），右侧新建。
             此前整段对话挤在一张卡里无法整理——多会话 + 抽屉管理 */}
         <div className="flex items-center justify-between pb-2.5 border-b border-slate-700/50 shrink-0">
@@ -766,16 +778,51 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             <span className="text-xs font-bold text-white truncate max-w-[190px]">{activeSession?.title ?? '新对话'}</span>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 group-hover:text-white transition-colors" />
           </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleNewSession}
+              aria-label="开始新对话"
+              className={`p-2 rounded-xl ${theme.cardInnerBg} border ${theme.cardInnerBorder} ${theme.accentText} hover:opacity-80 transition-all cursor-pointer`}
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleChatCollapsed}
+              aria-label={chatCollapsed ? '展开聊天卡片' : '收起聊天卡片'}
+              className={`p-2 rounded-xl ${theme.cardInnerBg} border ${theme.cardInnerBorder} ${theme.accentText} hover:opacity-80 transition-all cursor-pointer`}
+            >
+              <ChevronsUpDown className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        {chatCollapsed && (
           <button
             type="button"
-            onClick={handleNewSession}
-            aria-label="开始新对话"
-            className={`p-2 rounded-xl ${theme.cardInnerBg} border ${theme.cardInnerBorder} ${theme.accentText} hover:opacity-80 transition-all cursor-pointer shrink-0`}
+            onClick={toggleChatCollapsed}
+            aria-label="展开聊天卡片查看对话"
+            className="flex items-center gap-2 py-2.5 text-left cursor-pointer min-w-0"
           >
-            <Plus className="w-4 h-4" />
+            {(() => {
+              const last = chatMessages[chatMessages.length - 1];
+              if (!last) {
+                return <span className={`text-[11px] ${theme.textMuted}`}>暂无消息 · 点按展开对话</span>;
+              }
+              return (
+                <>
+                  <span className={`text-[9px] font-black shrink-0 ${last.role === 'user' ? theme.accentText : 'text-emerald-300'}`}>
+                    {last.role === 'user' ? '我' : '鱼'}
+                  </span>
+                  <span className="text-[11px] text-slate-300 truncate">{stripMd(last.content).replace(/\s+/g, ' ').slice(0, 60)}</span>
+                </>
+              );
+            })()}
           </button>
-        </div>
+        )}
 
+        {!chatCollapsed && (
+        <>
         {/* 消息流：嵌套纵向滚动容器。
             swipe-nested 让浏览器不再为它单独做滚动方向判定，横滑立刻透给分区轨道
             （否则内层容器的滚动仲裁会延迟 pointer 事件，真机上表现为"框内滑不动"）。*/}
@@ -886,6 +933,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             <Send className="w-4 h-4" />
           </button>
         </div>
+        </>
+        )}
       </div>
 
       {/* 会话列表抽屉：切换 / 删除 / 清空。portal 到 body——外层滑动容器

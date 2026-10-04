@@ -306,7 +306,11 @@ html {
    overscroll-behavior 防止纵向滚到边界后把余量冒泡给外层分区滚动。 */
 .swipe-nested {
   touch-action: pan-y;
-  overscroll-behavior: contain;
+  /* 第 36 轮：contain 曾切断到外层分区的滚动链——消息列表滑到边界后
+     手指继续滑，分区纹丝不动，聊天输入框永远拉不进视野（用户实测）。
+     改回 auto：列表内部滑动浏览记录不变；到顶/到底边界后余量自然
+     冒泡给分区，把输入框带进视野。pan-y 保留（横滑仍直达轨道）。 */
+  overscroll-behavior: auto;
 }
 
 /* ===== 旧 WebView 兼容：渐变去 oklab 插值 =====
