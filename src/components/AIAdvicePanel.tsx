@@ -43,6 +43,7 @@ import {
   sessionTimeLabel,
 } from '../utils/chatStore';
 import { MomentsOverlay } from './MomentsOverlay';
+import { fetchJsonWithTimeout } from '../utils/fetchJson';
 
 // 输出契约：固定追加在 persona 尾部、随 system 一起走前缀缓存（恒定段，
 // 不破坏 DeepSeek 前缀缓存）。篇幅约束同时压输出成本——输出是最贵的一项
@@ -222,18 +223,6 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   const severityBorder = (sev: PersonalInsight['severity']) =>
     sev === 'good' ? 'border-emerald-500/40' : sev === 'warn' ? 'border-amber-500/40' : 'border-indigo-500/40';
 
-  // /api 请求超时熔断：网络挂起时 12s 后走本地兜底（此前 fetch 无超时，
-  // 环境异常时聊天会永远没有回复）
-  const fetchWithTimeout = async (url: string, options: RequestInit, ms = 12000) => {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ms);
-    try {
-      return await fetch(url, { ...options, signal: ctrl.signal });
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
   // 云端引擎注入的个人数据上下文（让云端回答引用真实数字）
   const personalCtx = useMemo(() => {
     const recent = nightsOnly(records).slice(0, 7);
@@ -313,7 +302,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     }
 
     try {
-      const response = await fetchWithTimeout('/api/sleep/analyze', {
+      // fetchJsonWithTimeout：body 读取也在超时保护内（此前只保护到响应头，
+      // 移动网络中途卡住时 json() 永不 settle → 转圈永不停止）
+      const response = await fetchJsonWithTimeout('/api/sleep/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -321,13 +312,13 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
           userProfile,
           aiConfig: userProfile.aiConfig,
         }),
-      }, 30000);   // 非流式长回复：12s 会白付（服务端已跑完、结果被丢弃）
+      }, 30000);
 
-      if (!response.ok) {
+      if (!response.ok || !response.data) {
         throw new Error('API unavailable');
       }
 
-      const data = await response.json();
+      const data = response.data;
       setAnalysis(data);
       // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
       try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
@@ -520,14 +511,19 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
         // 前缀段，不破坏前缀缓存
 
         // 直连也走超时熔断：此前裸 fetch 挂起时 isSendingChat 永远为 true 且无停止入口
-        const dsRes = await fetchWithTimeout(endpoint, {
+        // 模型名与 server 端 normalizeDeepSeekModel 同口径：文档推荐名直发
+        //（此前客户端残留 flash→chat 反向映射，UI 与实际请求/计费无法对账）
+        const wireModel = isCustom
+          ? modelToUse
+          : modelToUse === 'deepseek-pro' ? 'deepseek-v4-pro' : modelToUse;
+        const ds = await fetchJsonWithTimeout(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${isCustom ? cfg.customApiKey : cfg.deepseekApiKey}`,
           },
           body: JSON.stringify({
-            model: isCustom ? modelToUse : modelToUse === 'deepseek-flash' ? 'deepseek-chat' : modelToUse === 'deepseek-pro' ? 'deepseek-reasoner' : modelToUse,
+            model: wireModel,
             // 成本三件套：
             // ① system 只放恒定 persona+输出契约——易变数据放 system（前缀第 0 段）会
             //    让每次记一晚睡眠就作废全部历史缓存（cache miss 曾占 73%）
@@ -546,8 +542,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
           }),
         }, 30000);
 
-        if (dsRes.ok) {
-          const dsData = await dsRes.json();
+        if (ds.ok && ds.data) {
+          const dsData = ds.data;
           // 用量常开（DEV 与生产一致）：token 数与实际模型是对账单的唯一证据
           if (dsData.usage) {
             const u = dsData.usage;
@@ -577,7 +573,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       }
 
       // 3. Fallback to app server proxy
-      const response = await fetchWithTimeout('/api/sleep/chat', {
+      const response = await fetchJsonWithTimeout('/api/sleep/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -589,11 +585,11 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
         }),
       }, 30000);
 
-      if (!response.ok) {
+      if (!response.ok || !response.data) {
         throw new Error('Chat API network error');
       }
 
-      const data = await response.json();
+      const data = response.data;
       if (data.provider) {
         setActiveProviderName(data.provider);
       }

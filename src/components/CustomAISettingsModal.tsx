@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { fetchJsonWithTimeout } from '../utils/fetchJson';
 import {
   Cpu,
   CheckCircle2,
@@ -156,19 +157,21 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
       const cleanUrl = baseUrl.replace(/\/+$/, '');
       const modelsEndpoint = cleanUrl.endsWith('/v1') ? `${cleanUrl}/models` : `${cleanUrl}/v1/models`;
 
-      const res = await fetch(modelsEndpoint, {
+      // 15s 超时：填了一个挂起的地址（打错端口/内网地址）时此前永久转圈
+      const r = await fetchJsonWithTimeout(modelsEndpoint, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-      });
+      }, 15000);
 
-      if (!res.ok) {
-        throw new Error(`端点响应 HTTP ${res.status}`);
+      if (!r.ok) {
+        throw new Error(`端点响应 HTTP ${r.status}`);
       }
 
-      const data = await res.json();
+      const data = r.data;
+      if (!data) throw new Error('端点返回了非 JSON 数据');
       if (Array.isArray(data.data)) {
         const ids = data.data.map((m: any) => m.id).filter(Boolean);
         setQueriedModels(ids);
@@ -178,7 +181,8 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
     } catch (err: any) {
       setQueryError(`查询失败 (${err.message})。服务商若不支持 /v1/models 查询，可直接手动填写`);
       if (provider === 'deepseek') {
-        setQueriedModels(['deepseek-flash', 'deepseek-pro', 'deepseek-chat', 'deepseek-reasoner']);
+        // 与 normalizeDeepSeekModel 口径一致（legacy 名已退役，不再提供）
+        setQueriedModels(['deepseek-flash', 'deepseek-pro', 'deepseek-v4-pro']);
       }
     } finally {
       setIsQueryingModels(false);

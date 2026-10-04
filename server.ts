@@ -381,33 +381,33 @@ ${JSON.stringify(recentLogs, null, 2)}
     if (aiConfig?.provider === 'deepseek' && aiConfig.deepseekApiKey) {
       try {
         const up = upstreamDeepSeekSignal(res);
-        const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
-          },
-          signal: up.signal,
-          body: JSON.stringify({
-            model: normalizeDeepSeekModel(aiConfig.deepseekModel),
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt },
-            ],
-            response_format: { type: 'json_object' },
-            temperature: 0.3,
-            thinking: { type: 'disabled' },
-            // 22 字段中文 JSON 实测 ≈500 output token，800 足够且封住 8K 默认上限
-            max_tokens: 800,
-          }),
-        });
-        // done() 必须等 body 读完：头一到就 clearTimeout 曾让 body 卡住时
-        // 永久挂起（petMoments 修过一次的同款坑，超时形同虚设）
         let dsData: any = null;
         try {
-          const dsResOk = dsRes.ok;
-          if (dsResOk) dsData = await dsRes.json();
+          const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
+            },
+            signal: up.signal,
+            body: JSON.stringify({
+              model: normalizeDeepSeekModel(aiConfig.deepseekModel),
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+              response_format: { type: 'json_object' },
+              temperature: 0.3,
+              thinking: { type: 'disabled' },
+              // 22 字段中文 JSON 实测 ≈500 output token，800 足够且封住 8K 默认上限
+              max_tokens: 800,
+            }),
+          });
+          // body 读取也在保护内
+          if (dsRes.ok) dsData = await dsRes.json();
         } finally {
+          // fetch 抛错（客户端断开/上游挂）也必须执行：否则 40s 定时器泄漏，
+          // 且 body 阶段脱离超时保护（petMoments 修过的同款坑）
           up.done();
         }
 
@@ -544,23 +544,23 @@ ${JSON.stringify(currentSleepStats || {}, null, 2)}
         ];
 
         const up = upstreamDeepSeekSignal(res);
-        const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
-          },
-          signal: up.signal,
-          body: JSON.stringify({
-            model: normalizeDeepSeekModel(aiConfig.deepseekModel),
-            messages: dsMessages,
-            temperature: 0.7,
-            thinking: { type: 'disabled' },
-            max_tokens: 600,
-          }),
-        });
         let dsData: any = null;
         try {
+          const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
+            },
+            signal: up.signal,
+            body: JSON.stringify({
+              model: normalizeDeepSeekModel(aiConfig.deepseekModel),
+              messages: dsMessages,
+              temperature: 0.7,
+              thinking: { type: 'disabled' },
+              max_tokens: 600,
+            }),
+          });
           if (dsRes.ok) dsData = await dsRes.json();
         } finally {
           up.done();
