@@ -732,6 +732,28 @@ public class GemmaLLMPlugin extends Plugin {
 
     // ==== 模型下载（带进度、Bearer 令牌、断点续传、原子落盘、可取消） ====
 
+    /**
+     * 文件名安全解析（安全审计 V3）：filename 来自 JS 桥，未清洗的 ../
+     * 可跳出 files 目录读写/删除沙箱内任意文件（含偏好里的密钥）。
+     * 只允许单段安全文件名 + 规范化后前缀校验双保险。
+     */
+    private File safeResolveFile(String filename) throws Exception {
+        if (filename == null || filename.isEmpty()) throw new Exception("filename 必填");
+        if (filename.contains("/") || filename.contains("\\") || filename.contains("..")) {
+            throw new Exception("非法文件名");
+        }
+        if (!filename.matches("[A-Za-z0-9._-]{1,128}")) {
+            throw new Exception("文件名含非法字符");
+        }
+        File base = getContext().getFilesDir();
+        File target = new File(base, filename);
+        String basePath = base.getCanonicalPath() + File.separator;
+        if (!target.getCanonicalPath().startsWith(basePath)) {
+            throw new Exception("路径越界");
+        }
+        return target;
+    }
+
     @PluginMethod
     public void downloadModel(PluginCall call) {
         String url = call.getString("url");
@@ -745,15 +767,24 @@ public class GemmaLLMPlugin extends Plugin {
         final String fToken = (token == null || token.trim().isEmpty()) ? null : token.trim();
 
         BACKGROUND.execute(() -> {
-            File finalFile = new File(getContext().getFilesDir(), filename);
-            File tempFile = new File(getContext().getFilesDir(), filename + ".part");
+            File finalFile;
+            File tempFile;
+            try {
+                finalFile = safeResolveFile(filename);
+                tempFile = new File(getContext().getFilesDir(), filename + ".part");
+            } catch (Exception pathErr) {
+                call.reject(pathErr.getMessage());
+                return;
+            }
             long existing = tempFile.exists() ? tempFile.length() : 0L;
 
             try {
                 HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                 conn.setConnectTimeout(20000);
                 conn.setReadTimeout(30000);
-                conn.setInstanceFollowRedirects(true);
+                // 安全审计 V15：携带 Bearer 时禁跟随重定向——302 会把凭证带到
+                // 重定向目标域名。模型下载源是固定 URL，无需跟随
+                conn.setInstanceFollowRedirects(false);
                 if (fToken != null) conn.setRequestProperty("Authorization", "Bearer " + fToken);
                 if (existing > 0) conn.setRequestProperty("Range", "bytes=" + existing + "-");
 
@@ -844,11 +875,13 @@ public class GemmaLLMPlugin extends Plugin {
     @PluginMethod
     public void isModelDownloaded(PluginCall call) {
         String filename = call.getString("filename");
-        if (filename == null || filename.isEmpty()) {
-            call.reject("缺少 filename 参数");
+        File f;
+        try {
+            f = safeResolveFile(filename);
+        } catch (Exception pathErr) {
+            call.reject(pathErr.getMessage());
             return;
         }
-        File f = new File(getContext().getFilesDir(), filename);
         JSObject ret = new JSObject();
         ret.put("downloaded", f.exists() && f.length() > 0);
         ret.put("size", f.exists() ? f.length() : 0);
@@ -859,11 +892,13 @@ public class GemmaLLMPlugin extends Plugin {
     @PluginMethod
     public void deleteModel(PluginCall call) {
         String filename = call.getString("filename");
-        if (filename == null || filename.isEmpty()) {
-            call.reject("缺少 filename 参数");
+        File f;
+        try {
+            f = safeResolveFile(filename);
+        } catch (Exception pathErr) {
+            call.reject(pathErr.getMessage());
             return;
         }
-        File f = new File(getContext().getFilesDir(), filename);
         unloadInternal();
         JSObject ret = new JSObject();
         ret.put("deleted", !f.exists() || f.delete());
@@ -875,12 +910,14 @@ public class GemmaLLMPlugin extends Plugin {
     @PluginMethod
     public void loadModel(PluginCall call) {
         String filename = call.getString("filename");
-        if (filename == null || filename.isEmpty()) {
-            call.reject("缺少 filename 参数");
+        File f;
+        try {
+            f = safeResolveFile(filename);
+        } catch (Exception pathErr) {
+            call.reject(pathErr.getMessage());
             return;
         }
         int maxTokens = call.getInt("maxTokens", 1024);
-        File f = new File(getContext().getFilesDir(), filename);
         if (!f.exists() || f.length() == 0) {
             call.reject("模型文件不存在，请先下载");
             return;

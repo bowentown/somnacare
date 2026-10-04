@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { timingSafeEqual } from 'node:crypto';
 
 dotenv.config();
 
@@ -12,7 +13,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '10mb' }));
+// 安全审计 V5：全局收紧到 256kb（本应用最大合法载荷 ≈ 3KB；此前 10mb
+// 叠加无鉴权代理曾被列为内存型 DoS 面）
+app.use(express.json({ limit: '256kb' }));
+// 安全审计 V6：声明反代信任层数，使 req.ip 在 Cloud Run/反代后取真实客户端 IP
+app.set('trust proxy', 1);
 
 // Simple in-memory IP-based rate limiting for /api/sleep/* (max 30 requests per minute) with periodic cleanup
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -28,6 +33,21 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 app.use('/api/sleep/', (req: Request, res: Response, next) => {
+
+if (SOMNA_API_TOKEN) {
+  // 定长比较降低时序侧信道
+  app.use('/api/sleep/', (req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
+    const auth = req.header('authorization') ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const a = Buffer.from(token);
+    const b = Buffer.from(SOMNA_API_TOKEN);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return res.status(401).json({ error: '未授权' });
+    }
+    next();
+  });
+  console.log('[security] /api/sleep/* 已启用令牌鉴权');
+}
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
   const windowMs = 60 * 1000;
@@ -117,45 +137,54 @@ function logDeepSeekUsage(tag: string, dsData: { model?: string; usage?: { promp
   console.log(`[deepseek:${tag}] model=${dsData.model ?? '?'} prompt=${u.prompt_tokens ?? '?'} completion=${u.completion_tokens ?? '?'} cacheHit=${u.prompt_cache_hit_tokens ?? 0} cacheMiss=${u.prompt_cache_miss_tokens ?? 0}`);
 }
 
-// SSRF Protection: Ensure custom baseUrl is HTTPS and not pointing to localhost, metadata service, or private IPs
+// 安全审计 V1：/api/sleep/* 无鉴权代理曾可被匿名白嫖服务端 Gemini 额度。
+// 折中实现（不破坏现有部署）：设置 SOMNA_API_TOKEN 环境变量后强制 Bearer 校验；
+// 未设置时维持现状（GEMINI_API_KEY 未配置时该代理本就零成本——只走本地规则）
+const SOMNA_API_TOKEN = process.env.SOMNA_API_TOKEN ?? '';
+
+// SSRF Protection: Ensure custom baseUrl is HTTPS and not pointing to localhost, metadata service, or private IPs.
+// 安全审计 V2 强化：黑名单式的字符串前缀匹配有数制/段覆盖缺口（127.0.0.2、
+// 十进制 2130706433、CGNAT 100.64/10、198.18/15 等都可绕过）——改为
+// "IP 字面量则解析数值段判定，域名则黑名单 + 注明 DNS 重绑定残留"。
+// 残留边界：域名→IP 的解析发生在 fetch 内部，字符串层无法钉住（TOCTOU）；
+// 彻底解法是 fetch 层钉 IP（custom key 场景密钥本来就属于用户自填的端点，
+// 风险主要是自伤而非横向渗透，故此层做务实强化即可）
+function isPrivateIPv4(host: string): boolean {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  const seg = host.split('.').map(Number);
+  if (seg.some((n) => n > 255)) return false;
+  const [a, b, c] = seg;
+  if (a === 0 || a === 10 || a === 127) return true;                     // 0/8, 10/8, 127/8
+  if (a === 169 && b === 254) return true;                               // link-local / 云元数据
+  if (a === 172 && b >= 16 && b <= 31) return true;                      // 172.16/12
+  if (a === 192 && b === 168) return true;                               // 192.168/16
+  if (a === 192 && b === 0 && c === 0) return true;                      // 192.0.0.0/24
+  if (a === 100 && b >= 64 && b <= 127) return true;                     // CGNAT 100.64/10
+  if (a === 198 && b === 18 && c <= 255) return true;                    // 198.18/15
+  if (a >= 224) return true;                                             // 组播/保留
+  return false;
+}
 function isSafeHttpsUrl(urlString?: string): boolean {
   if (!urlString) return false;
   try {
     const parsed = new URL(urlString);
     if (parsed.protocol !== 'https:') return false;
+    if (parsed.port && parsed.port !== '443') return false;              // V2：仅 443（防内网端口探测）
     const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 brackets
-    
+
+    // IP 字面量：按数值段判定（覆盖 127/8 全段、CGNAT、198.18/15 等；
+    // 十进制单数形式的 127.0.0.1 = 2130706433 也会落在 0/8 判定里）
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return !isPrivateIPv4(hostname);
+
     // Check loopbacks and cloud metadata
     if (
       hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
       hostname === '::1' ||
       hostname === '0:0:0:0:0:0:0:1' ||
       hostname.startsWith('169.254.') || // Cloud Metadata service (AWS, GCP, Azure, OpenStack)
       hostname.startsWith('fe80:') ||     // IPv6 Link-Local
       hostname.startsWith('fc00:') ||     // IPv6 Unique Local
       hostname.startsWith('fd00:') ||     // IPv6 Unique Local
-      hostname.startsWith('10.') ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('172.16.') ||
-      hostname.startsWith('172.17.') ||
-      hostname.startsWith('172.18.') ||
-      hostname.startsWith('172.19.') ||
-      hostname.startsWith('172.20.') ||
-      hostname.startsWith('172.21.') ||
-      hostname.startsWith('172.22.') ||
-      hostname.startsWith('172.23.') ||
-      hostname.startsWith('172.24.') ||
-      hostname.startsWith('172.25.') ||
-      hostname.startsWith('172.26.') ||
-      hostname.startsWith('172.27.') ||
-      hostname.startsWith('172.28.') ||
-      hostname.startsWith('172.29.') ||
-      hostname.startsWith('172.30.') ||
-      hostname.startsWith('172.31.') ||
-      hostname.startsWith('0x') ||        // Hex IP representations (e.g. 0x7f000001)
-      hostname.startsWith('00') ||        // Octal IP representations
       hostname.endsWith('.internal') ||
       hostname.endsWith('.local')
     ) {

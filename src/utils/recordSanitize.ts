@@ -74,8 +74,18 @@ export function sanitizeRecord(raw: unknown): SleepRecord | null {
       : [],
     dreamNotes: typeof r.dreamNotes === 'string' ? r.dreamNotes : undefined,
     stages,
+    // soundEvents 逐元素白名单清洗（安全审计 V20）：此前只判数组后原样透传，
+    // 是全文件唯一未深清洗的字段。形状 = { time: 'HH:MM', decibel, label }
     soundEvents: Array.isArray(r.soundEvents)
-      ? (r.soundEvents as SleepRecord['soundEvents'])
+      ? (r.soundEvents as unknown[]).slice(0, 500).map((ev): NonNullable<SleepRecord['soundEvents']>[number] | null => {
+          if (typeof ev !== 'object' || ev === null) return null;
+          const e = ev as Record<string, unknown>;
+          const time = typeof e.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.time) ? e.time : null;
+          const decibel = typeof e.decibel === 'number' && Number.isFinite(e.decibel) ? Math.max(0, Math.min(120, Math.round(e.decibel))) : null;
+          const label = typeof e.label === 'string' ? e.label.slice(0, 32) : undefined;
+          if (!time || decibel === null) return null;
+          return { time, decibel, label: label || '' };
+        }).filter((x): x is NonNullable<typeof x> => x !== null)
       : undefined,
   };
 }

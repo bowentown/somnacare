@@ -211,8 +211,10 @@ export function generateLocalClinicalAnalysis(
   else healthGrade = '需调理 C';
   // 单晚方差很大：不足 3 晚就下"总体处于 X 水平"的结论是统计上的过度自信
   // （第 40 轮真机截图实测：1 晚即评 A+ 且无任何样本量提示）
+  // healthGrade 是数据字段，保持干净（不含展示用免责声明）——样本量提示
+  // 只拼进 scoreSummary 展示串的句尾（第 41 轮勘误：拼进 grade 会得到
+  // "…仅供参考）水平。"的截断句，且污染与云端路径不一致的数据形状）
   const sampleNote = count >= 3 ? '' : `（仅 ${count} 晚，样本不足，仅供参考）`;
-  healthGrade += sampleNote;
 
   // 3. 提取睡前行为阻碍
   const allHabits = new Set<string>();
@@ -247,7 +249,7 @@ export function generateLocalClinicalAnalysis(
     overallHealthGrade: healthGrade,
     scoreSummary:
       count > 0
-        ? `近${count}天平均睡眠${hours}小时，深睡率${deepPct}%，总体处于${healthGrade}水平。`
+        ? `近${count}天平均睡眠${hours}小时，深睡率${deepPct}%，总体处于${healthGrade}水平${sampleNote}。`
         : '您还没有睡眠记录——以下为演示口径的示例报告，记录一晚后将自动换成真实数据。',
     clinicalMetricsAnalysis: {
       durationAssessment: `周期平均睡眠时长为 ${hours} 小时（目标 ${targetH} 小时），睡眠债务差额约 ${debt} 小时。总体时长${
