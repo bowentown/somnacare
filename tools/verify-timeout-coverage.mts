@@ -24,10 +24,16 @@ const check = (name: string, ok: boolean, detail = '') => {
 
 /** 判定函数（反向自检与真实检查共用）：body 是否脱管。
  *  - 出现 return await fetch（头到即 resolve 并交出控制权）→ 脱管
- *  - 完全没有 body 消费（res.text/json/arrayBuffer）→ 脱管 */
+ *  - 完全没有 body 消费 → 脱管
+ *  - 先 clearTimeout 再读 body → 脱管（最危险变体；变量名无关——第 32 轮
+ *    勘误：旧判定把变量名写死为 res，3/7 用例错判，含该变体漏报） */
 export function hasUnprotectedFetch(src: string): boolean {
   if (/return\s+await\s+fetch\b/.test(src)) return true;
-  return !/await\s+res\.(text|json|arrayBuffer|blob)\(/.test(src);
+  const bodyIdx = src.search(/\bawait\s+\w+\.(text|json|arrayBuffer|blob)\(/);
+  if (bodyIdx < 0) return true;
+  const clearIdx = src.indexOf('clearTimeout');
+  if (clearIdx >= 0 && clearIdx < bodyIdx) return true;
+  return false;
 }
 
 const SRC = fileURLToPath(new URL('../src', import.meta.url)).replace(/\/$/, '');
