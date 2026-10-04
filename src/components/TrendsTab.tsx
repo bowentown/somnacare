@@ -505,7 +505,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
         )}
       </div>
 
-      {/* 本周睡眠小结：填充留白 + 周维度可读洞察 */}
+      {/* 近期睡眠小结：填充留白 + 可读洞察（滚动窗 = 最近 7 晚，标题不叫"本周"） */}
       {records.length > 0 && (() => {
         // 周小结只聚合夜睡（第 21 轮 #3：混入午睡会少报时长）；聚合唯一实现
         // summarizeWeek（第 22 轮：页面上曾有一份平行聚合，全小睡输入时
@@ -516,14 +516,14 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
           <div
             role="button"
             tabIndex={0}
-            aria-label="展开本周睡眠小结详情"
+            aria-label="展开近期睡眠小结详情"
             onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsHistoryExpanded(true); } }}
             onClick={() => setIsHistoryExpanded(true)}
             className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4 cursor-pointer hover:border-white/20 active:scale-[0.99] transition-all`}
           >
             <div className="flex items-center gap-2">
               <Sparkles className={`w-4 h-4 ${theme.accentText}`} />
-              <h3 className="text-sm font-bold text-white">本周睡眠小结</h3>
+              <h3 className="text-sm font-bold text-white">近期睡眠小结</h3>
               <span className={`text-[10px] ${textMuted} font-mono`}>近 {sum.nights} 晚</span>
               {/* 分享卡入口：插画家+宠物语录+聚合数字，生成前可预览可勾选 */}
               <button
