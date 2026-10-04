@@ -261,8 +261,51 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     if (el && chatStickRef.current) el.scrollTop = el.scrollHeight;
   }, [chatMessages, isSendingChat, localStage]);
 
+  // 评估结果缓存（第 28 轮）：键 = 近 7 晚数据 + 作息类型的指纹。
+  // AIAdvicePanel 条件渲染，切 Tab 即卸载——analysis 存组件态，切回再点
+  // "生成评估"就是重新付费。指纹命中且 12h 内 → 直接复用不请求
+  const ANALYSIS_CACHE_KEY = 'somnacare_analysis_v1';
+  const ANALYSIS_TTL_MS = 12 * 3600000;
+  const analysisFingerprint = useMemo(() => {
+    const nights = nightsOnly(records).slice(0, 7);
+    let h = 0;
+    const str = JSON.stringify(nights.map((r) => [r.date, r.sleepScore, r.durationMinutes, r.deepSleepMinutes, r.remSleepMinutes, r.awakeMinutes, r.bedtime, r.wakeTime])) + (userProfile.chronotype ?? '');
+    for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
+    return String(h);
+  }, [records, userProfile.chronotype]);
+  const readAnalysisCache = (): SleepAnalysisResult | null => {
+    try {
+      const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const d = parsed?.data;
+      // 形状守卫：渲染会深入访问 clinicalMetricsAnalysis 的字段——应用升级后
+      // 旧缓存缺字段曾直接触发错误边界（整页白屏）。形状不对一律当未命中
+      const shapeOk = !!d && typeof d === 'object'
+        && typeof d.scoreSummary === 'string'
+        && !!d.clinicalMetricsAnalysis
+        && typeof d.clinicalMetricsAnalysis.deepSleepAssessment === 'string'
+        && typeof d.clinicalMetricsAnalysis.efficiencyAssessment === 'string';
+      if (parsed?.fp === analysisFingerprint && shapeOk && Date.now() - parsed.at < ANALYSIS_TTL_MS) {
+        return d as SleepAnalysisResult;
+      }
+    } catch { /* ignore */ }
+    return null;
+  };
+
   const fetchAIAnalysis = async () => {
     setIsLoadingAnalysis(true);
+
+    // 缓存只服务"首次生成"：用户点的是"刷新评估"（analysis 已存在）时
+    // 必须绕过缓存真请求，否则按钮 12h 内是空操作
+    if (!analysis) {
+      const cached = readAnalysisCache();
+      if (cached) {
+        setAnalysis(cached);
+        setIsLoadingAnalysis(false);
+        return;
+      }
+    }
 
     try {
       const response = await fetchWithTimeout('/api/sleep/analyze', {
@@ -273,7 +316,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
           userProfile,
           aiConfig: userProfile.aiConfig,
         }),
-      });
+      }, 30000);   // 非流式长回复：12s 会白付（服务端已跑完、结果被丢弃）
 
       if (!response.ok) {
         throw new Error('API unavailable');
@@ -281,6 +324,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
 
       const data = await response.json();
       setAnalysis(data);
+      // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
+      try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
     } catch (_err: any) {
       const localResult = generateLocalClinicalAnalysis(records, userProfile);
       setAnalysis(localResult);
@@ -492,17 +537,18 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             ],
             temperature: 0.7,
             max_tokens: 600,
+            thinking: { type: 'disabled' },   // ≤150 字回答不需要思考（默认 enabled+high 按输出计费）
           }),
-        });
+        }, 30000);
 
         if (dsRes.ok) {
           const dsData = await dsRes.json();
-          // 缓存命中率可观测：hit 逐轮增长且 hitRate>0.8 = 前缀缓存生效
-          if (import.meta.env?.DEV && dsData.usage) {
+          // 用量常开（DEV 与生产一致）：token 数与实际模型是对账单的唯一证据
+          if (dsData.usage) {
             const u = dsData.usage;
             const hit = u.prompt_cache_hit_tokens ?? 0;
             const miss = u.prompt_cache_miss_tokens ?? 0;
-            console.log('[llm usage]', { hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a' });
+            console.log('[llm usage]', { model: dsData.model, completion: u.completion_tokens, hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a' });
           }
           // 空内容不再伪装成模型回答：落空则继续走本地兜底（那条路径是诚实的）
           const rawContent = dsData.choices?.[0]?.message?.content;
@@ -536,7 +582,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
           userProfile,
           aiConfig: userProfile.aiConfig,
         }),
-      });
+      }, 30000);
 
       if (!response.ok) {
         throw new Error('Chat API network error');

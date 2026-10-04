@@ -192,11 +192,24 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
     r9 ? `${r9.bedtime}/${r9.wakeTime}` : '');
 
   // A10 短夜（00:00–05:00，起床偏离中位 2h）：05:30 打开 → 仍要提议
-  // （起床侧闸门放宽到 3.5h 的原因——短夜是真实作息，不是拟合错误）
+  // （起床侧闸门 3.0h 的原因——短夜是真实作息，不是拟合错误）
   const r10 = ok(runNight({ now: atTime(5, 30), seed: 90, lastNightBedMin: 0, lastNightWakeMin: 5 * 60 }));
   check('A10 短夜 00:00–05:00：05:30 打开仍提议',
     r10 !== null && circularDiff(minutesOf(r10.bedtime), 0) <= 60 && circularDiff(minutesOf(r10.wakeTime), 5 * 60) <= 60,
     r10 ? `${r10.bedtime}/${r10.wakeTime}` : '');
+
+  // A11 反向（第 28 轮）：凌晨 03:30 打开（用户还在睡，只是起夜看了一眼）
+  // → 必须拒绝，不得提议"截断到此刻"的睡眠段。与 A9/A10 共同把闸门双向夹住
+  const r11 = runNight({ now: atTime(3, 30), seed: 91 });
+  check('A11 凌晨 03:30 打开（还在睡）：必须拒绝',
+    r11.status === 'rejected', r11.status === 'rejected' ? r11.reason : JSON.stringify(r11).slice(0, 80));
+  // A12 边界契约（第 28 轮 §二：信息论边界）：04:00 打开时"真早起 vs 起夜接着睡"
+  // 不可区分——若产出提议，起床时刻必须落在观测末端（ wakeMs 距 now < 1h），
+  // 即 UI 的"（截至此刻）"标注条件成立；由标注 + 用户判断兜底，而非假装能拒绝
+  const r12 = runNight({ now: atTime(4, 0), seed: 92 });
+  check('A12 凌晨 04:00 打开：若提议则起床时刻必贴近此刻（触发"截至此刻"标注）',
+    r12.status !== 'ok' || (atTime(4, 0) - r12.wakeMs) < 3600000,
+    r12.status === 'ok' ? `${r12.bedtime}/${r12.wakeTime}` : r12.reason);
 }
 
 // ── B 组：应拒绝（且不回退旧算法）──

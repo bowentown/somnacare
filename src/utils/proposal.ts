@@ -12,7 +12,7 @@
 import { SleepRecord } from '../types/sleep';
 import { bedClockAxis, circularMedian, median, shortArc, clockMinutes } from './clockMath';
 import { nightsOnly } from './recordFilter';
-import { fitSleepModel } from './sleepModel';
+import { fitSleepModel, modelWindowStart } from './sleepModel';
 import type { UsageDay } from './usageSignal';
 
 export interface Proposal {
@@ -164,7 +164,7 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
   // 拟合缓存：events 数组在 usageSignal 的 30min TTL 内是同一引用，而
   // records/handledDate 的每次变化都会触发 effect 重跑——坐标上升不必重跑。
   // 缓存命中后 gate 4/6/窗口闸仍全量复查（它们不进缓存键，语义不变）
-  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${input.observedUntil}`;
+  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${input.observedUntil}|${modelWindowStart((input.now ?? new Date()).getTime(), input.chronotype === 'day' ? 'day' : 'night', habitBedMin, habitWakeMin)}`;
   let fit: ReturnType<typeof fitSleepModel>;
   if (fitCache && fitCache.events === input.events && fitCache.key === fitKey) {
     fit = fitCache.outcome;

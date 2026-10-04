@@ -80,12 +80,37 @@ const ai = new GoogleGenAI({
 });
 
 // Helper for calling Gemini with model fallback and error handling
-// Safe DeepSeek model normalizer
+// Safe DeepSeek model normalizer。
+// 官方文档（api-docs.deepseek.com）的模型名只有 deepseek-flash / deepseek-v4-pro；
+// 旧名（deepseek-chat / deepseek-reasoner）仍被接受但已由新模型接管计费。
+// 此前的反向映射（flash→chat、pro→reasoner）与文档建议方向相反，
+// 导致 UI 显示的模型与实际请求/账单无法对账——改为文档推荐名直发
 function normalizeDeepSeekModel(modelName?: string): string {
-  if (!modelName) return 'deepseek-chat';
-  if (modelName === 'deepseek-flash') return 'deepseek-chat';
-  if (modelName === 'deepseek-pro') return 'deepseek-reasoner';
+  if (!modelName) return 'deepseek-flash';
+  if (modelName === 'deepseek-pro') return 'deepseek-v4-pro';
   return modelName;
+}
+
+/**
+ * 上游 DeepSeek 调用的公共约束（成本三闸）：
+ *  - thinking disabled：默认 enabled 且 reasoning_effort=high，思考 token 按输出价
+ *    计费——本应用的两类任务（≤150 字回答 / 结构化 JSON 提取）都不需要推理，
+ *    实测单次成本可差 7-11 倍
+ *  - max_tokens 显式上限：未设时非思考模式默认 8K
+ *  - 断开传播 + 上游超时：客户端 abort（切页/关屏/超时）后不再向上游付钱
+ */
+function upstreamDeepSeekSignal(req: import('express').Request, timeoutMs = 40000): { signal: AbortSignal; done: () => void } {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  req.on('close', () => ctrl.abort());   // 客户端先撤 → 立即停止上游计费
+  return { signal: ctrl.signal, done: () => clearTimeout(timer) };
+}
+
+/** 用量日志（生产可见）：token 数是唯一能对上账单的证据 */
+function logDeepSeekUsage(tag: string, dsData: { model?: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } }): void {
+  const u = dsData.usage;
+  if (!u) return;
+  console.log(`[deepseek:${tag}] model=${dsData.model ?? '?'} prompt=${u.prompt_tokens ?? '?'} completion=${u.completion_tokens ?? '?'} cacheHit=${u.prompt_cache_hit_tokens ?? 0} cacheMiss=${u.prompt_cache_miss_tokens ?? 0}`);
 }
 
 // SSRF Protection: Ensure custom baseUrl is HTTPS and not pointing to localhost, metadata service, or private IPs
@@ -351,12 +376,14 @@ ${JSON.stringify(recentLogs, null, 2)}
     // Check if user specified custom AI provider (DeepSeek / Custom OpenAI Compatible)
     if (aiConfig?.provider === 'deepseek' && aiConfig.deepseekApiKey) {
       try {
+        const up = upstreamDeepSeekSignal(req);
         const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
           },
+          signal: up.signal,
           body: JSON.stringify({
             model: normalizeDeepSeekModel(aiConfig.deepseekModel),
             messages: [
@@ -365,11 +392,16 @@ ${JSON.stringify(recentLogs, null, 2)}
             ],
             response_format: { type: 'json_object' },
             temperature: 0.3,
+            thinking: { type: 'disabled' },
+            // 22 字段中文 JSON 实测 ≈500 output token，800 足够且封住 8K 默认上限
+            max_tokens: 800,
           }),
         });
+        up.done();
 
         if (dsRes.ok) {
           const dsData = await dsRes.json();
+          logDeepSeekUsage('analyze', dsData);
           const content = dsData.choices?.[0]?.message?.content?.trim();
           if (content) {
             const parsed = JSON.parse(content);
@@ -500,21 +532,27 @@ ${JSON.stringify(currentSleepStats || {}, null, 2)}
           })),
         ];
 
+        const up = upstreamDeepSeekSignal(req);
         const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${aiConfig.deepseekApiKey.trim()}`,
           },
+          signal: up.signal,
           body: JSON.stringify({
             model: normalizeDeepSeekModel(aiConfig.deepseekModel),
             messages: dsMessages,
             temperature: 0.7,
+            thinking: { type: 'disabled' },
+            max_tokens: 600,
           }),
         });
+        up.done();
 
         if (dsRes.ok) {
           const dsData = await dsRes.json();
+          logDeepSeekUsage('chat', dsData);
           const reply = dsData.choices?.[0]?.message?.content?.trim();
           if (reply) {
             res.json({ reply, provider: 'DeepSeek' });

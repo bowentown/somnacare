@@ -195,6 +195,7 @@ async function callLlm(cfg: any, system: string, user: string): Promise<string |
           ],
           temperature: 1.1,
           max_tokens: 600,
+          thinking: { type: 'disabled' },   // 朋友圈文案 ≤百字，不需要思考（默认 enabled 按输出计费）
         }),
         signal: ctrl.signal,
       });

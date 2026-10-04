@@ -41,7 +41,8 @@ const LAMBDA_RATIO_MIN = 8;           // 学不出对比度 = 屏幕数据不足
 const NIGHT_MIN_BINS = 12;            // 逐夜时长 ∈ [3h, 14h]
 const NIGHT_MAX_BINS = 56;
 const NIGHT_DEV_BINS = 10;            // 逐夜就寝偏离本人中位 ≤ 2.5h（就寝信号弱，紧）
-const NIGHT_WAKE_DEV_BINS = 14;       // 逐夜起床偏离本人中位 ≤ 3.5h（起床信号强，且用户此刻在场）
+const NIGHT_WAKE_DEV_BINS = 12;       // 逐夜起床偏离本人中位 ≤ 3.0h（起床信号强；
+                                      // 3.5h 实测会让 03:30 打开误出"截断到此刻"的卡——§28.1.4）
 const RECENTRE_MAX_BINS = 12;         // 中位数重估偏离先验 > 3h = 作息可疑（防自我强化）
 const MAX_ITERS = 12;
 
@@ -116,6 +117,12 @@ function windowStartHour(chronotype: 'night' | 'day', bedMin?: number, wakeMin?:
     return Math.floor(((mid - 720 + 1440) % 1440) / 60);
   }
   return chronotype === 'day' ? 1 : 15;   // 无习惯：night→15（论文取 16，接近）、day→1
+}
+
+/** 模型窗口起点（本地 ws 点整）：proposal 层的拟合缓存键需要它——
+ *  now 跨过窗口边界时 events/observedUntil 可能都没变，但窗口平移了一天 */
+export function modelWindowStart(now: number, chronotype: 'night' | 'day', habitBedMin?: number, habitWakeMin?: number): number {
+  return recentWindowStart(now, windowStartHour(chronotype, habitBedMin, habitWakeMin));
 }
 
 /** 最近一次「本地 ws 点整」≤ now 的时刻 */
@@ -316,8 +323,11 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   // 打开 App 会被判"可能还在睡"直接拒绝且不回退，早晨永远没有卡片。
   // 新规则：用户此刻正拿着手机打开 App，"已经醒了"就是最硬的行为证据——
   // 只要当前窗里存在一段【已结束的、形态可信的】睡眠段就提议它。
-  // "还在睡"的保护不靠钟点：凌晨打开时，拟合出的起床时刻会落在观测末端、
-  // 偏离本人中位 >3.5h，被下面的起床偏离闸门拒绝。
+  // "还在睡"的保护不靠钟点，靠起床偏离闸门：凌晨打开时拟合出的起床时刻被
+  // 钉在观测末端，与本人中位的偏离随夜深增大——超过 3h 即拒绝（对习惯 7 点
+  // 起床者约在 04:00 前生效）。更近的凌晨（04:00–06:30）仍可能产出"截至
+  // 此刻"的提议——真早起与起夜后接着睡在屏幕数据上不可区分（信息论边界），
+  // 由提议卡的"截至此刻"标注 + 用户自行判断兜底。
   const targetOk = (a: Assign): boolean => {
     const dur = a.ta - a.ts;
     if (dur < NIGHT_MIN_BINS || dur > NIGHT_MAX_BINS) return false;
@@ -350,7 +360,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
     }
   }
   if (targetIdx < 0) {
-    return { status: 'rejected', reason: '未检测到已结束的睡眠段（可能还在睡，或作息数据不足）' };
+    return { status: 'rejected', reason: '未检出可信的睡眠段（可能还在睡，或与平时作息差异过大）' };
   }
   const targetDay = days[targetIdx];
   const target = assigns[activeIdx.indexOf(targetIdx)];

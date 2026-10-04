@@ -234,7 +234,11 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
             <div className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-4 flex items-center justify-between gap-2`}>
               <span className="text-sm font-black font-mono text-white">{visibleProposal.bedtime} 放下</span>
               <span className={`${theme.accentText} font-black`}>→</span>
-              <span className="text-sm font-black font-mono text-white">{visibleProposal.wakeTime} 拿起</span>
+              {/* 起床时刻 ≈ 现在 ⇒ 屏幕数据被"此刻"右截断：真早起与起夜后接着睡
+                  在数据上不可区分——如实标注，让用户自行判断（还在睡就别确认） */}
+              <span className="text-sm font-black font-mono text-white">
+                {visibleProposal.wakeTime} 拿起{Date.now() - visibleProposal.wakeMs < 3600000 ? '（截至此刻）' : ''}
+              </span>
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-slate-300 px-1">
