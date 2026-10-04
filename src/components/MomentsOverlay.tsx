@@ -94,14 +94,23 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
   if (type === 'week') {
     // 战报口径（第 29 轮，用户定义）：周一起算、夜按醒来日归属——
     //   n = 达标（≥80 分）夜数 / x = 有记录夜数，大数字 n/x；
-    //   m = 本周已过夜数 − x = 未记录的夜数（旧口径只数有记录的夜，
-    //   没记的那晚凭空消失——用 2 天却显示 1/1）。
-    // 事实串由 petMoments.buildSleepFacts 单一来源生成，此处只解析。
+    //   m = 本周已过夜数 − x = 未记录的夜数。
+    // 双格式解析：旧版动态的事实串是「近 N 日有 G 天」（快照冻结，不可重写），
+    // 解析不到新串时回退旧口径——此前兜底 0/0 还宣称"全部有记录"，是当众撒谎
     const weekMatch = moment.facts.map((f) => f.match(/本周已过 (\d+) 天，达标 (\d+) 天/)).find(Boolean) ?? null;
     const recMatch = moment.facts.map((f) => f.match(/本周有记录 (\d+) 天，未记录 (\d+) 天/)).find(Boolean) ?? null;
-    const goodDays = weekMatch ? Number(weekMatch[2]) : 0;
-    const recDays = recMatch ? Number(recMatch[1]) : 0;
-    const missed = recMatch ? Number(recMatch[2]) : 0;
+    const legacyMatch = moment.facts.map((f) => f.match(/近 (\d+) 日有 (\d+) 天/)).find(Boolean) ?? null;
+    let goodDays = 0;
+    let recDays = 0;
+    let missed: number | null = null;   // null = 旧口径快照，无从知晓未记录数
+    if (weekMatch && recMatch) {
+      goodDays = Number(weekMatch[2]);
+      recDays = Number(recMatch[1]);
+      missed = Number(recMatch[2]);
+    } else if (legacyMatch) {
+      recDays = Number(legacyMatch[1]);
+      goodDays = Number(legacyMatch[2]);
+    }
     const pct = weekMatch ? Math.min(100, Math.round((goodDays / Math.max(1, Number(weekMatch[1]))) * 100)) : 0;
     return (
       <div className="rounded-xl bg-gradient-to-br from-emerald-900/40 to-slate-900 border border-emerald-800/40 aspect-square p-2.5 flex flex-col justify-between">
@@ -111,8 +120,9 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
             {goodDays}
             <span className="text-xs text-slate-400 font-bold">/{recDays} 天</span>
           </p>
-          <p className="text-[9px] text-slate-400 mt-0.5">
-            {missed > 0 ? `有 ${missed} 晚未记录 · ` : '全部有记录 · '}评分 ≥80 算达标
+          {/* 用户定的文案：去掉"有/算"，一行放下（nowrap，窄卡不折行） */}
+          <p className="text-[9px] text-slate-400 mt-0.5 whitespace-nowrap">
+            {missed === null ? '按当时记录晚数计' : missed > 0 ? `${missed} 晚未记录 · ≥80 达标` : '全部有记录 · ≥80 达标'}
           </p>
         </div>
         <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
@@ -124,11 +134,23 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
   // data：数据大字报
   const dur = factOf(moment.facts, '昨晚睡眠时长');
   const score = factOf(moment.facts, '昨晚睡眠评分');
-  const big = dur ? dur.replace(' ', '\n') : score || '无记录';
+  // 断行必须是设计出来的：此前 replace 首个空格 + 浏览器自行折行，
+  // "8 小时 6 分"会被宽度随机劈成"8 小时 6 / 分"。"0 分"单独成行也很难看，
+  // 整点显示"7 小时"即可（7 小时 0 分 == 7 小时，不是编数字）
+  const durMatch = dur?.match(/(\d+)\s*小时\s*(\d+)\s*分/);
+  const hOnly = dur?.match(/(\d+)\s*小时/);
+  let big: string;
+  if (durMatch) {
+    big = durMatch[2] === '0' ? `${durMatch[1]} 小时` : `${durMatch[1]} 小时\n${durMatch[2]} 分`;
+  } else if (hOnly) {
+    big = `${hOnly[1]} 小时`;
+  } else {
+    big = dur || score || '无记录';
+  }
   return (
     <div className="rounded-xl bg-gradient-to-br from-sky-900/50 to-slate-900 border border-sky-800/40 aspect-square p-2.5 flex flex-col justify-between overflow-hidden">
       <p className="text-[9px] font-bold text-sky-300">睡眠数据大字报</p>
-      <p className="text-lg font-black text-white leading-tight break-words">{big}</p>
+      <p className="text-lg font-black text-white leading-tight whitespace-pre-line">{big}</p>
       <p className="text-[9px] text-slate-400">喂 token 的是本鱼，睡觉的是你</p>
     </div>
   );
