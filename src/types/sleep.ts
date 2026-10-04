@@ -140,6 +140,8 @@ export interface UserProfile {
   chronotype?: 'night' | 'day' | 'irregular';
   bedtimeReminderEnabled?: boolean; // 到点提醒我（默认关闭；开启后按作息目标弹出提醒动画）
   alarms?: CustomAlarmSetting[];
+  /** 睡眠区主卡的记录方式：manual=手动监测按钮；auto=使用信号自动提议（第 38 轮） */
+  sleepRecordMode?: 'manual' | 'auto';
   aiConfig?: CustomAIConfig;
 }
 

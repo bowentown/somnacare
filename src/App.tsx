@@ -146,6 +146,7 @@ export const App: React.FC = () => {
         parsedProfile.targetBedtime = parsedProfile.targetBedtime || '23:30';
         parsedProfile.targetWakeTime = parsedProfile.targetWakeTime || '07:30';
         parsedProfile.targetDurationHours = Number(parsedProfile.targetDurationHours) || 8;
+        parsedProfile.sleepRecordMode = parsedProfile.sleepRecordMode === 'auto' ? 'auto' : 'manual';
         // 遗留 provider 值迁移：built_in/local_gemma 是旧时代的内置规则档，
         // 发送链路对 built_in 无分支（落到真机上不可达的服务端代理）——
         // 统一迁到 local_rules，语义与行为一致。存量 JSON 无类型，需宽化比较
@@ -163,6 +164,7 @@ export const App: React.FC = () => {
       age: 28,
       targetBedtime: '23:30',
       targetWakeTime: '07:30',
+          sleepRecordMode: 'manual',
       targetDurationHours: 8,
       smartAlarmEnabled: true,
       smartWakeWindowMinutes: 20,

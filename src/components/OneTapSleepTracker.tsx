@@ -1,6 +1,6 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Moon, Sun, AlertTriangle } from 'lucide-react';
+import { Moon, Sun, AlertTriangle, Zap } from 'lucide-react';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { buildRecordFromWindow } from '../utils/recordBuilder';
@@ -8,7 +8,7 @@ import { Smartphone } from 'lucide-react';
 import { computeProposal, computeModelProposal, type Proposal } from '../utils/proposal';
 import { recordEngineRun, recordOutcome } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
-import { queryScreenOnEvents } from '../utils/usageSignal';
+import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
@@ -25,9 +25,11 @@ interface OneTapSleepTrackerProps {
   userProfile?: UserProfile;
   /** "改一下"通路：请求打开预填好的手动补录弹窗 */
   onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
+  /** 记录方式（手动/自动）等卡片内偏好持久化 */
+  onUpdateProfile?: (updated: Partial<UserProfile>) => void;
 }
 
-export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile }) => {
+export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile, onUpdateProfile }) => {
   const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
     const saved = localStorage.getItem('somnacare_bedtime_start');
     return saved ? Number(saved) : null;
@@ -41,6 +43,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
 
   // ── 提议式记录（P3）：昨晚的手机使用 → 一条待确认的睡眠记录 ──
   const [usageDays, setUsageDays] = useState(() => getCachedUsageDays());
+  // 记录方式（第 38 轮，用户要求）：手动=按按钮开始监测；自动=依靠使用信号的
+  // 自动提议，主按钮换成权限引导/已开启状态。自动档在真机依赖"使用情况访问"
+  const recordMode = userProfile?.sleepRecordMode ?? 'manual';
+  const setRecordMode = (m: 'manual' | 'auto') => onUpdateProfile?.({ sleepRecordMode: m });
+  const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
+  const permTimerRef = useRef<number | null>(null);
   const [handledDate, setHandledDate] = useState<string | null>(() => {
     try { return localStorage.getItem('somnacare_proposal_handled'); } catch { return null; }
   });
@@ -106,6 +114,35 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     [usageDays, records, sleepStartTime, handledDate, userProfile?.chronotype]
   );
   const proposal = modelResult.phase === 'failed' ? heuristicProposal : modelResult.proposal;
+
+  // 自动档权限检查：仅在真机 + 自动档时有意义；从系统设置返回后
+  // 轮询 30s 捕捉"刚授予"的时机（用户在设置页停留时长不可控）
+  useEffect(() => {
+    if (!isNativePlatform() || recordMode !== 'auto') return;
+    let cancelled = false;
+    void (async () => {
+      const g = await usageHasPermission();
+      if (!cancelled) setUsagePerm(g ? 'granted' : 'denied');
+    })();
+    return () => { cancelled = true; };
+  }, [recordMode]);
+  useEffect(() => () => {
+    if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+  }, []);
+  const handleOpenAutoSettings = () => {
+    void usageOpenSettings();
+    if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+    let tries = 0;
+    permTimerRef.current = window.setInterval(async () => {
+      tries += 1;
+      const g = await usageHasPermission();
+      if (g || tries >= 15) {
+        if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+        permTimerRef.current = null;
+        setUsagePerm(g ? 'granted' : 'denied');
+      }
+    }, 2000);
+  };
 
   // 影子诊断（第 37 轮）：引擎每次产出提议都存档——用户的最终记录回填后
   // 在偏好页算 MAE/命中率。模型参数至今只用公开数据集标定，这是唯一的
@@ -296,25 +333,91 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
         ) : !sleepStartTime ? (
           <div className="space-y-3.5">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner`}>
-                  <Moon className={`w-5 h-5 ${theme.accentText}`} />
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
+                  {recordMode === 'auto' && isNativePlatform()
+                    ? <Zap className={`w-5 h-5 ${theme.accentText}`} />
+                    : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
                 </div>
-                <div>
-                  <h3 className="text-base font-black tracking-wide text-white">今晚准备入睡</h3>
-                  <p className={`text-xs ${theme.textMuted} mt-0.5`}>记录真实作息起止点</p>
+                <div className="min-w-0">
+                  <h3 className="text-base font-black tracking-wide text-white">
+                    {recordMode === 'auto' && isNativePlatform()
+                      ? (usagePerm === 'granted' ? '自动记录已开启' : '开启自动记录')
+                      : '今晚准备入睡'}
+                  </h3>
+                  <p className={`text-xs ${theme.textMuted} mt-0.5`}>
+                    {recordMode === 'auto' && isNativePlatform()
+                      ? '手机自动识别作息 · 无需每晚手动操作'
+                      : '记录真实作息起止点'}
+                  </p>
                 </div>
               </div>
+              {/* 手动/自动切换（仅真机显示；网页端无使用信号） */}
+              {isNativePlatform() && (
+                <div className="flex rounded-xl bg-black/20 p-0.5 shrink-0">
+                  {(['manual', 'auto'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={recordMode === m}
+                      onClick={() => setRecordMode(m)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                        recordMode === m ? `${theme.accentBg.split(' ')[0]} ${theme.accentFg}` : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'manual' ? '手动' : '自动'}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <button
-              type="button"
-              onClick={handleStartSleep}
-              className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
-            >
-              <span>开始夜间监测</span>
-              <span className="text-sm">→</span>
-            </button>
+            {recordMode === 'auto' && isNativePlatform() ? (
+              usagePerm === 'granted' ? (
+                <div className="space-y-2.5">
+                  <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 flex items-start gap-3">
+                    <Zap className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-black text-white">已开启自动记录</p>
+                      <p className={`text-[11px] ${theme.textMuted} mt-0.5 leading-relaxed`}>
+                        今晚无需任何操作——明早醒来，昨晚的睡眠会作为提议出现，点一下就完成记录。
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleStartSleep}
+                    className="w-full py-2 text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+                  >
+                    今晚还是想手动监测？
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={handleOpenAutoSettings}
+                    className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
+                  >
+                    <Zap className="w-4 h-4" />
+                    <span>{usagePerm === 'checking' ? '检查权限中…' : '开启自动记录'}</span>
+                    <span className="text-sm">→</span>
+                  </button>
+                  <p className={`text-[10px] ${theme.textMuted} leading-relaxed px-1`}>
+                    需要"使用情况访问"权限：只读屏幕亮灭时刻，不读任何内容，数据全部留在本机。开启后今晚就不用管了。
+                  </p>
+                </div>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={handleStartSleep}
+                className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
+              >
+                <span>开始夜间监测</span>
+                <span className="text-sm">→</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
