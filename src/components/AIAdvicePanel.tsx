@@ -362,7 +362,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     } catch (_err: any) {
       const localResult = generateLocalClinicalAnalysis(records, userProfile);
       setAnalysis(localResult);
-      setActiveProviderName('端侧离线引擎');
+      // 标签名实相符（第 40 轮）：报告由 generateLocalClinicalAnalysis（规则+模板）
+      // 生成，没有端侧 LLM 参与——"端侧离线引擎"会让人误以为有本机模型在输出
+      setActiveProviderName('本地临床规则引擎');
     } finally {
       setIsLoadingAnalysis(false);
     }

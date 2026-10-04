@@ -209,6 +209,10 @@ export function generateLocalClinicalAnalysis(
   else if (avgScore >= 75) healthGrade = '良好 A';
   else if (avgScore >= 65) healthGrade = '亚健康 B';
   else healthGrade = '需调理 C';
+  // 单晚方差很大：不足 3 晚就下"总体处于 X 水平"的结论是统计上的过度自信
+  // （第 40 轮真机截图实测：1 晚即评 A+ 且无任何样本量提示）
+  const sampleNote = count >= 3 ? '' : `（仅 ${count} 晚，样本不足，仅供参考）`;
+  healthGrade += sampleNote;
 
   // 3. 提取睡前行为阻碍
   const allHabits = new Set<string>();

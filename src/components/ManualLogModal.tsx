@@ -190,7 +190,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
         <div className="py-4 space-y-4">
           {/* Date Selector */}
           <div>
-            <label htmlFor="ml-date" className="block text-xs font-bold text-white mb-1.5">记录日期</label>
+            <label htmlFor="ml-date" className="block text-xs font-bold text-white mb-1.5">记录日期（醒来那天）</label>
             <input
               id="ml-date"
               type="date"

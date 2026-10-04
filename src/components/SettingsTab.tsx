@@ -17,7 +17,7 @@ import { AlarmManager } from './AlarmManager';
 import { CustomAISettingsModal } from './CustomAISettingsModal';
 import { createPortal } from 'react-dom';
 import { APP_THEMES, ThemeConfig } from '../utils/themeStyles';
-import { loadShadow, shadowStats, HIT_THRESHOLD_MIN } from '../utils/modelShadow';
+import { loadShadowStore, shadowStats, HIT_THRESHOLD_MIN } from '../utils/modelShadow';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
 function switchLauncherIcon(themeId: string) {
@@ -357,9 +357,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <span className="text-[9px] font-mono text-slate-400">实验功能</span>
         </div>
         {(() => {
-          const entries = loadShadow();
-          const st = shadowStats(entries);
-          const recent = entries.filter((e) => e.model || e.heuristic).slice(-14).reverse();
+          const store = loadShadowStore();
+          const st = shadowStats(store);
+          const recent = store.entries.filter((e) => e.model || e.heuristic).slice(-14).reverse();
           return (
             <div className="space-y-2.5">
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -368,14 +368,24 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                   <p className="text-base font-black font-mono text-white">{st.nights}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
-                  <p className="text-[9px] text-slate-400">平均误差</p>
-                  <p className="text-base font-black font-mono text-white">{st.maeMin !== null ? `${st.maeMin}分` : '—'}</p>
+                  <p className="text-[9px] text-slate-400">采纳率</p>
+                  <p className="text-base font-black font-mono text-white">{st.adoptionRate !== null ? `${st.adoptionRate}%` : '—'}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
-                  <p className="text-[9px] text-slate-400">命中（±{HIT_THRESHOLD_MIN}分）</p>
-                  <p className="text-base font-black font-mono text-white">{st.hitRate !== null ? `${st.hitRate}%` : '—'}</p>
+                  <p className="text-[9px] text-slate-400">独立命中率</p>
+                  <p className="text-base font-black font-mono text-white">{st.independent.hitRate !== null ? `${st.independent.hitRate}%` : '—'}</p>
                 </div>
               </div>
+              {/* 语义必须分开说清：采纳率=使用习惯；独立命中率（仅手动补录夜）才反映模型准度 */}
+              <p className="text-[9px] text-slate-400 leading-relaxed">
+                独立命中率来自手动补录的 {st.independent.nights} 晚（独立真值）{st.independent.maeMin !== null ? ` · 平均误差 ${st.independent.maeMin} 分` : ''}；
+                采纳率只反映你多常直接采纳，不代表模型准不准。
+              </p>
+              {st.droppedOutcomes > 0 && (
+                <p className="text-[9px] text-amber-400/90 leading-relaxed">
+                  另有 {st.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录日期"请选醒来那天。
+                </p>
+              )}
               {st.withOutcome === 0 && (
                 <p className="text-[10px] text-slate-400 leading-relaxed">
                   模型输出会按夜自动存档；你每次确认提议或手动补录后，这里会算出提议时刻与实际记录的误差。
@@ -385,12 +395,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 <div className="space-y-1.5">
                   {recent.map((e) => {
                     const eng = e.model ?? e.heuristic;
+                    const tag = e.outcome ? (e.outcome.type === 'confirmed' ? '已采纳' : '手动补录') : '未反馈';
                     return (
                       <div key={e.date} className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[10px] font-mono`}>
                         <span className="text-slate-400 shrink-0">{e.date.slice(5)}</span>
                         <span className="text-slate-300">{eng ? `${eng.bed} → ${eng.wake}` : '—'}</span>
                         <span className={`shrink-0 ${e.outcome ? 'text-emerald-400' : 'text-slate-500'}`}>
-                          {e.outcome ? `记录 ${e.outcome.bed}→${e.outcome.wake}` : '未反馈'}
+                          {e.outcome ? `记录 ${e.outcome.bed}→${e.outcome.wake}` : tag}
                         </span>
                       </div>
                     );
