@@ -83,7 +83,7 @@ export interface CustomAlarmSetting {
   smartWakeWindowMinutes: number; // e.g. 20
 }
 
-export type AIProvider = 'built_in' | 'deepseek' | 'custom_openai' | 'local_rules' | 'local_llm';
+export type AIProvider = 'deepseek' | 'custom_openai' | 'local_rules' | 'local_llm';
 
 export interface CustomAIConfig {
   provider: AIProvider;

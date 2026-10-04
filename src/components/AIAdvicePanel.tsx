@@ -629,6 +629,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       };
       setChatMessagesFor(targetId, (prev) => [...prev, aiReply]);
     } catch (_err) {
+      // 兜底回复来自本地规则引擎——标签必须同步，否则真机上（无服务端）
+      // 用户看到"模型：DeepSeek"却在跟规则引擎说话（第 35 轮 §1.2b）
+      setActiveProviderName('本地临床规则引擎');
       const localReplyText = generateLocalChatReply(text, nightsOnly(records)[0] ?? null, records);
       const aiReply: ChatMessage = {
         id: `ai-${Date.now()}`,

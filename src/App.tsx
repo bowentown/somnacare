@@ -145,6 +145,13 @@ export const App: React.FC = () => {
         parsedProfile.targetBedtime = parsedProfile.targetBedtime || '23:30';
         parsedProfile.targetWakeTime = parsedProfile.targetWakeTime || '07:30';
         parsedProfile.targetDurationHours = Number(parsedProfile.targetDurationHours) || 8;
+        // 遗留 provider 值迁移：built_in/local_gemma 是旧时代的内置规则档，
+        // 发送链路对 built_in 无分支（落到真机上不可达的服务端代理）——
+        // 统一迁到 local_rules，语义与行为一致。存量 JSON 无类型，需宽化比较
+        const legacyProvider = parsedProfile.aiConfig?.provider as string | undefined;
+        if (legacyProvider === 'built_in' || legacyProvider === 'local_gemma') {
+          parsedProfile.aiConfig = { ...(parsedProfile.aiConfig || {}), provider: 'local_rules' };
+        }
         return parsedProfile;
       } catch (e) {
         console.error('Failed to parse profile', e);

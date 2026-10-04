@@ -6,7 +6,7 @@
 
 **懂睡眠，更懂你。**
 
-一款 100% 离线优先的 Android 睡眠记录与分析应用 · React 19 + Capacitor 7 原生封装
+一款 100% 离线优先的 Android 睡眠记录与分析应用 · React 19 + Capacitor 8 原生封装
 
 [![Build APK](https://github.com/bowentown/somnacare/actions/workflows/build-apk.yml/badge.svg)](../../actions/workflows/build-apk.yml)
 [![Release](https://img.shields.io/badge/下载-最新%20Release-blue)](../../releases/latest)
@@ -87,7 +87,7 @@
 ## 🧬 技术栈
 
 - **前端**：React 19 + TypeScript + Vite + Tailwind CSS；Web Audio API 实时合成 9 种音效；品牌视觉（图标/开屏/启动屏）由 `tools/` 下的手写 PNG/SVG 生成器产出
-- **原生封装**：Capacitor 7（minSdk 24），GitHub Actions 全自动出包
+- **原生封装**：Capacitor 8（minSdk 24），GitHub Actions 全自动出包
 - **端侧 LLM**：Web 路径 [wllama](https://github.com/transformersjs/wllama)（llama.cpp WASM）+ Qwen3-0.6B；原生路径自定义插件封装 Google MediaPipe LLM Inference（Gemma 3 1B int4，mmap 加载、断点续传、流式生成）
 - **全局滤镜**：前台服务 + `TYPE_APPLICATION_OVERLAY` 双悬浮层，窗口级 alpha 按 Android 12+ 非信任触摸豁免规范控制，真实物理分辨率全屏覆盖
 
