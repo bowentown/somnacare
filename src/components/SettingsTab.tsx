@@ -17,6 +17,7 @@ import { AlarmManager } from './AlarmManager';
 import { CustomAISettingsModal } from './CustomAISettingsModal';
 import { createPortal } from 'react-dom';
 import { APP_THEMES, ThemeConfig } from '../utils/themeStyles';
+import { loadShadow, shadowStats, HIT_THRESHOLD_MIN } from '../utils/modelShadow';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
 function switchLauncherIcon(themeId: string) {
@@ -345,6 +346,63 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             已关闭自动提议：作息不规律时，自动推断更容易出错。手动补录不受影响。
           </p>
         )}
+      </div>
+
+      {/* 自动记录模型诊断（第 37 轮影子跑）：模型参数至今只用公开数据集标定，
+          本卡让真实使用自动积累准确率——每次确认提议/手动补录都是真值，
+          无需用户汇报。数据只存本机、不进备份 */}
+      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-white">自动记录 · 模型诊断</h3>
+          <span className="text-[9px] font-mono text-slate-400">实验功能</span>
+        </div>
+        {(() => {
+          const entries = loadShadow();
+          const st = shadowStats(entries);
+          const recent = entries.filter((e) => e.model || e.heuristic).slice(-14).reverse();
+          return (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
+                  <p className="text-[9px] text-slate-400">积累夜数</p>
+                  <p className="text-base font-black font-mono text-white">{st.nights}</p>
+                </div>
+                <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
+                  <p className="text-[9px] text-slate-400">平均误差</p>
+                  <p className="text-base font-black font-mono text-white">{st.maeMin !== null ? `${st.maeMin}分` : '—'}</p>
+                </div>
+                <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
+                  <p className="text-[9px] text-slate-400">命中（±{HIT_THRESHOLD_MIN}分）</p>
+                  <p className="text-base font-black font-mono text-white">{st.hitRate !== null ? `${st.hitRate}%` : '—'}</p>
+                </div>
+              </div>
+              {st.withOutcome === 0 && (
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  模型输出会按夜自动存档；你每次确认提议或手动补录后，这里会算出提议时刻与实际记录的误差。
+                </p>
+              )}
+              {recent.length > 0 && (
+                <div className="space-y-1.5">
+                  {recent.map((e) => {
+                    const eng = e.model ?? e.heuristic;
+                    return (
+                      <div key={e.date} className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[10px] font-mono`}>
+                        <span className="text-slate-400 shrink-0">{e.date.slice(5)}</span>
+                        <span className="text-slate-300">{eng ? `${eng.bed} → ${eng.wake}` : '—'}</span>
+                        <span className={`shrink-0 ${e.outcome ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {e.outcome ? `记录 ${e.outcome.bed}→${e.outcome.wake}` : '未反馈'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[9px] text-slate-400 leading-relaxed">
+                需要开启使用情况访问且积累 ≥7 天数据，模型才会介入提议。误差 = 提议时刻与你最终确认/补录时刻的差异（按圆周口径，跨午夜安全）。
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
 {/* 4. 大肥鱼桌宠悬浮窗（配色跟主题走——纯黑主题下是天蓝会很刺眼） */}

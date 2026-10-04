@@ -6,6 +6,7 @@ import { formatDurationChinese } from '../utils/sleepScore';
 import { buildRecordFromWindow } from '../utils/recordBuilder';
 import { Smartphone } from 'lucide-react';
 import { computeProposal, computeModelProposal, type Proposal } from '../utils/proposal';
+import { recordEngineRun, recordOutcome } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
 import { queryScreenOnEvents } from '../utils/usageSignal';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
@@ -106,6 +107,22 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   );
   const proposal = modelResult.phase === 'failed' ? heuristicProposal : modelResult.proposal;
 
+  // 影子诊断（第 37 轮）：引擎每次产出提议都存档——用户的最终记录回填后
+  // 在偏好页算 MAE/命中率。模型参数至今只用公开数据集标定，这是唯一的
+  // 真机数据积累通道。recordEngineRun 按目标夜合并，重复计算幂等
+  useEffect(() => {
+    if (!proposal) return;
+    recordEngineRun({
+      date: proposal.targetDate,
+      model: modelResult.phase === 'decided' && modelResult.proposal
+        ? { bed: modelResult.proposal.bedtime, wake: modelResult.proposal.wakeTime }
+        : undefined,
+      heuristic: modelResult.phase !== 'decided' && heuristicProposal
+        ? { bed: heuristicProposal.bedtime, wake: heuristicProposal.wakeTime }
+        : undefined,
+    });
+  }, [proposal, modelResult.phase, heuristicProposal]);
+
   // 提议只在"需要的时候"在场（第 28 轮）：醒来后 12 小时内有效，过后自动隐去
   //（昨晚的提议挂到晚上就变成干扰）；次日由新的目标夜重新产生。
   // 交互（确认/改一下/忽略）即刻隐去（handledDate）——两套机制互补
@@ -131,6 +148,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       chronotype: userProfile?.chronotype ?? 'night',
     });
     markHandled();
+    recordOutcome(visibleProposal.targetDate, built.record.bedtime, built.record.wakeTime, 'confirmed');
     setCompletedRecord(built.record);
     setSessionTruncated(built.truncated);
     setShowSummaryModal(true);

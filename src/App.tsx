@@ -12,6 +12,7 @@ import { TrendsTab } from './components/TrendsTab';
 import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
+import { recordOutcome } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
@@ -657,6 +658,7 @@ export const App: React.FC = () => {
   };
 
   const handleSaveManualRecord = (newRecord: SleepRecord) => {
+    recordOutcome(newRecord.date, newRecord.bedtime, newRecord.wakeTime, 'manual');   // 影子诊断：最终记录=真值
     setRecords((prev) => {
       const merged = mergeRecord(prev, newRecord);   // 夜睡按日一条、小睡可多次（D1 根治）
       return merged.sort(

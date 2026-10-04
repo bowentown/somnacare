@@ -83,6 +83,13 @@ export function computeProposal(input: ProposalInput): Proposal | null {
   const w = new Date(wakeMs);
   const targetDate = `${w.getFullYear()}-${pad(w.getMonth() + 1)}-${pad(w.getDate())}`;
 
+  // 陈旧防御（第 37 轮）：usage 缓存长期未刷新时（久不开 App/查询失败回退
+  // 旧缓存），提议可能指向好几天前的那晚——"补发旧账"没有确认价值。
+  // 超过 3 天的目标夜直接不提议（模型路径的窗口本身锚定 now，无此问题）
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const target0 = new Date(w.getFullYear(), w.getMonth(), w.getDate()).getTime();
+  if ((today0 - target0) / 86400000 > 3) return null;
+
   // gate 4：已有夜睡记录 → 不提议。必须只看夜睡——小睡与夜睡共存是合法状态
   // （mergeRecord 契约），下午记了午睡不该把"昨晚还没确认"的提议挡掉
   if (nightsOnly(input.records).some((r) => r.date === targetDate)) return null;
