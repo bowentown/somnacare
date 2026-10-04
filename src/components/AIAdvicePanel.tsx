@@ -292,6 +292,26 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     return null;
   };
 
+  // AI 上游载荷瘦身（第 34 轮联动审计）：此前 recentLogs 发【完整记录对象】——
+  // stages 分期数组（体积大头）、梦境笔记（隐私！用户手填的梦不会同意被发给
+  // 模型服务方）、声音事件全部随行，单次评估上游 token 膨胀数倍。
+  // 只投影服务端/提示词实际消费的字段
+  const slimLogsForAI = (logs: SleepRecord[]) =>
+    logs.map((r) => ({
+      date: r.date,
+      bedtime: r.bedtime,
+      wakeTime: r.wakeTime,
+      durationMinutes: r.durationMinutes,
+      sleepScore: r.sleepScore,
+      sleepEfficiency: r.sleepEfficiency,
+      deepSleepMinutes: r.deepSleepMinutes,
+      remSleepMinutes: r.remSleepMinutes,
+      awakeMinutes: r.awakeMinutes,
+      latencyMinutes: r.latencyMinutes,
+      wakeCount: r.wakeCount,
+      preSleepHabits: r.preSleepHabits,
+    }));
+
   const fetchAIAnalysis = async () => {
     setIsLoadingAnalysis(true);
 
@@ -313,7 +333,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          recentLogs: nightsOnly(records).slice(0, 7),
+          recentLogs: slimLogsForAI(nightsOnly(records).slice(0, 7)),
           userProfile,
           aiConfig: userProfile.aiConfig,
         }),
@@ -584,7 +604,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
         body: JSON.stringify({
           message: text,
           history: newHistory.slice(-6),
-          recentLogs: nightsOnly(records).slice(0, 3),
+          recentLogs: slimLogsForAI(nightsOnly(records).slice(0, 3)),
           userProfile,
           aiConfig: userProfile.aiConfig,
         }),
