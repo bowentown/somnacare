@@ -141,14 +141,17 @@ jobs:
           # 安全审计 A2/A13：关闭系统备份与迁移通道——Android 默认 allowBackup=true，
           # adb backup 可整体导出 WebView localStorage（睡眠记录、聊天历史、API Key）
           # 与 SharedPreferences（闹钟表），与"数据仅存本机"的产品承诺直接冲突；
-          # 同时显式禁明文流量。模板若已写 allowBackup="true" 则先替换后补注，
-          # 避免同一标签重复属性导致 aapt 编译失败
+          # 同时显式禁明文流量。★ Capacitor 8.5.x 模板的 <application 标签后是
+          # 【换行】而非空格（CI 实测踩坑），s|<application | 不命中——
+          # 所以先替换独立成行的 allowBackup，再用它当锚点追加 usesCleartextTraffic；
+          # 并给"模板将来不再声明 allowBackup"留整段插入兜底
           sed -i 's|android:allowBackup="true"|android:allowBackup="false"|' android/app/src/main/AndroidManifest.xml
-          if ! grep -q 'android:allowBackup=' android/app/src/main/AndroidManifest.xml; then
-            sed -i 's|<application |<application android:allowBackup="false" |' android/app/src/main/AndroidManifest.xml
-          fi
           if ! grep -q 'android:usesCleartextTraffic=' android/app/src/main/AndroidManifest.xml; then
-            sed -i 's|<application |<application android:usesCleartextTraffic="false" |' android/app/src/main/AndroidManifest.xml
+            sed -i 's|android:allowBackup="false"|android:allowBackup="false" android:usesCleartextTraffic="false"|' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q 'android:allowBackup=' android/app/src/main/AndroidManifest.xml; then
+            sed -i 's|<application$|<application\n        android:allowBackup="false"\n        android:usesCleartextTraffic="false"|' android/app/src/main/AndroidManifest.xml
+            sed -i 's|<application |<application android:allowBackup="false" android:usesCleartextTraffic="false" |' android/app/src/main/AndroidManifest.xml
           fi
 
           # sed 注入必须命中断言：模板结构变化导致静默不命中时，权限/服务缺失
