@@ -11,3 +11,4 @@ coverage/
 *.keystore
 *.jks
 keystore.b64
+test-results/
