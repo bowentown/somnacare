@@ -163,12 +163,27 @@ export function buildSleepFacts(
   }
   if (week.length) {
     const avg = Math.round(week.reduce((a, r) => a + r.sleepScore, 0) / week.length);
-    const good = week.filter((r) => r.sleepScore >= 80).length;
-    facts.push(`近 ${week.length} 日平均 ${avg} 分`);
-    facts.push(`近 ${week.length} 日有 ${good} 天达到 80 分`);
-  } else {
-    facts.push('最近没有任何历史记录');
+    facts.push(`近 ${week.length} 晚平均 ${avg} 分`);
   }
+  // 本周达标战报（第 29 轮，用户口径）：
+  //   周 = 周一起算；夜按"醒来那天"归属本周（周日晚→周一早 = 本周第 1 夜）。
+  //   已度过 = 本周已过去的夜数（周一=1 … 周日=7）；x = 有记录的夜数；
+  //   n = 达标（≥80 分）夜数；m = 已度过 − x = 未记录的夜数。
+  // 旧口径 week=nightsOnly().slice(0,7) 只数有记录的夜，未记录的夜凭空消失
+  //（用 2 天却显示 1/1——没记的那晚像不存在一样）。
+  const dowIdx = (now.getDay() + 6) % 7;            // 周一=0 … 周日=6
+  const elapsedSlots = dowIdx + 1;                   // 本周已过去的夜数
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
+  const weekDates = new Set<string>();
+  for (let i = 0; i < elapsedSlots; i++) {
+    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+    weekDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  const weekRecs = nightsOnly(records as SleepRecord[]).filter((r) => weekDates.has(r.date));
+  const goodWeek = weekRecs.filter((r) => r.sleepScore >= 80).length;
+  const missed = Math.max(0, elapsedSlots - weekRecs.length);
+  facts.push(`本周已过 ${elapsedSlots} 天，达标 ${goodWeek} 天`);
+  facts.push(`本周有记录 ${weekRecs.length} 天，未记录 ${missed} 天`);
   return facts;
 }
 

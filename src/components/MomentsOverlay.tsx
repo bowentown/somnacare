@@ -92,23 +92,28 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
     );
   }
   if (type === 'week') {
-    // 事实串是「近 ${week.length} 日有 N 天达到 80 分」——记录不足 7 天时
-    // 写死的前缀匹配不上，曾显示 0/7 与出处清单直接矛盾
-    // 两条"近 N 日"fact 都以"近 "开头，必须按内容找"有 N 天"那条——
-    // 此前 find(startsWith) 命中"平均"那条 → 正则恒 null → 恒显 0/7
-    const weekMatch = moment.facts.map((f) => f.match(/近 (\d+) 日有 (\d+) 天/)).find(Boolean) ?? null;
+    // 战报口径（第 29 轮，用户定义）：周一起算、夜按醒来日归属——
+    //   n = 达标（≥80 分）夜数 / x = 有记录夜数，大数字 n/x；
+    //   m = 本周已过夜数 − x = 未记录的夜数（旧口径只数有记录的夜，
+    //   没记的那晚凭空消失——用 2 天却显示 1/1）。
+    // 事实串由 petMoments.buildSleepFacts 单一来源生成，此处只解析。
+    const weekMatch = moment.facts.map((f) => f.match(/本周已过 (\d+) 天，达标 (\d+) 天/)).find(Boolean) ?? null;
+    const recMatch = moment.facts.map((f) => f.match(/本周有记录 (\d+) 天，未记录 (\d+) 天/)).find(Boolean) ?? null;
     const goodDays = weekMatch ? Number(weekMatch[2]) : 0;
-    const total = weekMatch ? Number(weekMatch[1]) : 7;
-    const pct = Number.isFinite(goodDays) ? Math.min(100, Math.round((goodDays / (total || 7)) * 100)) : 0;
+    const recDays = recMatch ? Number(recMatch[1]) : 0;
+    const missed = recMatch ? Number(recMatch[2]) : 0;
+    const pct = weekMatch ? Math.min(100, Math.round((goodDays / Math.max(1, Number(weekMatch[1]))) * 100)) : 0;
     return (
       <div className="rounded-xl bg-gradient-to-br from-emerald-900/40 to-slate-900 border border-emerald-800/40 aspect-square p-2.5 flex flex-col justify-between">
         <p className="text-[9px] font-bold text-emerald-300">本周达标战报</p>
         <div>
           <p className="text-2xl font-black text-white leading-none">
-            {Number.isFinite(goodDays) ? goodDays : 0}
-            <span className="text-xs text-slate-400 font-bold">/{total || 7} 天</span>
+            {goodDays}
+            <span className="text-xs text-slate-400 font-bold">/{recDays} 天</span>
           </p>
-          <p className="text-[9px] text-slate-400 mt-0.5">评分 ≥80 才算本鱼出手</p>
+          <p className="text-[9px] text-slate-400 mt-0.5">
+            {missed > 0 ? `有 ${missed} 晚未记录 · ` : '全部有记录 · '}评分 ≥80 算达标
+          </p>
         </div>
         <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
           <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-sky-400" style={{ width: `${pct}%` }} />
