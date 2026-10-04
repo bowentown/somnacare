@@ -476,7 +476,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                   {onDeleteRecord && (
                     <button
                       type="button"
-                      aria-label={`删除 ${r.date} 的睡眠记录`}
+                      aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {

@@ -51,7 +51,10 @@ export function attachHScroll(el: HTMLElement): () => void {
       raf: 0,
       v: 0,
     });
-    el.setPointerCapture?.(e.pointerId);
+    // ★ 不能在 pointerdown 就 setPointerCapture：按 Pointer Events 规范，
+    // 捕获期间产生的 click 事件会派发给捕获元素（行本身）而不是被点的
+    // 胶囊按钮——行内容溢出是常态，快捷提问的点击会整体失效。
+    // 捕获推迟到横向锁定时（见 onMove），拖拽语义不变、点击恢复正常
   };
 
   const onMove = (e: PointerEvent) => {
@@ -68,6 +71,9 @@ export function attachHScroll(el: HTMLElement): () => void {
       states.delete(el);
       return;
     }
+    // 首次锁横向时才捕获：手指拖出元素边界后事件仍持续流入（拖拽语义需要），
+    // 而纯点击（从未锁定）不捕获 → click 正常派发给被点的胶囊
+    if (!el.hasPointerCapture?.(e.pointerId)) el.setPointerCapture?.(e.pointerId);
     if (e.cancelable) e.preventDefault();
 
     let next = s.startScroll - dx;

@@ -112,8 +112,11 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
       endMs += 24 * 60 * 60 * 1000;
     }
     // 下限与其他入口一致（recordBuilder 的 Math.max(1,…)）：20 分钟的真实小睡
-    // 不能被抬成 60 分钟——"按实际时长如实记录"是全应用口径
-    const totalDurationMinutes = Math.max(1, Math.round((endMs - startMs) / 60000) - stagesData.awakeMinutes);
+    // 不能被抬成 60 分钟——"按实际时长如实记录"是全应用口径。
+    // 上限 16h 同样对齐 recordBuilder：醒早于睡会被当作"跨到次日"，
+    // "07:00 睡到 06:00"曾产出 1360 分钟的记录毒化全部统计均值
+    const rawDurationMinutes = Math.max(1, Math.round((endMs - startMs) / 60000) - stagesData.awakeMinutes);
+    const totalDurationMinutes = Math.min(960, rawDurationMinutes);
 
     const { score, efficiency } = calculateSleepScore(
       totalDurationMinutes,

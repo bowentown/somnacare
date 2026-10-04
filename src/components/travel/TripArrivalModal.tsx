@@ -135,7 +135,7 @@ export const TripArrivalModal: React.FC<Props> = ({ postcardId, onClose, onOpenM
                 }}
                 className="w-full py-2 rounded-xl text-[#94a3b8] hover:text-[#e2e8f0] text-[11px] font-medium transition-colors cursor-pointer"
               >
-                稍后再看
+                收进图鉴，稍后再看
               </button>
             </div>
           </div>
