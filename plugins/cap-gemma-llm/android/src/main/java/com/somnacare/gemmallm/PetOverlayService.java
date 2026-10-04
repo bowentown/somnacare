@@ -251,6 +251,7 @@ public class PetOverlayService extends Service {
                 }
             });
 
+            OverlayGuard.apply(petRoot);   // A5：可点击悬浮窗防 tapjacking
             wm.addView(petRoot, petParams);
             whale.start();   // 窗口上屏成功才启动 33ms 自循环——失败路径才能完整回收
             main.post(drowsyTick);
@@ -331,6 +332,7 @@ public class PetOverlayService extends Service {
             FrameLayout wrap = new FrameLayout(this);
             wrap.addView(row);
             wrap.setOnTouchListener((vv, e) -> {
+                if (OverlayGuard.isObscuredTouch(e)) return true;   // A5
                 if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) hideZonePicker();
                 return false;
             });
@@ -359,6 +361,7 @@ public class PetOverlayService extends Service {
             wrap.setAlpha(0f);
             wrap.setScaleX(0.7f);
             wrap.setScaleY(0.7f);
+            OverlayGuard.apply(wrap);   // A5：分区胶囊是可点击视图
             wm.addView(wrap, pickerLp);
             pickerRoot = wrap;
             pickerShown = true;
@@ -402,6 +405,8 @@ public class PetOverlayService extends Service {
     }
 
     private boolean handlePetTouch(MotionEvent e) {
+        // A5：被其它窗口（可能是恶意悬浮层）遮挡的触摸一律丢弃并消费
+        if (OverlayGuard.isObscuredTouch(e)) return true;
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downRawX = (int) e.getRawX();
@@ -515,6 +520,7 @@ public class PetOverlayService extends Service {
             fanOnRight = (petParams.x + petParams.width / 2) < diPre.width / 2;
             v = buildFan();
             v.setOnTouchListener((vv, e) -> {
+                if (OverlayGuard.isObscuredTouch(e)) return true;   // A5
                 if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
                     // 落点在气泡上的外部触摸让气泡自己处理——否则点一下播报，
                     // 扇面跟着一起消失，像"莫名其妙闪退"
@@ -547,6 +553,7 @@ public class PetOverlayService extends Service {
                 b.setScaleX(0.2f);
                 b.setScaleY(0.2f);
             }
+            OverlayGuard.apply(v);   // A5：扇面按钮是可点击视图
             wm.addView(v, fanLp);
             fanRoot = v;
             fanShown = true;
@@ -773,6 +780,7 @@ public class PetOverlayService extends Service {
             boolean above = petParams.y - dp(150) >= dp(4);   // 预估放得下就贴头上，否则贴脚下来
             FrameLayout v = buildBubble(msg, above);
             v.setOnTouchListener((vv, e) -> {
+                if (OverlayGuard.isObscuredTouch(e)) return true;   // A5
                 if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
                     // 落点在扇面按钮上的外部触摸让扇面自己处理——
                     // 点一个按钮不该把气泡也一起收掉
@@ -826,6 +834,7 @@ public class PetOverlayService extends Service {
             v.setPivotY(above ? bh - dp(9) : dp(9));
             v.setScaleX(0.55f);
             v.setScaleY(0.55f);
+            OverlayGuard.apply(v);   // A5：气泡可点击关闭
             wm.addView(v, bubbleLp);
             bubbleRoot = v;
             bubbleShown = true;

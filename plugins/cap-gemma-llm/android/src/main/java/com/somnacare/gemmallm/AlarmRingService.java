@@ -118,7 +118,11 @@ public class AlarmRingService extends Service {
                 startForeground(20260931, n,
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
                 return;
-            } catch (Exception ignored) { }
+            } catch (Exception fgErr) {
+                // 复审 5.5：specialUse 类型被系统拒绝时会落到无类型 startForeground，
+                // 至少留痕——否则"闹钟响了但前台通知消失"无从排查
+                android.util.Log.w("AlarmRingService", "startForeground(specialUse) 被拒绝: " + fgErr);
+            }
         }
         startForeground(20260931, n);
     }

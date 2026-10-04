@@ -22,6 +22,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.util.concurrent.Future;
 
@@ -754,6 +755,45 @@ public class GemmaLLMPlugin extends Plugin {
         return target;
     }
 
+    /**
+     * 安全审计 A4：模型下载地址白名单。url 来自 JS 桥，被注入的前端或误配的
+     * 模型源可借原生插件访问任意主机（内网 / 云元数据 169.254.169.254）并把
+     * 响应写入应用私有目录。JS 侧的 isSafeHttpsUrl 管不到这条原生路径，
+     * 桥接层必须独立校验：仅 HTTPS + 域名后缀白名单（HF / hf-mirror 主域及
+     * 其 CDN 子域，默认拒绝）。JS 侧合法调用只发 huggingface.co / hf-mirror.com
+     * 两个固定 URL（见 localLlmEngine.ts），白名单不影响任何现有功能。
+     */
+    private static final String[] ALLOWED_MODEL_HOST_SUFFIXES = {
+            "huggingface.co", "hf.co", "hf-mirror.com",
+    };
+
+    private static boolean isAllowedModelHost(String host) {
+        if (host == null || host.isEmpty()) return false;
+        String h = host.toLowerCase();
+        for (String suffix : ALLOWED_MODEL_HOST_SUFFIXES) {
+            if (h.equals(suffix) || h.endsWith("." + suffix)) return true;
+        }
+        return false;
+    }
+
+    /** 建立【已过白名单】的下载连接；重定向的每一跳都必须重新过这道闸。 */
+    private static HttpURLConnection openAllowedConnection(String url) throws Exception {
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new Exception("模型下载地址无法解析");
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || !isAllowedModelHost(uri.getHost())) {
+            throw new Exception("不安全的模型下载地址（仅允许 HTTPS 白名单域名）");
+        }
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setConnectTimeout(20000);
+        conn.setReadTimeout(30000);
+        conn.setInstanceFollowRedirects(false);   // 重定向由 downloadModel 手动逐跳校验
+        return conn;
+    }
+
     @PluginMethod
     public void downloadModel(PluginCall call) {
         String url = call.getString("url");
@@ -771,7 +811,9 @@ public class GemmaLLMPlugin extends Plugin {
             File tempFile;
             try {
                 finalFile = safeResolveFile(filename);
-                tempFile = new File(getContext().getFilesDir(), filename + ".part");
+                // 复核残留统一：.part 临时文件走同一个解析函数，
+                // 避免将来重构时出现绕过校验的缺口
+                tempFile = safeResolveFile(filename + ".part");
             } catch (Exception pathErr) {
                 call.reject(pathErr.getMessage());
                 return;
@@ -779,16 +821,29 @@ public class GemmaLLMPlugin extends Plugin {
             long existing = tempFile.exists() ? tempFile.length() : 0L;
 
             try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-                conn.setConnectTimeout(20000);
-                conn.setReadTimeout(30000);
-                // 安全审计 V15：携带 Bearer 时禁跟随重定向——302 会把凭证带到
-                // 重定向目标域名。模型下载源是固定 URL，无需跟随
-                conn.setInstanceFollowRedirects(false);
-                if (fToken != null) conn.setRequestProperty("Authorization", "Bearer " + fToken);
-                if (existing > 0) conn.setRequestProperty("Range", "bytes=" + existing + "-");
-
-                int code = conn.getResponseCode();
+                // 安全审计 A4：起点即 HTTPS + 白名单校验
+                HttpURLConnection conn = openAllowedConnection(url);
+                // 安全审计 V15 + A4：禁自动跟随重定向，但 HF resolve→CDN 的 302
+                // 必须支持——改为手动逐跳跟随，每一跳都重新过白名单校验，
+                // Bearer 只会发往白名单内的域。跳数封顶防重定向循环
+                String currentUrl = url;
+                int redirects = 0;
+                int code;
+                while (true) {
+                    if (fToken != null) conn.setRequestProperty("Authorization", "Bearer " + fToken);
+                    if (existing > 0) conn.setRequestProperty("Range", "bytes=" + existing + "-");
+                    code = conn.getResponseCode();
+                    if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                        String loc = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        if (loc == null || loc.isEmpty()) throw new IOException("重定向缺少 Location");
+                        if (++redirects > 3) throw new IOException("重定向次数过多");
+                        currentUrl = new URL(new URL(currentUrl), loc).toString();
+                        conn = openAllowedConnection(currentUrl);
+                        continue;
+                    }
+                    break;
+                }
                 if (code == 416) { // 断点续传越界 = 文件已下完
                     if (!tempFile.renameTo(finalFile)) {
                         throw new IOException("重命名临时文件失败");
@@ -917,7 +972,10 @@ public class GemmaLLMPlugin extends Plugin {
             call.reject(pathErr.getMessage());
             return;
         }
-        int maxTokens = call.getInt("maxTokens", 1024);
+        // 安全审计 A8：maxTokens 决定 KV cache 预留，桥接层不能假设调用方是
+        // 自家代码——极端值（如 Integer.MAX_VALUE）会让推理引擎内存爆炸。
+        // JS 侧合法调用只传 1024，钳制到 [1, 2048] 仍有余量
+        int maxTokens = Math.max(1, Math.min(call.getInt("maxTokens", 1024), 2048));
         if (!f.exists() || f.length() == 0) {
             call.reject("模型文件不存在，请先下载");
             return;
@@ -950,6 +1008,29 @@ public class GemmaLLMPlugin extends Plugin {
         }
         if (messages == null) {
             call.reject("messages 必填");
+            return;
+        }
+        // 安全审计 A8：桥接层独立设限——条数与总字符超限直接拒绝，防注入路径
+        // 借原生推理引擎把内存打爆。JS 侧合法调用最多送 8 条历史（AIAdvicePanel
+        // 历史窗口截断），64 条 / 24k 字符远在合法用量之上
+        if (messages.length() > 64) {
+            call.reject("messages 条数超限");
+            return;
+        }
+        long totalChars = 0;
+        try {
+            for (Object o : messages.toList()) {
+                if (o instanceof JSObject) {
+                    String c = ((JSObject) o).getString("content", "");
+                    totalChars += c == null ? 0 : c.length();
+                }
+            }
+        } catch (Exception parseErr) {
+            call.reject("messages 解析失败");
+            return;
+        }
+        if (totalChars > 24000) {
+            call.reject("messages 总长度超限");
             return;
         }
         // 局部捕获 + 先计数：期间 unloadInternal 只会把它登记待关，不会就地 close

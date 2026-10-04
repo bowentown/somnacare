@@ -276,6 +276,8 @@ public class BedtimeOverlayService extends Service {
         lp.gravity = Gravity.TOP | Gravity.START;
 
         try {
+            // A5：全屏悬浮窗带「好的/无视」按钮，被劫持的点击会改写作息设置并拉起 App
+            OverlayGuard.apply(root);
             wm.addView(root, lp);
             overlay = root;
             // 全屏窗曾在用户未点击时永久盖屏（无超时、返回键也收不到）。

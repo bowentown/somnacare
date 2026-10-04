@@ -56,8 +56,10 @@ jobs:
 
       - name: Install Project Dependencies
         run: |
-          # 使用 --legacy-peer-deps 确保无论任何 npm 版本都能 100% 成功安装
-          npm install --legacy-peer-deps
+          # 安全审计 A10：优先 npm ci——按 package-lock.json 精确解析，
+          # 防供应链版本漂移；锁文件与 package.json 失同步时回退 npm install，
+          # 构建不静默中断（回退会留下明显日志）
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Run Guardrails (wiring / theme / contrast)
         run: npm run verify
@@ -76,9 +78,10 @@ jobs:
         run: |
           # 三个运行时插件（local-notifications/filesystem/share）已在 package.json
           # dependencies 里随第一步装好，这里只补 cap 三件套。
-          # 必须显式 pin 主版本 + --legacy-peer-deps：无锁安装会整树重解析，
-          # Capacitor 出新主版本后模板漂移会让下面所有 sed 静默失配
-          npm install --legacy-peer-deps --save-dev @capacitor/cli@^8 @capacitor/core@^8 @capacitor/android@^8
+          # 必须显式 pin 版本 + --legacy-peer-deps：无锁安装会整树重解析，
+          # Capacitor 出新版本后模板漂移会让下面所有 sed 静默失配
+          # （A10：^8 收成精确版本，升级一律走显式提交而非 CI 静默漂移）
+          npm install --legacy-peer-deps --save-dev @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/android@8.5.2
           # 本地原生插件：MediaPipe LLM Inference（Gemma .task 端侧推理）+ 使用行为信号
           npm install --legacy-peer-deps --save-dev ./plugins/cap-gemma-llm ./plugins/cap-usage-signal
 
@@ -135,12 +138,28 @@ jobs:
             sed -i 's/minSdkVersion = [0-9]*/minSdkVersion = 24/' android/variables.gradle
           fi
 
+          # 安全审计 A2/A13：关闭系统备份与迁移通道——Android 默认 allowBackup=true，
+          # adb backup 可整体导出 WebView localStorage（睡眠记录、聊天历史、API Key）
+          # 与 SharedPreferences（闹钟表），与"数据仅存本机"的产品承诺直接冲突；
+          # 同时显式禁明文流量。模板若已写 allowBackup="true" 则先替换后补注，
+          # 避免同一标签重复属性导致 aapt 编译失败
+          sed -i 's|android:allowBackup="true"|android:allowBackup="false"|' android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'android:allowBackup=' android/app/src/main/AndroidManifest.xml; then
+            sed -i 's|<application |<application android:allowBackup="false" |' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q 'android:usesCleartextTraffic=' android/app/src/main/AndroidManifest.xml; then
+            sed -i 's|<application |<application android:usesCleartextTraffic="false" |' android/app/src/main/AndroidManifest.xml
+          fi
+
           # sed 注入必须命中断言：模板结构变化导致静默不命中时，权限/服务缺失
           # 只会在运行期表现为"闹钟不响/滤镜打不开"——必须在 CI 就拦住
           grep -q 'SCHEDULE_EXACT_ALARM' android/app/src/main/AndroidManifest.xml
           grep -q 'com.somnacare.gemmallm.PetOverlayService' android/app/src/main/AndroidManifest.xml
           grep -q 'com.somnacare.gemmallm.AlarmRingService' android/app/src/main/AndroidManifest.xml
           grep -q 'com.somnacare.gemmallm.BootReceiver' android/app/src/main/AndroidManifest.xml
+          # A2 断言：备份通道必须确实关闭，静默失配 = 产出可被 adb backup 的 APK
+          grep -q 'android:allowBackup="false"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
           # 断言 ≥ 24（而非 == 24：相等断言会"确认"被降级后的值）
           grep -qE 'minSdkVersion = (2[4-9]|[3-9][0-9])' android/variables.gradle
 
@@ -193,6 +212,13 @@ jobs:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then
+            # 安全审计 A1：debug 变体 debuggable=true（run-as 可读应用私有数据）
+            # 且每次签名不同，绝不允许以正式版本号出现在公开 Release 页面——
+            # 发布标签下缺 Secrets 必须硬失败；只有分支/手动构建才允许回退 debug
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              echo "::error::发布标签 $GITHUB_REF 必须先配置 ANDROID_KEYSTORE_BASE64（及 KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD），拒绝回退 debug 签名"
+              exit 1
+            fi
             # 兜底：Secrets 未配置时保持旧的 debug 签名行为（每次构建签名不同，
             # 覆盖安装需先卸载）。配置 Secrets 后本分支自动切换为固定签名 release
             echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，回退 debug 签名（更新需卸载重装）"
@@ -248,7 +274,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          APK_FILE=$(find apk -name "*.apk" | head -n 1)
+          # 安全审计 A1（纵深）：公开 Release 只接受 release 变体——
+          # 上游签名步骤万一回退 debug，这里必须硬失败而不是把 debuggable
+          # 的 APK 改名发布出去
+          APK_FILE=$(find apk -path "*apk/release/*.apk" | head -n 1)
+          [ -n "$APK_FILE" ] || { echo "::error::未找到 release 变体 APK——debug 变体禁止发布到公开 Release"; exit 1; }
           RELEASE_NAME="SomnaCare-${TAG}.apk"
           cp "$APK_FILE" "$RELEASE_NAME"
           cat > release_notes.md <<'EOF'
