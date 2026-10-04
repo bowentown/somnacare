@@ -266,10 +266,12 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     const str = JSON.stringify({
       nights: nights.map((r) => [r.date, r.sleepScore, r.durationMinutes, r.deepSleepMinutes, r.remSleepMinutes, r.awakeMinutes, r.bedtime, r.wakeTime]),
       p: [userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype ?? ''],
+      // 模型路由也参与指纹：换 provider/模型后 12h 内不应拿到旧引擎的结果
+      m: [userProfile.aiConfig?.provider ?? '', userProfile.aiConfig?.deepseekModel ?? '', userProfile.aiConfig?.customModelName ?? ''],
     });
     for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
     return String(h);
-  }, [records, userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype]);
+  }, [records, userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype, userProfile.aiConfig?.provider, userProfile.aiConfig?.deepseekModel, userProfile.aiConfig?.customModelName]);
   const readAnalysisCache = (): SleepAnalysisResult | null => {
     try {
       const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);

@@ -371,7 +371,11 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
 }
 请注意：只输出合法标准JSON字符串，不要添加任何Markdown标记或无关字符。`;
 
-    const userPrompt = `用户档案：${JSON.stringify(userProfile || { age: 28, targetHours: 8 })}
+    // 隐私（第 33 轮联动审计）：aiConfig 含 deepseekApiKey/customApiKey，
+    // 原样序列化会把密钥写进提示词发给模型服务方——自建端点场景即泄露给第三方。
+    // 提示词只需要健康相关字段
+    const { aiConfig: _stripAi, ...safeProfile } = (userProfile || {}) as Record<string, unknown>;
+    const userPrompt = `用户档案：${JSON.stringify(Object.keys(safeProfile).length ? safeProfile : { age: 28, targetHours: 8 })}
 近期睡眠记录数据：
 ${JSON.stringify(recentLogs, null, 2)}
 
