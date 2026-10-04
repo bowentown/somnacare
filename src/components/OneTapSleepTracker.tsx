@@ -332,36 +332,18 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
           </div>
         ) : !sleepStartTime ? (
           <div className="space-y-3.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
-                  {recordMode === 'auto' && isNativePlatform()
-                    ? <Zap className={`w-5 h-5 ${theme.accentText}`} />
-                    : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-base font-black tracking-wide text-white">
-                    {recordMode === 'auto' && isNativePlatform()
-                      ? (usagePerm === 'granted' ? '自动记录已开启' : '开启自动记录')
-                      : '今晚准备入睡'}
-                  </h3>
-                  <p className={`text-xs ${theme.textMuted} mt-0.5`}>
-                    {recordMode === 'auto' && isNativePlatform()
-                      ? '手机自动识别作息 · 无需每晚手动操作'
-                      : '记录真实作息起止点'}
-                  </p>
-                </div>
-              </div>
-              {/* 手动/自动切换（仅真机显示；网页端无使用信号） */}
-              {isNativePlatform() && (
-                <div className="flex rounded-xl bg-black/20 p-0.5 shrink-0">
+            {/* 手动/自动切换独立成行（仅真机；网页端无使用信号）——
+                不与标题同排，避免挤压换行的副标题文字 */}
+            {isNativePlatform() && (
+              <div className="flex justify-end">
+                <div className="flex rounded-xl bg-black/20 p-0.5">
                   {(['manual', 'auto'] as const).map((m) => (
                     <button
                       key={m}
                       type="button"
                       aria-pressed={recordMode === m}
                       onClick={() => setRecordMode(m)}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                      className={`px-3 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
                         recordMode === m ? `${theme.accentBg.split(' ')[0]} ${theme.accentFg}` : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -369,7 +351,26 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     </button>
                   ))}
                 </div>
-              )}
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
+                {recordMode === 'auto' && isNativePlatform()
+                  ? <Zap className={`w-5 h-5 ${theme.accentText}`} />
+                  : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-black tracking-wide text-white">
+                  {recordMode === 'auto' && isNativePlatform()
+                    ? (usagePerm === 'granted' ? '自动记录已开启' : '开启自动记录')
+                    : '今晚准备入睡'}
+                </h3>
+                <p className={`text-xs ${theme.textMuted} mt-0.5`}>
+                  {recordMode === 'auto' && isNativePlatform()
+                    ? '手机自动识别作息 · 无需每晚手动操作'
+                    : '记录真实作息起止点'}
+                </p>
+              </div>
             </div>
 
             {recordMode === 'auto' && isNativePlatform() ? (
