@@ -4,7 +4,7 @@ import { napsOnly, nightsOnly } from './recordFilter';
 
 /**
  * 本周睡眠小结的【唯一】聚合实现（第 22 轮教训的根治）：
- * TrendsTab 页面上曾有一份平行的聚合（wk/avg/best），与 computeRegularity
+ * TrendsTab 页面上曾有一份平行的聚合（卡片现名"近期睡眠小结"）（wk/avg/best），与 computeRegularity
  * 各算各的——换数据口径（nightsOnly）时只改了一处，另一处对全小睡输入
  * 抛出 undefined 崩溃且阻断记录落盘。现在聚合收敛到本纯函数：
  * 空列表是合法输入（全部字段优雅降级），护栏直接测它。

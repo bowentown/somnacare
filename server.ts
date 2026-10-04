@@ -292,16 +292,21 @@ function generateClinicalChatResponse(messages: any[] = [], currentSleepStats: a
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
   const text = lastUserMsg.toLowerCase();
 
-  const score = currentSleepStats?.latestScore || 85;
-  const deep = currentSleepStats?.deepSleepMin || 90;
+  // 第 31 轮 F1：绝不编造个人数字——此前 ||85/||90 会让没数据的用户听到
+  // "根据您的近期数据（深睡约90分钟）"。有真实数据才引用数字，否则诚实降级
+  const hasScore = Number.isFinite(currentSleepStats?.latestScore);
+  const hasDeep = Number.isFinite(currentSleepStats?.deepSleepMin);
+  const score = hasScore ? currentSleepStats.latestScore : null;
+  const deep = hasDeep ? currentSleepStats.deepSleepMin : null;
 
 
   if (text.includes('不打呼') || text.includes('打呼噜') || text.includes('鼾声') || text.includes('可行') || text.includes('检测') || text.includes('原理')) {
-    return `这是一个非常专业且切中要害的问题！很多朋友误以为“手机测睡眠就是录打呼噜”，其实完全不是：\n\n1. 🫁 **体动节律学 (Actigraphy) 是核心**：\n医学研究表明，人类进入非快速眼动期（N1-N3）特别是慢波深睡眠时，全身横纹肌张力会降至极低，翻身和肢体位移基本归零；而在浅睡或觉醒阶段，会有频繁的翻身与被褥摩擦微动。手机即使放在床头柜或枕边，麦克风监测的主要是这种**床品摩擦频次和呼吸起伏的周期性包络**，而不是只听鼾声！\n\n2. 📊 **呼吸频率深浅变化**：\n深睡时呼吸深长平缓（约12-14次/分），浅睡与REM梦境期呼吸较快且不规则。即便您呼吸非常安静、完全不打呼噜，声波的微小周期性起伏依然能提供可靠特征。\n\n3. 💡 **如果您觉得夜间放手机太繁琐**：\n您完全不需要整夜开启夜间监测！每天早上起床后，只需在APP首页点击【晨起极速记录】，花3秒钟填一下入睡和起床时间，APP就能根据人类生理周期模型（每90分钟一个轮次）自动推导出高精度的深睡、REM比例与睡眠健康分，完全零打扰、不耗电、不录音！`;
+    return `这是一个非常专业且切中要害的问题！很多朋友误以为“手机测睡眠就是录打呼噜”，其实完全不是：\n\n1. 🫁 **体动节律学 (Actigraphy) 是核心**：\n医学研究表明，人类进入非快速眼动期（N1-N3）特别是慢波深睡眠时，全身横纹肌张力会降至极低，翻身和肢体位移基本归零；而在浅睡或觉醒阶段，会有频繁的翻身与被褥摩擦微动。手机即使放在床头柜或枕边，麦克风监测的主要是这种**床品摩擦频次和呼吸起伏的周期性包络**，而不是只听鼾声！\n\n2. 📊 **呼吸频率深浅变化**：\n深睡时呼吸深长平缓（约12-14次/分），浅睡与REM梦境期呼吸较快且不规则。即便您呼吸非常安静、完全不打呼噜，声波的微小周期性起伏依然能提供可靠特征。\n\n3. 💡 **如果您觉得夜间放手机太繁琐**：\n您完全不需要整夜开启夜间监测！每天早上起床后，只需在APP首页点击【晨起极速记录】，花3秒钟填一下入睡和起床时间，APP会按人类生理周期模型（每90分钟一个轮次）估算深睡与REM占比并给出参考评分——都是模型估算值，不是仪器实测，完全零打扰、不耗电、不录音！`;
   }
 
   if (text.includes('深睡') || text.includes('深度睡眠') || text.includes('提升')) {
-    return `提升深睡眠（慢波N3阶段）是恢复脑力与免疫的关键！根据您的近期数据（深睡约${deep}分钟），建议您采取以下3个医学实证方法：\n\n1. 🛁 **睡前90分钟温水浴（40℃）**：洗澡后走出浴室，外周毛细血管扩张会驱动核心体温迅速下降0.5-1℃，这是大脑启动深慢波睡眠的关键神经信号。\n2. ☀️ **早晨户外日光暴露15分钟**：早晨强光会设定当晚松果体褪黑素的定时释放闹钟。\n3. 🧘 **避免晚间饱餐与饮酒**：胃肠蠕动和酒精分解会提高夜间心率，直接压制下丘脑进入深睡眠。您可以今晚试一下APP里的“4-7-8神经降噪呼吸法”，能有效辅助深睡启动！`;
+    const personal = deep !== null ? `根据您的近期数据（深睡约${deep}分钟），` : '';
+    return `提升深睡眠（慢波N3阶段）是恢复脑力与免疫的关键！${personal}建议您采取以下3个医学实证方法：\n\n1. 🛁 **睡前90分钟温水浴（40℃）**：洗澡后走出浴室，外周毛细血管扩张会驱动核心体温迅速下降0.5-1℃，这是大脑启动深慢波睡眠的关键神经信号。\n2. ☀️ **早晨户外日光暴露15分钟**：早晨强光会设定当晚松果体褪黑素的定时释放闹钟。\n3. 🧘 **避免晚间饱餐与饮酒**：胃肠蠕动和酒精分解会提高夜间心率，直接压制下丘脑进入深睡眠。您可以今晚试一下APP里的“4-7-8神经降噪呼吸法”，能有效辅助深睡启动！`;
   }
 
   if (text.includes('睡不着') || text.includes('失眠') || text.includes('翻来覆去') || text.includes('入睡困难')) {
@@ -320,7 +325,8 @@ function generateClinicalChatResponse(messages: any[] = [], currentSleepStats: a
     return `很多人以为“多梦等于没睡好”，这其实是一个认知误区！\n\n做梦主要发生在 REM（快速眼动期），在这一阶段：\n1. 🧠 **情绪消磁**：大脑正在处理白天的压力、焦虑和记忆，相当于神经系统的“心灵自洁器”。\n2. 🧬 **神经可塑性**：如果能清晰回忆起梦境，通常说明您正好在一个睡眠周期的末端（REM期）醒来。\n只要白天精力充沛，多梦并不代表睡眠质量差。如果您经常做焦虑紧张的梦，建议睡前进行10分钟的纸质日记或APP助眠颂钵倾听，帮助睡前完成思绪着陆。`;
   }
 
-  return `您好！我是您的极光睡眠伴侣。针对您昨晚的睡眠数据（综合评分约${score}分），您的昼夜生理节律总体保持在良好的自我调节状态。\n\n请随时告诉我您在入睡、夜醒、昼夜时差或睡前情绪上的任何疑问，也可以点击底栏的【助眠】模块，开启4-7-8呼吸法或自然声景，今晚为您守护深度安稳的睡眠！`;
+  const personal = score !== null ? `针对您近期的睡眠记录（综合评分约${score}分），` : '最近还没有你的睡眠记录，';
+  return `您好！我是您的极光睡眠伴侣。${personal}先给你一些普适的作息建议：保持固定的起床时间比固定就寝更有效。\n\n请随时告诉我您在入睡、夜醒、昼夜时差或睡前情绪上的任何疑问，也可以点击底栏的【助眠】模块，开启4-7-8呼吸法或自然声景，今晚为您守护深度安稳的睡眠！`;
 }
 
 // Sleep Analysis Endpoint
@@ -517,7 +523,19 @@ app.post('/api/sleep/chat', async (req: Request, res: Response): Promise<void> =
       chatMessages = [{ role: 'user', content: req.body.message }];
     }
 
-    const { currentSleepStats, aiConfig } = req.body;
+    const { currentSleepStats: legacyStats, aiConfig } = req.body;
+    const { recentLogs } = req.body;
+    // 第 31 轮 F1：客户端发的是 recentLogs，没有 currentSleepStats 字段——
+    // 此前提示词里的"睡眠概况参考"恒为 {}，云端个性化形同虚设。
+    // 从 recentLogs[0] 现算（旧字段兼容：显式传入时优先）
+    const firstLog = Array.isArray(recentLogs) ? recentLogs[0] : undefined;
+    const currentSleepStats = legacyStats ?? {
+      latestScore: firstLog?.sleepScore,
+      deepSleepMin: firstLog?.deepSleepMinutes,
+      bedtime: firstLog?.bedtime,
+      wakeTime: firstLog?.wakeTime,
+      date: firstLog?.date,
+    };
 
     const systemInstruction = `你叫“极光睡眠伴侣（Somna AI）”，是极光睡眠安卓客户端专属的随身睡眠健康顾问。
 你的语气：温柔、治愈、严谨专业、条理清晰，多用温和关切的词句，避免机械化的冷淡回答。

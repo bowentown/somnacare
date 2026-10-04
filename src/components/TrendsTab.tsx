@@ -589,7 +589,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             )}
             {sum.napCount > 0 && (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>
-                😴 本周小睡 {sum.napCount} 次，共 {Math.floor(sum.napMinutes / 60)} 小时 {sum.napMinutes % 60} 分（不计入规律度）
+                😴 近期小睡 {sum.napCount} 次，共 {Math.floor(sum.napMinutes / 60)} 小时 {sum.napMinutes % 60} 分（不计入规律度）
               </p>
             )}
           </div>

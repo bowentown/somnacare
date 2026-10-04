@@ -15,6 +15,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SRC = fileURLToPath(new URL('../src', import.meta.url)).replace(/\/$/, '');
+// server.ts 同在扫描范围（第 31 轮 F2）：里面有 2000+ 字用户可见的问答文案，
+// 曾在护栏盲区里出现"根据您的近期数据（深睡约90分钟）"式编造——
+// 禁语清单对 server.ts 同样适用（当前无命中，纳入是防复发）
+const SERVER = fileURLToPath(new URL('../server.ts', import.meta.url));
 
 // 禁止出现的表述（精确短语；"临床睡眠医学顾问"这类身份词不在其列）
 const FORBIDDEN = [
@@ -41,7 +45,7 @@ function listFiles(dir: string): string[] {
 }
 
 let failures = 0;
-for (const f of listFiles(SRC)) {
+for (const f of [...listFiles(SRC), SERVER]) {
   const text = readFileSync(f, 'utf-8');
   for (const phrase of FORBIDDEN) {
     if (text.includes(phrase)) {
@@ -87,4 +91,4 @@ if (failures > 0) {
   console.error('   规则：数字是模型估算/统计量，不是医疗结论；文献结论不进 App 文案');
   process.exit(1);
 }
-console.log(`✓ verify-no-claims：src/ 无临床/因果声称（禁语 ${FORBIDDEN.length} 条，含反向自检）`);
+console.log(`✓ verify-no-claims：src/ 与 server.ts 无临床/因果声称（禁语 ${FORBIDDEN.length} 条，含反向自检）`);

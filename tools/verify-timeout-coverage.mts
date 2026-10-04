@@ -23,6 +23,8 @@ const check = (name: string, ok: boolean, detail = '') => {
 };
 
 /** 判定函数（反向自检与真实检查共用）：body 是否脱管。
+ *  适用范围：假定被测文件直接消费 fetch 的 body——对 body 全走 fetchJson
+ *  的文件会误报，只应用于 fetchJson.ts（第 31 轮 §五）。
  *  - 出现 return await fetch（头到即 resolve 并交出控制权）→ 脱管
  *  - 完全没有 body 消费 → 脱管
  *  - 先 clearTimeout 再读 body → 脱管（最危险变体；变量名无关——第 32 轮
