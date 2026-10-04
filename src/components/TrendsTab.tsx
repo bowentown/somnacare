@@ -680,7 +680,9 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 {shown.length === 0 ? (
                   <p className={`text-[11px] ${textMuted}`}>还没有可用的使用数据，明天再来看看。</p>
                 ) : shown.map((d) => (
-                  <div key={d.date} className={`${innerBg} border ${innerBorder} rounded-xl px-3 py-2 flex items-center text-[11px]`}>
+                  <div key={d.date} className={`${innerBg} border ${innerBorder} rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]`}>
+                    {/* 夜归属日期（MM-DD）：7 行连续夜的数据没有日期就无法区分是哪晚 */}
+                    <span className={`${textMuted} font-mono shrink-0 tabular-nums`}>{d.date.slice(5)}</span>
                     <span className="text-slate-300 font-mono">
                       {d.lastActive || '--:--'} 放下 → {d.firstActive || '--:--'} 拿起
                     </span>
