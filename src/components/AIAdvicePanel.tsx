@@ -269,10 +269,15 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   const analysisFingerprint = useMemo(() => {
     const nights = nightsOnly(records).slice(0, 7);
     let h = 0;
-    const str = JSON.stringify(nights.map((r) => [r.date, r.sleepScore, r.durationMinutes, r.deepSleepMinutes, r.remSleepMinutes, r.awakeMinutes, r.bedtime, r.wakeTime])) + (userProfile.chronotype ?? '');
+    // 指纹必须覆盖请求实际依赖的全部输入：服务端把整个 profile 塞进提示词，
+    // age/目标作息/目标时长改变都会改变建议——漏掉就会返回过期结论
+    const str = JSON.stringify({
+      nights: nights.map((r) => [r.date, r.sleepScore, r.durationMinutes, r.deepSleepMinutes, r.remSleepMinutes, r.awakeMinutes, r.bedtime, r.wakeTime]),
+      p: [userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype ?? ''],
+    });
     for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
     return String(h);
-  }, [records, userProfile.chronotype]);
+  }, [records, userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype]);
   const readAnalysisCache = (): SleepAnalysisResult | null => {
     try {
       const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);

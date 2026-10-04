@@ -117,12 +117,12 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
         <p className="text-[9px] font-bold text-emerald-300">本周达标战报</p>
         <div>
           <p className="text-2xl font-black text-white leading-none">
-            {goodDays}
-            <span className="text-xs text-slate-400 font-bold">/{recDays} 天</span>
+            {/* 全新用户 0 条记录时 0/0 无意义 → 退化显示 */}
+            {recDays === 0 ? <span>—</span> : <>{goodDays}<span className="text-xs text-slate-400 font-bold">/{recDays} 天</span></>}
           </p>
           {/* 用户定的文案：去掉"有/算"，一行放下（nowrap，窄卡不折行） */}
           <p className="text-[9px] text-slate-400 mt-0.5 whitespace-nowrap">
-            {missed === null ? '按当时记录晚数计' : missed > 0 ? `${missed} 晚未记录 · ≥80 达标` : '全部有记录 · ≥80 达标'}
+            {missed === null ? '按当时记录晚数计' : missed > 0 ? `${missed} 天未记录 · ≥80 达标` : '全部有记录 · ≥80 达标'}
           </p>
         </div>
         <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">

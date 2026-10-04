@@ -99,10 +99,14 @@ function normalizeDeepSeekModel(modelName?: string): string {
  *  - max_tokens 显式上限：未设时非思考模式默认 8K
  *  - 断开传播 + 上游超时：客户端 abort（切页/关屏/超时）后不再向上游付钱
  */
-function upstreamDeepSeekSignal(req: import('express').Request, timeoutMs = 40000): { signal: AbortSignal; done: () => void } {
+function upstreamDeepSeekSignal(res: import('express').Response, timeoutMs = 40000): { signal: AbortSignal; done: () => void } {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  req.on('close', () => ctrl.abort());   // 客户端先撤 → 立即停止上游计费
+  // ★ 必须监听 res（连接）而不是 req：req 的 'close' 在请求体读完时就触发
+  // （实测进入 handler 后 0ms 触发，客户端还在正常等响应）——用它会让每次
+  // 上游调用发出后瞬间被自己 abort，DeepSeek 路径整体失效。res 的 'close'
+  // 配合 !writableEnded 才是"客户端提前撤走而响应没发完"的准确判据（已实证）
+  res.on('close', () => { if (!res.writableEnded) ctrl.abort(); });
   return { signal: ctrl.signal, done: () => clearTimeout(timer) };
 }
 
@@ -376,7 +380,7 @@ ${JSON.stringify(recentLogs, null, 2)}
     // Check if user specified custom AI provider (DeepSeek / Custom OpenAI Compatible)
     if (aiConfig?.provider === 'deepseek' && aiConfig.deepseekApiKey) {
       try {
-        const up = upstreamDeepSeekSignal(req);
+        const up = upstreamDeepSeekSignal(res);
         const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
           headers: {
@@ -397,10 +401,17 @@ ${JSON.stringify(recentLogs, null, 2)}
             max_tokens: 800,
           }),
         });
-        up.done();
+        // done() 必须等 body 读完：头一到就 clearTimeout 曾让 body 卡住时
+        // 永久挂起（petMoments 修过一次的同款坑，超时形同虚设）
+        let dsData: any = null;
+        try {
+          const dsResOk = dsRes.ok;
+          if (dsResOk) dsData = await dsRes.json();
+        } finally {
+          up.done();
+        }
 
-        if (dsRes.ok) {
-          const dsData = await dsRes.json();
+        if (dsData) {
           logDeepSeekUsage('analyze', dsData);
           const content = dsData.choices?.[0]?.message?.content?.trim();
           if (content) {
@@ -532,7 +543,7 @@ ${JSON.stringify(currentSleepStats || {}, null, 2)}
           })),
         ];
 
-        const up = upstreamDeepSeekSignal(req);
+        const up = upstreamDeepSeekSignal(res);
         const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
           headers: {
@@ -548,10 +559,14 @@ ${JSON.stringify(currentSleepStats || {}, null, 2)}
             max_tokens: 600,
           }),
         });
-        up.done();
+        let dsData: any = null;
+        try {
+          if (dsRes.ok) dsData = await dsRes.json();
+        } finally {
+          up.done();
+        }
 
-        if (dsRes.ok) {
-          const dsData = await dsRes.json();
+        if (dsData) {
           logDeepSeekUsage('chat', dsData);
           const reply = dsData.choices?.[0]?.message?.content?.trim();
           if (reply) {
