@@ -96,7 +96,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   // Chat consultation state
   // 多会话（第 25 轮）：一段对话一张卡太挤，且无法整理删除。
   // 会话持久化沿用 somnacare_chat_history 键（形状升级，旧平铺数据自动迁移，
-  // 备份/恢复链路零改动）。分区是条件渲染，切 Tab 即卸载——存 localStorage
+  // 备份/恢复链路零改动）。存 localStorage 的理由是【重启/杀进程】，不是切
+  // Tab——分区在滑动轨道里常驻不卸载（第 31 轮实证），别再写"切 Tab 即卸载"
   const [chat, setChat] = useState<ChatState>(() => loadChatState());
   const activeSession: ChatSession =
     chat.sessions.find((s) => s.id === chat.activeId) ?? chat.sessions[0];
@@ -123,8 +124,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     const t = setTimeout(() => persistChatState(chat), 300);
     return () => clearTimeout(t);
   }, [chat]);
-  // 卸载兜底（分区条件渲染，切 Tab 即卸载）：防抖窗口内最后一批消息
-  // 此前随 cleanup 的 clearTimeout 一起被丢弃——切 Tab 前的发言会丢
+  // 卸载兜底：分区在滑动轨道里常驻，本组件正常不卸载；此兜底保护的是
+  // App 整体重载/卸载时防抖窗口内尚未落盘的最后一批消息（第 31 轮勘误：
+  // 原"切 Tab 即卸载"的说法不成立）
   const chatRef = useRef(chat);
   chatRef.current = chat;
   useEffect(() => () => persistChatState(chatRef.current), []);
@@ -250,9 +252,10 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     if (el && chatStickRef.current) el.scrollTop = el.scrollHeight;
   }, [chatMessages, isSendingChat, localStage]);
 
-  // 评估结果缓存（第 28 轮）：键 = 近 7 晚数据 + 作息类型的指纹。
-  // AIAdvicePanel 条件渲染，切 Tab 即卸载——analysis 存组件态，切回再点
-  // "生成评估"就是重新付费。指纹命中且 12h 内 → 直接复用不请求
+  // 评估结果缓存（第 28 轮）：键 = 近 7 晚数据 + 档案可变字段 + 作息类型的指纹。
+  // 分区在滑动轨道里常驻不卸载（第 31 轮勘误），切 Tab 不会丢 analysis——
+  // 缓存的真实价值是【重启/重载后不重复付费】：组件重新挂载时指纹命中即免请求。
+  // 指纹命中且 12h 内 → 直接复用不请求
   const ANALYSIS_CACHE_KEY = 'somnacare_analysis_v1';
   const ANALYSIS_TTL_MS = 12 * 3600000;
   const analysisFingerprint = useMemo(() => {
