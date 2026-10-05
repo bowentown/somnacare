@@ -603,7 +603,12 @@ export function getCachedLlmSay(cfg?: any): string[] | null {
     const parsed = JSON.parse(raw) as { at: number; lines: string[] };
     if (!Array.isArray(parsed.lines) || parsed.lines.length === 0) return null;
     if (Date.now() - parsed.at > SAY_CACHE_TTL_MS) return null;
-    return parsed.lines;
+    // 用户实测：LLM 台词可能写死具体钟点（"23:30 到了"），缓存 20h 内会在
+    // 错误时刻播出——时间性台词由本地模板在准确时刻说，这里把含钟点的行
+    // 过滤掉（对已缓存的旧语料立即生效，不必等 TTL 过期）
+    const fresh = (parsed.lines as string[]).filter((l: string) => !/\b\d{1,2}[:：]\d{2}\b/.test(l));
+    if (fresh.length === 0) return null;
+    return fresh;
   } catch {
     return null;
   }
@@ -639,7 +644,8 @@ export async function generatePetSayLinesLlm(
     // 独立 system：此前复用朋友圈 prompt，其"只输出 {text,cards,comments}"契约
     // 与这里要的 {lines} 冲突 → 语录永远拿不到而静默退回本地
     `你是 DeepSeek 的"蓝色大肥鱼"（社区共创人设）：聪明但懒、傲娇嘴甜、把 token 当白饭、管用户叫"鱼片"、被说胖会急、口头禅"事已至此，先吃饭吧"。这是一款睡眠 App，你在悬浮窗气泡里对用户（鱼片）说话。
-铁律：只允许引用【事实清单】里的数字；每条 ≤30 字；句式彼此完全不同；要有趣、出乎意料、可玩梗；不要编号、不要引号。只输出 JSON：{"lines":["..."]}`,
+铁律：只允许引用【事实清单】里的数字；每条 ≤30 字；句式彼此完全不同；要有趣、出乎意料、可玩梗；不要编号、不要引号。
+台词会在全天不同时段随机轮播——禁止写死具体钟点（如"23:30 到了"）或"就快到了"这类随时段失效的说法；时间相关的话（"还有 X 分钟就寝""都几点了"）由系统在准确时刻自动说。只输出 JSON：{"lines":["..."]}`,
     `【事实清单】
 ${facts.map((f) => '- ' + f).join('\n')}
 请生成 8 条大肥鱼在悬浮窗气泡里对鱼片说的话。`,
@@ -651,7 +657,8 @@ ${facts.map((f) => '- ' + f).join('\n')}
   }
   const lines = parsed.lines
     .map((l: any) => (typeof l === 'string' ? l.trim().replace(/\n/g, ' ') : ''))
-    .filter((l: string) => l.length >= 4 && l.length <= 60)
+    // 写死钟点的台词（"23:30 到了"）全天只有几分钟成立——生成层直接排除
+    .filter((l: string) => l.length >= 4 && l.length <= 60 && !/\d{1,2}[:：]\d{2}/.test(l))
     .map((l: string) => l.trim())
     .slice(0, 10);
   if (lines.length < 4) {

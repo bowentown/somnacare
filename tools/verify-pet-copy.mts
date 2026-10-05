@@ -76,6 +76,14 @@ check('本地评论池不盗用"本鱼"', localPool.length > 0 && !localPool.inc
 // ── 4) 播报词库数据纪律 ──
 check('播报词库无未测量的"翻身"主张', !petOverlay.includes('翻了那么多次身'));
 
+// ── 5) 桌宠语录时间纪律（用户实测："23:30 到了"在 23:24 被播出）──
+// LLM 语录缓存 20h 全天轮播——写死钟点的台词只在一天的几分钟里成立。
+// 三层防线：生成提示词禁止钟点 / 生成层过滤 / 显示层过滤（对旧缓存立即生效）
+const petMomentsSrc = readFileSync(join(ROOT, 'src', 'utils', 'petMoments.ts'), 'utf-8');
+check('LLM 语录：生成提示词禁止写死钟点', petMomentsSrc.includes('禁止写死具体钟点'));
+const clockFilterSites = petMomentsSrc.split('[:：]\\d{2}').length - 1;
+check('LLM 语录：钟点台词在生成层与显示层各有过滤（≥2 处）', clockFilterSites >= 2, `实际 ${clockFilterSites} 处`);
+
 // ── 反向自检：坏文案喂进同一断言路径必须报红 ──
 {
   const doctored = postcards.replace('问君何能尔，心远地自偏', '心远地自偏，问君何能尔');
