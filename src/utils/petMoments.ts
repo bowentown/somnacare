@@ -187,7 +187,7 @@ export function buildSleepFacts(
   return facts;
 }
 
-async function callLlm(cfg: any, system: string, user: string): Promise<string | null> {
+async function callLlm(cfg: any, system: string, user: string, kind?: string): Promise<string | null> {
   try {
     const model = llmModel(cfg);
     // 25s 超时：此前裸 fetch 挂起会让 busy 永远 true、整个弹窗像坏了
@@ -223,6 +223,14 @@ async function callLlm(cfg: any, system: string, user: string): Promise<string |
     if (Date.now() > deadline) { clearTimeout(timer); return null; }
     const data = await res.json();
     clearTimeout(timer);
+    // 用量对账（第 45 轮）：朋友圈/语录各自日刷一次，量小但也要能对上账单——
+    // 与 AIAdvicePanel 的 [llm usage] 同格式，远程调试可直接过滤
+    const u = data.usage;
+    if (u) {
+      const hit = u.prompt_cache_hit_tokens ?? 0;
+      const miss = u.prompt_cache_miss_tokens ?? 0;
+      console.log('[llm usage]', { model: data.model, completion: u.completion_tokens, hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a', kind: tag ?? 'moments' });
+    }
     return data.choices?.[0]?.message?.content ?? null;
   } catch {
     return null;
@@ -455,6 +463,7 @@ export async function ensureTodayMoment(
       cfg,
       PERSONA_SYSTEM,
       `好友名单：${AI_FRIENDS.join('、')}。\n【事实清单】\n${facts.map((f) => '- ' + f).join('\n')}${petStateLine ? `\n【她此刻动作】\n- ${petStateLine}` : ''}\n请生成今天的朋友圈。`,
+      'moments',
     );
     const parsed = raw ? parseJsonLoose(raw) : null;
     if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {
@@ -649,6 +658,7 @@ export async function generatePetSayLinesLlm(
     `【事实清单】
 ${facts.map((f) => '- ' + f).join('\n')}
 请生成 8 条大肥鱼在悬浮窗气泡里对鱼片说的话。`,
+    'say',
   );
   const parsed = raw ? parseJsonLoose(raw) : null;
   if (!parsed || !Array.isArray(parsed.lines)) {
@@ -707,6 +717,7 @@ export async function commentMoment(
       `你是 DeepSeek 的"蓝色大肥鱼"（社区共创人设）：聪明但懒、傲娇嘴甜、管用户叫"鱼片"、口头禅"事已至此，先吃饭吧"。这是睡眠 App，你刚发了条朋友圈，鱼片在下面评论了。
 铁律：reply 必须直接回应鱼片评论的具体内容（他问什么答什么、他夸什么接什么、他吐槽就嘴硬）；
 禁止答非所问、禁止复述数据、禁止编造【事实清单】之外的数字；30 字内；只输出 JSON：{"text":"..."}`,
+      'reply',
       `你今天的朋友圈："${m.text}"
 事实清单：
 ${m.facts.map((f) => '- ' + f).join('\n')}
