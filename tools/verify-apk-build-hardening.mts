@@ -48,13 +48,16 @@ if (!wf.includes('GITHUB_REF_NAME#v') || !wf.includes('grep -q "versionName')) {
 }
 
 // 反向自检：删掉 A1 硬失败分支后，同一断言路径必须失去判据
+// （作用域必须限定在签名步骤自身——Compile 步骤的 versionName stamp 与
+//  release job 的 APK 校验也含 refs/tags 与 exit 1，跨界会误报）
 {
   const doctored = wf.replace(
     /if \[\[ "\$\{GITHUB_REF\}" == refs\/tags\/v\* \]\]; then[\s\S]*?fi\n/,
     ''
   );
   if (doctored === wf) fail('反向自检失败：硬失败分支删除操作未命中');
-  const doctoredStep = doctored.split('- name: Apply Fixed Signing Config')[1] ?? '';
+  const stepsAfter = doctored.split('- name: Apply Fixed Signing Config')[1] ?? '';
+  const doctoredStep = stepsAfter.split('- name: Compile Standalone Offline APK')[0] ?? '';
   if (doctoredStep.includes('refs/tags/v*') && doctoredStep.includes('exit 1')) {
     fail('反向自检失败：删除硬失败分支后判据仍在，断言不可信');
   }
