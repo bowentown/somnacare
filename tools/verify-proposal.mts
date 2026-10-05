@@ -26,7 +26,7 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-const { computeProposal, computeProposalTraced } = await import(
+const { computeProposal, computeProposalTraced, computeModelProposal } = await import(
   new URL('../src/utils/proposal.ts', import.meta.url).href
 );
 const { clockMinutes, shortArc } = await import(
@@ -181,6 +181,58 @@ const baseRecords = [
   // 反向：同日的夜睡记录照旧挡住
   const pnight = computeProposal({ usageDays: [baseDay], records: [...baseRecords, rec(TARGET, '22:00')], sessionActive: false });
   check('反向：同日有夜睡 → 照旧不提议', pnight === null);
+}
+
+// ── 模型路径集成（computeModelProposal 完整闸门链）──
+// verify-sleep-model 测的是 fitSleepModel 算法本体；这里测"事件 → 提议"的
+// 胶水层：拟合缓存、gate 2/4/6/置信映射、fallbackAllowed 语义。
+// 事件生成器钉死"今天 08:30"：now 决定窗口锚点与目标夜，不钉死的话
+// 护栏在凌晨跑会因"观测未到起床"被拒——时间炸弹必须消灭在护栏里。
+{
+  const fixed = new Date();
+  fixed.setHours(8, 30, 0, 0);
+  const now = fixed.getTime();
+  let seed = 42;
+  const rnd = (): number => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const genEvents = (): number[] => {
+    const evs: number[] = [];
+    const day0 = new Date(now);
+    day0.setHours(0, 0, 0, 0);
+    const day0Ms = day0.getTime();
+    // 每个日历日 07:05–23:40 密集亮屏（8–18 分钟一次），夜里整段静默
+    // ——就寝 23:40 / 起床 07:05 的理想两态，密度对齐真实手机
+    for (let d = 15; d >= 1; d--) {
+      const base = day0Ms - d * 86400000;
+      for (let t = base + 7 * 3600e3 + 5 * 60e3; t < base + 23 * 3600e3 + 40 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+        evs.push(Math.round(t));
+      }
+    }
+    for (let t = day0Ms + 7 * 3600e3 + 5 * 60e3; t <= now - 10 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      evs.push(Math.round(t));
+    }
+    return evs.sort((a, b) => a - b);
+  };
+
+  const events = genEvents();
+  const full = computeModelProposal({
+    events, observedUntil: now, chronotype: 'night', records: [], sessionActive: false, handledDate: null, now: fixed,
+  });
+  check('模型：理想 14 夜 → decided 提议（不回退）', full.proposal !== null && full.fallbackAllowed === false, full.fit ? `${full.fit.status} ${full.fit.reason}` : '');
+  check('模型：fit 诊断字段在位（ok + Δ 原因）', full.fit?.status === 'ok' && full.fit.reason.includes('Δ='), full.fit?.reason);
+  check('模型：目标夜 = 醒来那天(今天)', full.proposal?.targetDate === dstr(0), full.proposal?.targetDate);
+  check('模型：置信度由 Δ 映射（≥300 不为 null）', full.proposal?.confidence === 'high' || full.proposal?.confidence === 'medium', full.proposal?.confidence);
+
+  // 反向 1：数据不足（仅 2 活跃窗）→ insufficient + 允许回退启发式
+  const few = computeModelProposal({
+    events: events.slice(-120), observedUntil: now, chronotype: 'night', records: [], sessionActive: false, handledDate: null, now: fixed,
+  });
+  check('模型：数据不足 → fallbackAllowed=true（启发式顶上）', few.proposal === null && few.fallbackAllowed === true && few.fit?.status === 'insufficient', few.fit?.reason);
+
+  // 反向 2：gate 4——目标夜已有夜睡记录 → 拒且不回退，block 可读
+  const taken = computeModelProposal({
+    events, observedUntil: now, chronotype: 'night', records: [rec(dstr(0), '22:00')], sessionActive: false, handledDate: null, now: fixed,
+  });
+  check('模型：目标夜已有记录 → 拒且不回退（block 可读）', taken.proposal === null && taken.fallbackAllowed === false && (taken.block ?? '').includes('已有夜睡记录'), taken.block);
 }
 
 if (failures > 0) {

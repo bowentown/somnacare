@@ -660,7 +660,12 @@ export const App: React.FC = () => {
   };
 
   const handleSaveManualRecord = (newRecord: SleepRecord) => {
-    recordOutcome(newRecord.date, newRecord.bedtime, newRecord.wakeTime, 'manual');   // 影子诊断：最终记录=真值
+    // 影子诊断：最终记录=真值。★ 语义按 recordSource 分流（第 42 轮 e2e 实证的
+    // 覆盖 bug）：一键采纳提议（'usage'）的真值就是提议自己——只算【采纳率】；
+    // 手动补录/修改（'manual'/'onetap'）才是独立真值，算命中率/误差。
+    // 此前无条件写 'manual'，组件刚写入的 'confirmed' 被这里覆盖 → 采纳率恒 0
+    recordOutcome(newRecord.date, newRecord.bedtime, newRecord.wakeTime,
+      newRecord.recordSource === 'usage' ? 'confirmed' : 'manual');
     setRecords((prev) => {
       const merged = mergeRecord(prev, newRecord);   // 夜睡按日一条、小睡可多次（D1 根治）
       return merged.sort(
