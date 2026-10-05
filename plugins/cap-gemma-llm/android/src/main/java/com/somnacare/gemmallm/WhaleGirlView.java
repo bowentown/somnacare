@@ -81,6 +81,10 @@ public class WhaleGirlView extends View {
     private long ambientUntil;      // 小动作播到这个时刻
     private boolean talking;
     private float drowsy;
+    // 记录感知上下文（第二批，petSync 结构化通道推入；方案 §二后半）
+    private int lastScore = -1;        // 昨晚评分（-1=无记录）
+    private int missedDays = 0;        // 连续未记录夜数（截至昨晚）
+    private boolean hasTonight = false; // 今晚是否已有夜睡记录
     private boolean dragging;
     private boolean running;
     private boolean resumed;        // 小动作调度是否在跑
@@ -208,6 +212,13 @@ public class WhaleGirlView extends View {
         }
     }
 
+    /** 记录感知上下文（petSync 结构化通道，PetOverlayService 转推）。 */
+    public void setContext(int lastScore, int missedDays, boolean hasTonight) {
+        this.lastScore = lastScore;
+        this.missedDays = missedDays;
+        this.hasTonight = hasTonight;
+    }
+
     /** 拖拽中切"被拎起来"姿势，松手恢复。 */
     public void setDragging(boolean d) {
         dragging = d;
@@ -255,27 +266,41 @@ public class WhaleGirlView extends View {
      * JS→原生结构化通道就绪后接入（方案 §二 后半）。
      */
     private int weightOf(Anim a, int hour) {
+        int w;
         switch (a.name) {
-            case "headtilt": return 6;
-            case "wait":     return 6;
-            case "think":    return 5;
-            case "reading":  return (hour >= 18) ? 16 : 6;
-            case "tea":      return (hour >= 23 || hour < 5) ? 0
+            case "headtilt": w = 6; break;
+            case "wait":     w = 6; break;
+            case "think":    w = 5; break;
+            case "reading":  w = (hour >= 18) ? 16 : 6; break;
+            case "tea":      w = (hour >= 23 || hour < 5) ? 0
                                   : (hour >= 14 && hour < 17) ? 10
-                                  : (hour < 10) ? 6 : 8;
-            case "pillow":   return (hour >= 21 || hour < 2) ? 16 : (hour >= 18 ? 10 : 3);
-            case "eat":      return (hour >= 11 && hour < 13) ? 16
+                                  : (hour < 10) ? 6 : 8; break;
+            case "pillow":   w = (hour >= 21 || hour < 2) ? 16 : (hour >= 18 ? 10 : 3); break;
+            case "eat":      w = (hour >= 11 && hour < 13) ? 16
                                   : (hour >= 17 && hour < 20) ? 12
-                                  : (hour >= 23 || hour < 6) ? 0 : 4;
-            case "play":     return (hour >= 9 && hour < 22) ? 6 : 2;
-            case "walk":     return (hour >= 6 && hour < 10) ? 14
-                                  : (hour >= 23 || hour < 6) ? 0 : 6;
-            case "working":  return ((hour >= 9 && hour < 12) || (hour >= 14 && hour < 18)) ? 12
-                                  : (hour >= 23 || hour < 7) ? 0 : 4;
-            case "nap":      return (hour >= 13 && hour < 15) ? 14
-                                  : (hour >= 21) ? 12 : 3;
-            default:         return 4;
+                                  : (hour >= 23 || hour < 6) ? 0 : 4; break;
+            case "play":     w = (hour >= 9 && hour < 22) ? 6 : 2; break;
+            case "walk":     w = (hour >= 6 && hour < 10) ? 14
+                                  : (hour >= 23 || hour < 6) ? 0 : 6; break;
+            case "working":  w = ((hour >= 9 && hour < 12) || (hour >= 14 && hour < 18)) ? 12
+                                  : (hour >= 23 || hour < 7) ? 0 : 4; break;
+            case "nap":      w = (hour >= 13 && hour < 15) ? 14
+                                  : (hour >= 21) ? 12 : 3; break;
+            default:         w = 4; break;
         }
+        // 记录感知（第二批，方案 §二）：连续未记录 ≥3 晚 → 蔫（玩不动，只想蜷着）；
+        // 昨晚达标 → 精神（多走动多玩）；今晚还没记录的夜里 → 她在想你怎么还不记
+        if (missedDays >= 3) {
+            if (a.name.equals("play")) w = Math.max(0, w / 4);
+            if (a.name.equals("nap") || a.name.equals("pillow")) w *= 2;
+        }
+        if (lastScore >= 85) {
+            if (a.name.equals("walk") || a.name.equals("play")) w *= 2;
+        }
+        if (!hasTonight && hour >= 21) {
+            if (a.name.equals("think")) w += 10;
+        }
+        return w;
     }
 
     /** 按权重选环境动作（权重全 0 时均匀兜底——不应发生）。 */

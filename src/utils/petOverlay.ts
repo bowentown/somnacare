@@ -110,6 +110,25 @@ function tonightRecord(records: SleepRecord[], now: Date): SleepRecord | undefin
 }
 
 /**
+ * 结构化上下文（第二批，行为方案 §二后半）：随 petSync 推给原生权重表的
+ * 记录感知数据——昨晚达标→精神、连续未记录→蔫、今晚未记录→她想你去记。
+ * 只有真实数据：无记录 lastScore=-1；连续未记录从昨晚往前数，封顶 14。
+ */
+function petContext(records: SleepRecord[], now: Date): { lastScore: number; missedDays: number; hasTonight: boolean } {
+  const night = (r: SleepRecord): boolean => r.kind !== 'nap';
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const lastNight = records.find((r) => night(r) && r.date === today);
+  let missedDays = 0;
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (records.some((r) => night(r) && r.date === key)) break;
+    missedDays++;
+  }
+  return { lastScore: lastNight ? lastNight.sleepScore : -1, missedDays, hasTonight: !!lastNight };
+}
+
+/**
  * 由当前数据生成傲娇播报词库。没有的数据绝不编；
  * 每行一条，原生侧逐条轮播。
  */
@@ -176,7 +195,7 @@ export async function startPet(
 ): Promise<{ ok: boolean; needPermission?: boolean }> {
   const g = gemma();
   if (!g) return { ok: false };
-  const payload = { say: buildPetSayLines(records, profile).join('\n'), bubbleEvery: getBubbleEvery(), skin: getPetSkin() };
+  const payload = { say: buildPetSayLines(records, profile).join('\n'), bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()) };
   try {
     if (isPetEnabled()) await g.petSync(payload);
     else await g.petStart(payload);
@@ -209,7 +228,7 @@ export async function syncPet(
     ? [...cached, ...localLines.slice(0, 3)].join('\n')
     : localLines.join('\n');
   try {
-    await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin() });
+    await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()) });
   } catch { /* 桌宠没开或服务已停，忽略 */ }
 
   let sayInFlight = false;   // 模块级在途标志（防并发重复调用）

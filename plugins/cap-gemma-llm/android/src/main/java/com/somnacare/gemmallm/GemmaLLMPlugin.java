@@ -364,7 +364,7 @@ public class GemmaLLMPlugin extends Plugin {
         call.resolve(ret);
     }
 
-    /** 文案快照 + 播报频率一次性落盘（petStart/petSync 共用）。 */
+    /** 文案快照 + 播报频率 + 记录感知上下文一次性落盘（petStart/petSync 共用）。 */
     private void writePetSnapshot(PluginCall call) {
         int every = 8;
         try {
@@ -372,10 +372,15 @@ public class GemmaLLMPlugin extends Plugin {
             if (e != null && e >= 1 && e <= 50) every = e;
         } catch (Exception ignored) {
         }
+        Integer ctxScore = call.getInt("lastScore");
+        Integer ctxMissed = call.getInt("missedDays");
         getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(PetOverlayService.K_PET_SAY, safe(call, "say", ""))
                 .putInt(PetOverlayService.K_BUBBLE_EVERY, every)
                 .putString("pet_skin", call.getString("skin", "default"))
+                .putInt(PetOverlayService.K_CTX_SCORE, ctxScore != null ? ctxScore : -1)
+                .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
+                .putBoolean(PetOverlayService.K_CTX_TONIGHT, Boolean.TRUE.equals(call.getBoolean("hasTonight")))
                 .apply();
     }
 

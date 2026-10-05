@@ -55,6 +55,30 @@ check('提示词含一致性指令（打盹别写庆祝）', moments.includes('�
 // ── 4) 深夜困倦闸门持续驱动 ──
 check('drowsyTick 持续驱动 setDrowsy', service.includes('whale.setDrowsy('));
 
+// ── 5) 第二批：结构化上下文通道（方案 §二后半） ──
+check('petOverlay 推送记录感知上下文（lastScore/missedDays/hasTonight）',
+  moments !== null && readFileSync(join(ROOT, 'src/utils/petOverlay.ts'), 'utf-8').includes('lastScore'));
+const overlaySrc = readFileSync(join(ROOT, 'src/utils/petOverlay.ts'), 'utf-8');
+check('petOverlay 上下文含三字段', overlaySrc.includes('lastScore') && overlaySrc.includes('missedDays') && overlaySrc.includes('hasTonight'));
+check('插件落盘上下文（K_CTX_*）', plugin.includes('K_CTX_SCORE') && plugin.includes('K_CTX_MISSED') && plugin.includes('K_CTX_TONIGHT'));
+check('视图消费上下文 setContext', view.includes('public void setContext(int lastScore, int missedDays, boolean hasTonight)'));
+check('权重表记录感知：连续未记录→蔫', view.includes('missedDays >= 3') && view.includes('w *= 2'));
+check('权重表记录感知：达标→精神', view.includes('lastScore >= 85'));
+
+// ── 6) 第二批：达标祝贺每天一次 + 深夜劝睡每晚一次 ──
+check('达标祝贺幂等（K_CHEER_DATE 去重）', service.includes('K_CHEER_DATE') && service.includes('whale.cheer()'));
+check('深夜劝睡：drowsy 分支调用 maybeNightNag', service.includes('if (drowsy) maybeNightNag();'));
+check('深夜劝睡：服务直查 UsageStats（亮屏仍在→劝，熄屏→不打扰）',
+  service.includes('maybeNightNag') && service.includes('USAGE_STATS_SERVICE') && service.includes('stillOn'));
+check('深夜劝睡每晚一次（K_NAG_DATE 去重）', service.includes('K_NAG_DATE'));
+
+// ── 7) 睡前提醒条件化（第 42 轮用户反馈） ──
+const bedtime = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BedtimeOverlayService.java'), 'utf-8');
+check('"好的"按自动权限分流（hasUsageAccess 门控）', bedtime.includes('if (!hasUsageAccess())'));
+check('自动授权时不写 auto_start_sleep 标记（门控内才写）',
+  bedtime.indexOf('hasUsageAccess()') < bedtime.indexOf('putBoolean("auto_start_sleep"'));
+check('气泡文案：晚安💤 / 随便你🙄', bedtime.includes('晚安💤') && bedtime.includes('随便你🙄'));
+
 // ── 反向自检：旧实现喂进同一断言路径必须报红 ──
 {
   // 把 ambientTick 的 pickAmbient 调用替换回均匀随机——
@@ -62,6 +86,10 @@ check('drowsyTick 持续驱动 setDrowsy', service.includes('whale.setDrowsy('))
   const doctored = view.replace('Anim next = pickAmbient();', legacyUniform);
   const fellBack = !doctored.includes('Anim next = pickAmbient();') && count(doctored, legacyUniform) > 1;
   check('反向自检：回退均匀随机可被检出', fellBack, `doctored 计数 ${count(doctored, legacyUniform)}`);
+  // 睡前提醒：把权限门控删掉（无条件 auto_start_sleep）必须被检出
+  const doctoredBed = bedtime.replace('if (!hasUsageAccess()) {', 'if (true) {');
+  check('反向自检：权限门控失效可被检出',
+    doctoredBed.includes('if (true) {') && doctoredBed.indexOf('putBoolean("auto_start_sleep"') > doctoredBed.indexOf('if (true) {'));
 }
 
 if (failures > 0) {

@@ -315,17 +315,28 @@ public class BedtimeOverlayService extends Service {
 
         ok.setOnClickListener(v -> {
             try {
-                msg.setText("晚安");
+                msg.setText("晚安💤");
                 row.setVisibility(View.GONE);
                 moon.animate().scaleX(1.06f).scaleY(1.06f).setDuration(500).start();
-                // 记录标记（冷启动路径）+ 拉起应用（热启动路径：onNewIntent → bedtimeGood 事件）
-                getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                        .edit().putBoolean("auto_start_sleep", true).apply();
-                Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
-                if (launch != null) {
-                    launch.putExtra("somnacare_auto_start_sleep", true);
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(launch);
+                // 使用情况访问已授权 → 明早由自动提议接管昨晚，"好的"不再代开
+                // 手动计时（第 42 轮用户反馈：自动档用户不想被抢按开始按钮）；
+                // 未授权 → 维持原体验：好的 = 帮用户把计时开好
+                if (!hasUsageAccess()) {
+                    // 记录标记（冷启动路径）+ 拉起应用（热启动路径：onNewIntent → bedtimeGood 事件）
+                    getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                            .edit().putBoolean("auto_start_sleep", true).apply();
+                    Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+                    if (launch != null) {
+                        launch.putExtra("somnacare_auto_start_sleep", true);
+                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(launch);
+                    }
+                } else {
+                    Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+                    if (launch != null) {
+                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(launch);
+                    }
                 }
             } catch (Exception ignored) {
             }
@@ -333,12 +344,21 @@ public class BedtimeOverlayService extends Service {
         });
         ignore.setOnClickListener(v -> {
             try {
-                msg.setText("随便你");
+                msg.setText("随便你🙄");
                 row.setVisibility(View.GONE);
             } catch (Exception ignored) {
             }
             dismiss(800);
         });
+    }
+
+    /** 使用情况访问授权 = 自动记录的数据源（判定口径与 UsageSignalPlugin 同源）。 */
+    private boolean hasUsageAccess() {
+        android.app.AppOpsManager ops = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+        if (ops == null) return false;
+        int mode = ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(), getPackageName());
+        return mode == android.app.AppOpsManager.MODE_ALLOWED;
     }
 
     private void dismiss(long delay) {

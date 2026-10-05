@@ -52,6 +52,14 @@ public class PetOverlayService extends Service {
     static final String K_PET_SAY = "pet_say";
     // 每 N 次点击角色自动播报 1 次，其余点击弹按钮
     static final String K_BUBBLE_EVERY = "pet_bubble_every";
+    // 结构化上下文（第二批，行为方案 §二后半）：petSync 推入的记录感知数据，
+    // 权重表消费——昨晚达标→精神、连续未记录→蔫、今晚未记录→她想你去记
+    static final String K_CTX_SCORE = "pet_ctx_score";      // 昨晚评分（-1=无记录）
+    static final String K_CTX_MISSED = "pet_ctx_missed";    // 连续未记录夜数（截至昨晚）
+    static final String K_CTX_TONIGHT = "pet_ctx_tonight";  // 今晚是否已有夜睡记录
+    // 达标祝贺/深夜劝睡的"每天一次"去重键（方案 §5.4 记忆 + §三 事件）
+    static final String K_CHEER_DATE = "pet_cheer_date";
+    static final String K_NAG_DATE = "pet_nag_date";
     // 拉起 App 时要落的分区，由 Web 侧写入、App 读取后清除（保留给后续入口用）
     static final String K_PENDING_TAB = "somnacare_pending_tab";
 
@@ -211,6 +219,8 @@ public class PetOverlayService extends Service {
                 if (fanShown) updateEyeButton();
             }
         }
+        // 记录感知上下文 → 权重表；昨晚达标且今天未祝贺 → 庆祝一次（幂等：每天一次）
+        applyPetContext();
         return START_STICKY;
     }
 
@@ -1011,11 +1021,74 @@ public class PetOverlayService extends Service {
         @Override public void run() {
             if (whale != null) {
                 int h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
-                whale.setDrowsy((h >= 23 || h < 6) ? 0.85f : 0f);
+                boolean drowsy = h >= 23 || h < 6;
+                whale.setDrowsy(drowsy ? 0.85f : 0f);
+                if (drowsy) maybeNightNag();   // 深夜仍在亮屏 → 她开口劝睡（每晚一次）
             }
             main.postDelayed(this, 5 * 60 * 1000L);
         }
     };
+
+    /** 今天的 yyyy-MM-dd（去重键用）。 */
+    private static String todayKey() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date());
+    }
+
+    /**
+     * 记录感知上下文（第二批，行为方案 §二后半）→ 视图权重；
+     * 昨晚达标且今天未祝贺 → 庆祝一次（§5.4 记忆：防"每天都是第一次见你"的塑料感）。
+     * petSync 高频触发，幂等性靠 K_CHEER_DATE 去重。
+     */
+    private void applyPetContext() {
+        if (whale == null) return;
+        android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        int score = sp.getInt(K_CTX_SCORE, -1);
+        int missed = sp.getInt(K_CTX_MISSED, 0);
+        boolean hasTonight = sp.getBoolean(K_CTX_TONIGHT, false);
+        whale.setContext(score, missed, hasTonight);
+        if (score >= 85 && !todayKey().equals(sp.getString(K_CHEER_DATE, null))) {
+            sp.edit().putString(K_CHEER_DATE, todayKey()).apply();
+            whale.cheer();
+            showBubble("昨晚 " + score + " 分，今天气色不错嘛。哼，才有几次而已", 4000);
+        }
+    }
+
+    /**
+     * 深夜劝睡（第二批，行为方案 §三——与产品定位最强耦合项）：
+     * 23:00-06:00 且近 10 分钟屏幕仍亮着（还在刷）→ 气泡劝睡，每晚至多一次。
+     * 服务同进程直接查 UsageStatsManager（权限为应用级 PACKAGE_USAGE_STATS，
+     * 判定口径与 UsageSignalPlugin 同源）；已熄屏 = 放下手机，不打扰。
+     */
+    private void maybeNightNag() {
+        if (whale == null || bubbleShown) return;   // 播着话别插嘴
+        try {
+            android.app.AppOpsManager ops = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            if (ops == null || ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), getPackageName()) != android.app.AppOpsManager.MODE_ALLOWED) {
+                return;
+            }
+            android.app.usage.UsageStatsManager usm =
+                    (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) return;
+            long now = System.currentTimeMillis();
+            android.app.usage.UsageEvents ev = usm.queryEvents(now - 10 * 60_000L, now);
+            android.app.usage.UsageEvents.Event e = new android.app.usage.UsageEvents.Event();
+            boolean stillOn = false;
+            while (ev.hasNextEvent()) {
+                ev.getNextEvent(e);
+                int t = e.getEventType();
+                if (t == 15 || t == 18) stillOn = true;    // 亮屏（SCREEN_INTERACTIVE / KEYGUARD_HIDDEN）
+                else if (t == 16 || t == 17) stillOn = false;   // 熄屏/锁屏 = 已放下，不打扰
+            }
+            if (!stillOn) return;
+            android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            if (todayKey().equals(sp.getString(K_NAG_DATE, null))) return;   // 每晚至多一次
+            sp.edit().putString(K_NAG_DATE, todayKey()).apply();
+            showBubble("都这个点了还在滑……明天又要赖床了哦。放下，闭眼，本鱼看着你呢", 6000);
+        } catch (Exception ignored) {
+        }
+    }
 
     // ================= 通用工具 =================
 
