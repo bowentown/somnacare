@@ -18,7 +18,7 @@ const store = new Map<string, string>();
 };
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const { buildFullBackup, parseBackup, restoreFullBackup, BACKUP_SCHEMA } =
+const { buildFullBackup, parseBackup, restoreFullBackup, BACKUP_SCHEMA, IMPORT_MAX_BYTES } =
   await import(new URL('../src/utils/backup.ts', import.meta.url).href);
 
 let failures = 0;
@@ -87,6 +87,53 @@ store.set('somnacare_user_profile', JSON.stringify({ aiConfig: { provider: 'deep
 restoreFullBackup(p1.kind === 'full' ? p1.data : (null as never));
 const prof2 = JSON.parse(store.get('somnacare_user_profile')!);
 check('恢复：本机已有密钥被保留（不被空值覆盖）', prof2.aiConfig.deepseekApiKey === 'sk-LOCAL-EXISTING');
+
+// ── V13 残留（第 44 轮复审）：profile 字段注入 —— 恶意备份改写 customBaseUrl 必须被挡 ──
+// （对象展开本身无原型污染——CreateDataProperty，复审实测——真正的面是"任意字段注入"）
+{
+  const malicious = {
+    app: 'somnacare', schema: BACKUP_SCHEMA, exportedAt: '2026-10-05T00:00:00.000Z',
+    records: [],
+    profile: {
+      name: '受害者',
+      aiConfig: {
+        provider: 'custom_openai',
+        customBaseUrl: 'http://169.254.169.254/steal',   // 非 https + 元数据地址 → 必须整条丢弃
+        customApiKey: 'attacker-key',
+      },
+      hackerField: 'pwned',                              // 白名单外的字段 → 不得进入 profile
+    },
+  };
+  const parsed = parseBackup(JSON.stringify(malicious));
+  if (parsed.kind !== 'full') {
+    check('V13：恶意全量备份可解析', false);
+  } else {
+    restoreFullBackup(parsed.data);
+    const prof = JSON.parse(store.get('somnacare_user_profile')!);
+    check('V13：白名单外字段（hackerField）不进入 profile', !('hackerField' in prof));
+    check('V13：customBaseUrl 非 https/元数据地址 → 被丢弃', prof.aiConfig?.customBaseUrl === undefined);
+    check('V13：无原型污染残留', (Object.prototype as any).hackerField === undefined);
+  }
+  // 合法 https 端点照常保留
+  const okBody = { app: 'somnacare', schema: BACKUP_SCHEMA, exportedAt: '', records: [],
+    profile: { aiConfig: { provider: 'custom_openai', customBaseUrl: 'https://api.deepseek.com' } } };
+  restoreFullBackup((parseBackup(JSON.stringify(okBody)) as { kind: 'full'; data: never }).data);
+  const prof3 = JSON.parse(store.get('somnacare_user_profile')!);
+  check('V13：合法 https customBaseUrl 保留', prof3.aiConfig.customBaseUrl === 'https://api.deepseek.com');
+  // 上限分流：条数 / 字符长度（R2 纵深）
+  try {
+    parseBackup('[' + '1,'.repeat(60000) + '1]');
+    check('V13：记录超 5 万条被拒', false);
+  } catch (e) {
+    check('V13：记录超 5 万条被拒（too-many-records）', (e as Error).message === 'too-many-records');
+  }
+  try {
+    parseBackup('x'.repeat(IMPORT_MAX_BYTES + 1));
+    check('V13：raw 超 20MB 被拒（R2 纵深）', false);
+  } catch (e) {
+    check('V13：raw 超 20MB 被拒（too-big）', (e as Error).message === 'too-big');
+  }
+}
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——备份护栏口径不符`);

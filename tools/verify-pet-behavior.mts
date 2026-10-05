@@ -84,16 +84,45 @@ check('深夜劝睡：drowsy 分支调用 maybeNightNag', service.includes('if (
 check('深夜劝睡：isInteractive 判据（持续亮屏也命中，零权限）', service.includes('pm.isInteractive()'));
 check('深夜劝睡每晚一次（K_NAG_DATE 去重）', service.includes('K_NAG_DATE'));
 
-// ── 5) 上下文通道（复审 N2/N3 修正后）──
-check('petOverlay 推送三字段（lastNightRecorded 命名与醒来日口径一致）',
-  overlay.includes('lastScore') && overlay.includes('missedDays') && overlay.includes('lastNightRecorded')
+// ── 5) 上下文通道（复审 N2/N3 修正后；petContext 已抽为纯模块，复审 R4）──
+check('petContext 纯模块在位且被 petOverlay 消费',
+  overlay.includes("from './petContext'") && overlay.includes('petContext(records'));
+check('petContext 三字段命名与醒来日口径一致（无 hasTonight 残留）',
+  readFileSync(join(ROOT, 'src/utils/petContext.ts'), 'utf-8').includes('lastNightRecorded')
   && !overlay.includes('hasTonight'));
-check('missedDays 从最近一夜起数（i=0，复审 N2）', overlay.includes('for (let i = 0; i < 14; i++)'));
+check('missedDays 从最近一夜起数（i=0，复审 N2）',
+  readFileSync(join(ROOT, 'src/utils/petContext.ts'), 'utf-8').includes('for (let i = 0; i < 14; i++)'));
 check('插件落盘上下文（K_CTX_*）', plugin.includes('K_CTX_SCORE') && plugin.includes('K_CTX_MISSED') && plugin.includes('K_CTX_LAST_NIGHT'));
 check('服务转推上下文（调用点而非仅签名，变异 3）', service.includes('whale.setContext('));
 check('视图消费上下文 setContext', view.includes('public void setContext(int lastScore, int missedDays, boolean lastNightRecorded)'));
 check('权重表记录感知：蔫/精神/想你补记',
   view.includes('missedDays >= 3') && view.includes('lastScore >= 85') && view.includes('!lastNightRecorded && hour >= 21'));
+
+// ── 5b) petContext 逻辑级数值测试（复审 R4：从字符串断言升级到行为）──
+{
+  const { petContext } = await import(new URL('../src/utils/petContext.ts', import.meta.url).href);
+  const now = new Date(2026, 9, 5, 12, 0, 0);   // 2026-10-05 周一
+  const dstr = (off: number): string => {
+    const d = new Date(2026, 9, 5 + off);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const rec = (date: string, score = 88): any =>
+    ({ id: 'r' + date, date, bedtime: '23:30', wakeTime: '07:30', sleepScore: score, kind: undefined });
+
+  const c1 = petContext([rec(dstr(0), 92)], now);
+  check('逻辑：昨晚已入账 → lastNightRecorded/missedDays=0/lastScore=92',
+    c1.lastNightRecorded === true && c1.missedDays === 0 && c1.lastScore === 92,
+    JSON.stringify(c1));
+  const c2 = petContext([rec(dstr(-1))], now);
+  check('逻辑：昨晚缺席（记录停在昨天）→ missedDays=1 且未入账',
+    c2.lastNightRecorded === false && c2.missedDays === 1, JSON.stringify(c2));
+  const c3 = petContext([rec(dstr(-3)), rec(dstr(-4))], now);
+  check('逻辑：连续缺席 3 晚（今天/昨天/前天，最近记录在 3 天前）→ missedDays=3（蔫阈值触达）',
+    c3.missedDays === 3, JSON.stringify(c3));
+  const c4 = petContext([], now);
+  check('逻辑：无记录 → missedDays 封顶 14、lastScore=-1',
+    c4.missedDays === 14 && c4.lastScore === -1, JSON.stringify(c4));
+}
 
 // ── 6) 达标祝贺每天一次 + 睡前提醒权限门控 ──
 check('达标祝贺幂等（K_CHEER_DATE 去重）', service.includes('K_CHEER_DATE') && service.includes('whale.cheer()'));

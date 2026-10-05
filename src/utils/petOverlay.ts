@@ -8,6 +8,7 @@
  * 把 token 当白饭吃、被叫胖会急。语气参考 dsh-plugin-moments 的人设文档。
  */
 import type { SleepRecord, UserProfile } from '../types/sleep';
+import { petContext } from './petContext';
 import { generatePetSayLinesLlm, getCachedLlmSay } from './petMoments';
 export { getCachedLlmSay };
 
@@ -107,27 +108,6 @@ function fmtDuration(min: number): string {
 function tonightRecord(records: SleepRecord[], now: Date): SleepRecord | undefined {
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   return records.find((r) => r.date === today && r.kind !== 'nap');   // 夜睡才算"今晚已有记录"（小睡不顶掉）
-}
-
-/**
- * 结构化上下文（第二批，行为方案 §二后半）：随 petSync 推给原生权重表的
- * 记录感知数据——昨晚达标→精神、连续未记录→蔫、昨晚没入账→她想你去记。
- * 只有真实数据：无记录 lastScore=-1；连续未记录从【今天】起往前数（记录
- * 日期口径是醒来日，昨晚的记录日期就是今天——复审 N2：从 i=1 起会漏掉
- * 最近一夜），封顶 14。
- */
-function petContext(records: SleepRecord[], now: Date): { lastScore: number; missedDays: number; lastNightRecorded: boolean } {
-  const night = (r: SleepRecord): boolean => r.kind !== 'nap';
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const lastNight = records.find((r) => night(r) && r.date === today);
-  let missedDays = 0;
-  for (let i = 0; i < 14; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (records.some((r) => night(r) && r.date === key)) break;
-    missedDays++;
-  }
-  return { lastScore: lastNight ? lastNight.sleepScore : -1, missedDays, lastNightRecorded: !!lastNight };
 }
 
 /**

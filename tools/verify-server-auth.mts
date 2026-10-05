@@ -68,4 +68,17 @@ if (sleepUseCount !== 2) fail(`/api/sleep/ 的 app.use 必须恰好 2 处（限�
   if (badNested < 0) fail('反向自检失败：伪造的嵌套 app.use 未被检出');
 }
 
+// 5) V1 fail-open 的可发现性（第 44 轮复审：结构护栏已建，但"未设令牌 = 不鉴权"
+//    这一行为折中此前只存在于 server.ts 注释里——.env.example 是部署者
+//    唯一会看的变量清单，必须列出，否则该变量永远不会被设置）
+try {
+  const envExample = readFileSync(join(ROOT, '.env.example'), 'utf-8');
+  if (!envExample.includes('SOMNA_API_TOKEN')) {
+    fail('.env.example 未列出 SOMNA_API_TOKEN——fail-open 部署折中将无人发现');
+  }
+  console.log('✓ .env.example 已列出 SOMNA_API_TOKEN（fail-open 折中的可发现性锁）');
+} catch {
+  fail('.env.example 不存在——部署变量清单缺失');
+}
+
 console.log('✓ verify-server-auth：鉴权顶层唯一注册、先于路由、常量前置、无嵌套 app.use');

@@ -322,6 +322,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         const msg = err instanceof Error ? err.message : '';
         if (msg === 'too-many-records') {
           alert('导入失败：记录条数超出上限（5 万条）——请拆分备份文件');
+        } else if (msg === 'too-big') {
+          alert('导入失败：备份内容超过 20MB 上限');
         } else if (typeof DOMException !== 'undefined' && err instanceof DOMException
           && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
           alert('导入失败：本机存储空间不足，请清理后重试');
