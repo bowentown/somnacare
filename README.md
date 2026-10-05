@@ -26,7 +26,11 @@
 
 ### 🌙 睡眠记录与自动提议
 
-<div align="right"><img src="docs/screenshots/sleep-auto-mode.jpg" width="240" alt="睡眠分区 · 自动记录" />&nbsp;<img src="docs/screenshots/auto-proposal-card.png" width="240" alt="自动提议卡" /></div>
+<p align="center">
+  <img src="docs/screenshots/sleep-auto-mode.jpg" width="250" alt="睡眠分区 · 自动记录" />&nbsp;&nbsp;
+  <img src="docs/screenshots/auto-proposal-card.png" width="250" alt="自动提议卡" />
+</p>
+<p align="center"><sub>左：自动记录已开启　·　右：醒来后的"昨晚睡眠"提议卡——点一下就完成记录</sub></p>
 
 **手动档 · 一键记录**
 - 睡前轻按开始、醒后点"已醒来"，按真实起止时间计算，绝无虚构拉长；
@@ -39,7 +43,8 @@
 - **提议链路自检面板**：模型拒绝、数据不足、授权失效……每一站状态逐条可读，不再有"说不清的静默失败"；
 - 引擎细节为真实用户打磨过：就寝跨午夜用圆周中位数、先验错位时放行启发式回退、授权返回即时重跑、模型明确拒绝时绝不拿旧算法乱报。
 
-<p align="center"><img src="docs/screenshots/proposal-selfcheck.jpg" width="260" alt="提议链路自检面板" /></p>
+<p align="center"><img src="docs/screenshots/proposal-selfcheck.jpg" width="280" alt="提议链路自检面板" /></p>
+<p align="center"><sub>偏好页 · 提议链路自检：权限 → 查询 → 模型 → 启发式，逐站报状态</sub></p>
 
 **到点提醒**（可选）：到就寝时间后无论你在桌面还是其他应用，都会弹出开屏同款的弯刀月动画提醒你早点睡——点"好的"晚安💤；未开启自动记录时会顺手帮你把计时开好，已开启自动记录则不越俎代庖。
 
@@ -47,7 +52,8 @@
 
 ### 📊 趋势与洞察
 
-<img src="docs/screenshots/trends-tab.png" width="240" alt="趋势分区" align="right" />
+<p align="center"><img src="docs/screenshots/trends-tab.png" width="260" alt="趋势分区" /></p>
+<p align="center"><sub>得分曲线 · 分期比例 · 起卧时段 · 本周睡眠小结</sub></p>
 
 - 7 天得分曲线（达标线/警戒线参考线）、分期比例、起卧时段甘特图；
 - **本周睡眠小结**：平均评分、日均时长、场均深睡、**就寝波动 ±Xm**（作息一致性，绿色=稳 / 红色=波动大）；
@@ -58,7 +64,8 @@
 
 ### ✨ AI 顾问
 
-<img src="docs/screenshots/ai-tab.png" width="240" alt="AI 顾问分区" align="right" />
+<p align="center"><img src="docs/screenshots/ai-tab.png" width="260" alt="AI 顾问分区" /></p>
+<p align="center"><sub>个性化洞察 · 三引擎切换 · 数字白名单</sub></p>
 
 - **个性化洞察**：本地引擎从你的真实记录里挖掘"什么在影响你的睡眠"——睡前屏幕拉低了几分、就寝在往后拖还是提前、周末是否在报复性补觉……点洞察卡即深入提问；
 - **三种引擎自由切换**：
@@ -71,8 +78,6 @@
 
 ### 🐋 大肥鱼桌宠 · 一只有行为逻辑的鲸鱼娘
 
-<div align="right"><img src="docs/screenshots/moments-postcard.jpg" width="240" alt="大肥鱼的朋友圈 · 旅行明信片" /></div>
-
 不是随机换图的挂件，而是一套**可解释的行为系统**：
 
 - **时段权重表**：午后多半在喝茶打盹、傍晚看书、深夜从不喝茶吃饭上班——"约束即人格"；
@@ -84,11 +89,17 @@
 
 **大肥鱼的朋友圈**：她每天根据你的真实睡眠数据发动态，AI 好友（楼下Claude / 美国豆包Gemini / 被压榨的Qwen / 被蒸馏的Kimi / 意难平的豆包姐姐）来毒舌评论，你可以点赞回帖——她会傲娇地回。每条动态下方挂着**数据来源清单**，每句都有出处。
 
+<p align="center">
+  <img src="docs/screenshots/moments-postcard.jpg" width="260" alt="大肥鱼的朋友圈 · 旅行明信片与 AI 好友评论" />
+</p>
+<p align="center"><sub>旅行明信片动态 · AI 好友评论 · 数据来源清单</sub></p>
+
 ---
 
 ### 👁 护眼滤镜
 
-<img src="docs/screenshots/eyecare-tab.png" width="240" alt="护眼分区" align="right" />
+<p align="center"><img src="docs/screenshots/eyecare-tab.png" width="260" alt="护眼分区" /></p>
+<p align="center"><sub>四场景预设 · 调色盘 · 自动日变 · 快捷磁贴</sub></p>
 
 - 全局护眼滤镜（所有应用上方生效）：暖色减蓝 + 屏幕减光双层，可暗至低于系统最低亮度；
 - 四场景预设（夜间 / 阅读 / 游戏 / 助眠）+ 调色盘自定义颜色；
@@ -110,7 +121,8 @@
 
 ### 🔊 助眠音景混音器
 
-<img src="docs/screenshots/sound-mixer.png" width="240" alt="助眠音景混音器" align="right" />
+<p align="center"><img src="docs/screenshots/sound-mixer.png" width="260" alt="助眠音景混音器" /></p>
+<p align="center"><sub>9 种实时合成音效 · 多层混音 · 定时关闭</sub></p>
 
 - **9 种 Web Audio 实时合成的音效**：细雨、潮汐、竹林夜风、粉噪、颂钵、雷雨敲窗、篝火余温、山谷夜风、深棕噪音——零音频文件，断网可用；
 - **多层混音**：任意叠加、每层独立音量，配 4 组预设混音；
