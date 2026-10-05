@@ -59,7 +59,7 @@ import {
 
 // 逐条清洗在 utils/recordSanitize.ts——启动加载路径共用同一条防线
 import { sanitizeRecord } from '../utils/recordSanitize';
-import { buildFullBackup, parseBackup, restoreFullBackup } from '../utils/backup';
+import { buildFullBackup, parseBackup, restoreFullBackup, IMPORT_MAX_BYTES } from '../utils/backup';
 import { reclassifyForChronotype } from '../utils/recordFilter';
 
 interface SettingsTabProps {
@@ -272,6 +272,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 复审 V13：超大文件同步解析会冻结主线程、撑爆配额——读入前先挡
+    if (file.size > IMPORT_MAX_BYTES) {
+      alert('导入失败：备份文件超过 20MB 上限');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -312,8 +317,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         const r = restoreFullBackup(parsed.data);
         alert(`已恢复全量备份：记录 ${r.records} 条 · 朋友圈 ${r.moments} 条 · 聊天 ${r.chat} 条${r.travel ? ' · 图鉴进度' : ''}${r.profile ? ' · 档案' : ''}。页面即将刷新。`);
         window.location.reload();   // 全量覆盖后整树重挂，让所有读取端拿到新数据
-      } catch {
-        alert('导入失败：不是合法的备份 JSON 文件');
+      } catch (err) {
+        // 复审 V13：错误分流——配额溢出此前被误报成"不是合法的备份 JSON"
+        const msg = err instanceof Error ? err.message : '';
+        if (msg === 'too-many-records') {
+          alert('导入失败：记录条数超出上限（5 万条）——请拆分备份文件');
+        } else if (typeof DOMException !== 'undefined' && err instanceof DOMException
+          && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+          alert('导入失败：本机存储空间不足，请清理后重试');
+        } else {
+          alert('导入失败：不是合法的备份 JSON 文件');
+        }
       }
     };
     reader.readAsText(file);

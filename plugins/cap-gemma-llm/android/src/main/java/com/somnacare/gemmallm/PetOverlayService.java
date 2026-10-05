@@ -53,10 +53,11 @@ public class PetOverlayService extends Service {
     // 每 N 次点击角色自动播报 1 次，其余点击弹按钮
     static final String K_BUBBLE_EVERY = "pet_bubble_every";
     // 结构化上下文（第二批，行为方案 §二后半）：petSync 推入的记录感知数据，
-    // 权重表消费——昨晚达标→精神、连续未记录→蔫、今晚未记录→她想你去记
-    static final String K_CTX_SCORE = "pet_ctx_score";      // 昨晚评分（-1=无记录）
-    static final String K_CTX_MISSED = "pet_ctx_missed";    // 连续未记录夜数（截至昨晚）
-    static final String K_CTX_TONIGHT = "pet_ctx_tonight";  // 今晚是否已有夜睡记录
+    // 权重表消费——昨晚达标→精神、连续未记录→蔫、昨晚没入账→她想你去记
+    // （复审 N3 改名：醒来日口径下"今晚"的记录日期是明天，原 hasTonight 名不副实）
+    static final String K_CTX_SCORE = "pet_ctx_score";        // 昨晚评分（-1=无记录）
+    static final String K_CTX_MISSED = "pet_ctx_missed";      // 连续未记录夜数（含最近一夜）
+    static final String K_CTX_LAST_NIGHT = "pet_ctx_last_night"; // 昨晚是否已入账
     // 达标祝贺/深夜劝睡的"每天一次"去重键（方案 §5.4 记忆 + §三 事件）
     static final String K_CHEER_DATE = "pet_cheer_date";
     static final String K_NAG_DATE = "pet_nag_date";
@@ -1045,8 +1046,8 @@ public class PetOverlayService extends Service {
         android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         int score = sp.getInt(K_CTX_SCORE, -1);
         int missed = sp.getInt(K_CTX_MISSED, 0);
-        boolean hasTonight = sp.getBoolean(K_CTX_TONIGHT, false);
-        whale.setContext(score, missed, hasTonight);
+        boolean lastNightRecorded = sp.getBoolean(K_CTX_LAST_NIGHT, false);
+        whale.setContext(score, missed, lastNightRecorded);
         if (score >= 85 && !todayKey().equals(sp.getString(K_CHEER_DATE, null))) {
             sp.edit().putString(K_CHEER_DATE, todayKey()).apply();
             whale.cheer();
@@ -1056,32 +1057,16 @@ public class PetOverlayService extends Service {
 
     /**
      * 深夜劝睡（第二批，行为方案 §三——与产品定位最强耦合项）：
-     * 23:00-06:00 且近 10 分钟屏幕仍亮着（还在刷）→ 气泡劝睡，每晚至多一次。
-     * 服务同进程直接查 UsageStatsManager（权限为应用级 PACKAGE_USAGE_STATS，
-     * 判定口径与 UsageSignalPlugin 同源）；已熄屏 = 放下手机，不打扰。
+     * 23:00-06:00 且【此刻屏幕仍亮】→ 气泡劝睡，每晚至多一次。
+     * 判据用 PowerManager.isInteractive()（零权限，复审 N4）：此前的
+     * "10 分钟事件窗口"法只在窗口内出现亮/熄屏【转换】时才判亮——持续亮屏
+     * （一直在刷，恰恰是目标场景）反而漏检。屏幕没亮 = 已放下，不打扰。
      */
     private void maybeNightNag() {
         if (whale == null || bubbleShown) return;   // 播着话别插嘴
         try {
-            android.app.AppOpsManager ops = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
-            if (ops == null || ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                    android.os.Process.myUid(), getPackageName()) != android.app.AppOpsManager.MODE_ALLOWED) {
-                return;
-            }
-            android.app.usage.UsageStatsManager usm =
-                    (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
-            if (usm == null) return;
-            long now = System.currentTimeMillis();
-            android.app.usage.UsageEvents ev = usm.queryEvents(now - 10 * 60_000L, now);
-            android.app.usage.UsageEvents.Event e = new android.app.usage.UsageEvents.Event();
-            boolean stillOn = false;
-            while (ev.hasNextEvent()) {
-                ev.getNextEvent(e);
-                int t = e.getEventType();
-                if (t == 15 || t == 18) stillOn = true;    // 亮屏（SCREEN_INTERACTIVE / KEYGUARD_HIDDEN）
-                else if (t == 16 || t == 17) stillOn = false;   // 熄屏/锁屏 = 已放下，不打扰
-            }
-            if (!stillOn) return;
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm == null || !pm.isInteractive()) return;
             android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             if (todayKey().equals(sp.getString(K_NAG_DATE, null))) return;   // 每晚至多一次
             sp.edit().putString(K_NAG_DATE, todayKey()).apply();

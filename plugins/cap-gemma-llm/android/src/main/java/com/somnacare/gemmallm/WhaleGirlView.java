@@ -82,9 +82,9 @@ public class WhaleGirlView extends View {
     private boolean talking;
     private float drowsy;
     // 记录感知上下文（第二批，petSync 结构化通道推入；方案 §二后半）
-    private int lastScore = -1;        // 昨晚评分（-1=无记录）
-    private int missedDays = 0;        // 连续未记录夜数（截至昨晚）
-    private boolean hasTonight = false; // 今晚是否已有夜睡记录
+    private int lastScore = -1;          // 昨晚评分（-1=无记录）
+    private int missedDays = 0;          // 连续未记录夜数（含最近一夜，醒来日口径）
+    private boolean lastNightRecorded = false; // 昨晚是否已入账（复审 N3 改名）
     private boolean dragging;
     private boolean running;
     private boolean resumed;        // 小动作调度是否在跑
@@ -213,10 +213,10 @@ public class WhaleGirlView extends View {
     }
 
     /** 记录感知上下文（petSync 结构化通道，PetOverlayService 转推）。 */
-    public void setContext(int lastScore, int missedDays, boolean hasTonight) {
+    public void setContext(int lastScore, int missedDays, boolean lastNightRecorded) {
         this.lastScore = lastScore;
         this.missedDays = missedDays;
-        this.hasTonight = hasTonight;
+        this.lastNightRecorded = lastNightRecorded;
     }
 
     /** 拖拽中切"被拎起来"姿势，松手恢复。 */
@@ -289,7 +289,7 @@ public class WhaleGirlView extends View {
             default:         w = 4; break;
         }
         // 记录感知（第二批，方案 §二）：连续未记录 ≥3 晚 → 蔫（玩不动，只想蜷着）；
-        // 昨晚达标 → 精神（多走动多玩）；今晚还没记录的夜里 → 她在想你怎么还不记
+        // 昨晚达标 → 精神（多走动多玩）；昨晚没入账的夜里 → 她在想你怎么还不补记
         if (missedDays >= 3) {
             if (a.name.equals("play")) w = Math.max(0, w / 4);
             if (a.name.equals("nap") || a.name.equals("pillow")) w *= 2;
@@ -297,7 +297,7 @@ public class WhaleGirlView extends View {
         if (lastScore >= 85) {
             if (a.name.equals("walk") || a.name.equals("play")) w *= 2;
         }
-        if (!hasTonight && hour >= 21) {
+        if (!lastNightRecorded && hour >= 21) {
             if (a.name.equals("think")) w += 10;
         }
         return w;

@@ -380,7 +380,7 @@ public class GemmaLLMPlugin extends Plugin {
                 .putString("pet_skin", call.getString("skin", "default"))
                 .putInt(PetOverlayService.K_CTX_SCORE, ctxScore != null ? ctxScore : -1)
                 .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
-                .putBoolean(PetOverlayService.K_CTX_TONIGHT, Boolean.TRUE.equals(call.getBoolean("hasTonight")))
+                .putBoolean(PetOverlayService.K_CTX_LAST_NIGHT, Boolean.TRUE.equals(call.getBoolean("lastNightRecorded")))
                 .apply();
     }
 
@@ -806,7 +806,13 @@ public class GemmaLLMPlugin extends Plugin {
         if (!"https".equalsIgnoreCase(uri.getScheme()) || !isAllowedModelHost(uri.getHost())) {
             throw new Exception("不安全的模型下载地址（仅允许 HTTPS 白名单域名）");
         }
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        // 复审 N5：显式端口只许 443（https 默认端口 getPort()==-1）
+        if (uri.getPort() != -1 && uri.getPort() != 443) {
+            throw new Exception("不安全的模型下载地址（仅允许 443 端口）");
+        }
+        // 复审 N5：用校验过的同一个 URI 建连（uri.toURL()）——此前 URI 校验完
+        // 再用 new URL(url) 二次解析，两个解析器存在理论差异缝
+        HttpURLConnection conn = uri.toURL().openConnection();
         conn.setConnectTimeout(20000);
         conn.setReadTimeout(30000);
         conn.setInstanceFollowRedirects(false);   // 重定向由 downloadModel 手动逐跳校验

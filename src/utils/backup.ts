@@ -95,14 +95,26 @@ export type ParsedBackup =
   | { kind: 'full'; data: FullBackup }
   | { kind: 'records-only'; records: unknown[] };
 
+/** 导入上限（复审 V13）：超大文件同步 JSON.parse 会冻结主线程、超多记录会
+ *  撑爆 localStorage 配额——在读入/落盘前先挡，错误文案与"不是合法备份"区分。 */
+export const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
+export const IMPORT_MAX_RECORDS = 50000;
+
 /** 识别备份类型：schema 2 全量 / 旧版纯记录数组。解析失败抛错。 */
 export function parseBackup(raw: string): ParsedBackup {
   const parsed: unknown = JSON.parse(raw);
-  if (Array.isArray(parsed)) return { kind: 'records-only', records: parsed };
+  if (Array.isArray(parsed)) {
+    if (parsed.length > IMPORT_MAX_RECORDS) throw new Error('too-many-records');
+    return { kind: 'records-only', records: parsed };
+  }
   if (parsed && typeof parsed === 'object') {
     const o = parsed as Record<string, unknown>;
     if (o.app === 'somnacare' && o.schema === BACKUP_SCHEMA) {
-      return { kind: 'full', data: o as unknown as FullBackup };
+      const data = o as unknown as FullBackup;
+      if (Array.isArray(data.records) && data.records.length > IMPORT_MAX_RECORDS) {
+        throw new Error('too-many-records');
+      }
+      return { kind: 'full', data };
     }
     throw new Error('unknown-schema');
   }
