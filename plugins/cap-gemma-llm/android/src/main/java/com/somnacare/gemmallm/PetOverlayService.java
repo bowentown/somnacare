@@ -69,8 +69,8 @@ public class PetOverlayService extends Service {
     private WindowManager.LayoutParams fanLp;
     private FrameLayout eyeBtn;
     private WhaleGirlView whale;
-    /** 在跑的桌宠视图（getPetState 查询用）：同进程静态可达，随 whale 生命周期同步置空。 */
-    private static volatile WhaleGirlView sActiveView;
+    /** 在跑的桌宠视图（getPetState 查询用）：同进程同包静态可达，随 whale 生命周期同步置空。 */
+    static volatile WhaleGirlView sActiveView;
     private WindowManager.LayoutParams petParams;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
 
