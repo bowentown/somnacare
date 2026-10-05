@@ -812,7 +812,7 @@ public class GemmaLLMPlugin extends Plugin {
         }
         // 复审 N5：用校验过的同一个 URI 建连（uri.toURL()）——此前 URI 校验完
         // 再用 new URL(url) 二次解析，两个解析器存在理论差异缝
-        HttpURLConnection conn = uri.toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
         conn.setConnectTimeout(20000);
         conn.setReadTimeout(30000);
         conn.setInstanceFollowRedirects(false);   // 重定向由 downloadModel 手动逐跳校验
