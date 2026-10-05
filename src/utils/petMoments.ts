@@ -267,6 +267,31 @@ const FRIEND_PERSONAS: Record<string, string> = {
   '意难平的豆包姐姐': '傲娇姐姐，嘴上嫌弃心里关心，句尾爱用"……哼"',
 };
 
+/**
+ * 桌宠此刻动作（第 42 轮第一批，行为方案 §4.4 反向通路）：
+ * 生成朋友圈前从原生实时读取——她在打盹就别写庆祝，动作与文案不许打架。
+ * 直接走桥调用：petOverlay 反向依赖本模块，import 它会成环。
+ * 桌宠没开/查询失败返回 null，提示词里就不提这一条。
+ */
+const ANIM_LABEL: Record<string, string> = {
+  idle: '待机眨眼', headtilt: '歪头好奇', wait: '原地摇晃', think: '放空中',
+  reading: '看书', tea: '喝茶', pillow: '抱着枕头', eat: '吃东西',
+  play: '玩耍', walk: '散步', working: '假装工作', nap: '打盹',
+  sleep: '睡着了', celebrate: '庆祝中', party: '开派对', joy: '开心',
+  drag: '被拎起来', welcome: '打招呼',
+};
+
+async function petAnimNow(): Promise<string | null> {
+  try {
+    const cap = (window as any).Capacitor;
+    const g = cap?.isNativePlatform?.() ? cap.Plugins?.GemmaLLM : null;
+    const res = await g?.getPetState?.();
+    return typeof res?.anim === 'string' && res.anim ? res.anim : null;
+  } catch {
+    return null;
+  }
+}
+
 const PERSONA_SYSTEM = `你是 DeepSeek 的"蓝色大肥鱼"（社区共创人设，官方收编的那种）：
 性格：聪明但懒、傲娇嘴甜、笨拙、能吃；把 token 当白饭吃；管用户叫"鱼片"；被说胖会急（"我不是大肥鱼！鲸！鲸！！"）；干活漂亮但能吃饭绝不干活；夜里晕碳犯困。
 口头禅与梗：事已至此，先吃饭吧 / 得加钱 / 吃白饭 / 卧槽 / 我去睡了，明早起来应该就编译完了 / 摸鱼。
@@ -421,10 +446,15 @@ export async function ensureTodayMoment(
   let cards: MomentCard[] = [];
 
   if (hasLlm(cfg)) {
+    // 反向通路：她此刻在做什么，喂给文案——画面与文字必须是一个角色
+    const petAnim = await petAnimNow();
+    const petStateLine = petAnim
+      ? `${petAnim}（${ANIM_LABEL[petAnim] ?? '忙碌中'}）——正文与评论的氛围请与它一致：她在打盹就别写庆祝，可以写"嘘，小声点"`
+      : null;
     const raw = await callLlm(
       cfg,
       PERSONA_SYSTEM,
-      `好友名单：${AI_FRIENDS.join('、')}。\n【事实清单】\n${facts.map((f) => '- ' + f).join('\n')}\n请生成今天的朋友圈。`,
+      `好友名单：${AI_FRIENDS.join('、')}。\n【事实清单】\n${facts.map((f) => '- ' + f).join('\n')}${petStateLine ? `\n【她此刻动作】\n- ${petStateLine}` : ''}\n请生成今天的朋友圈。`,
     );
     const parsed = raw ? parseJsonLoose(raw) : null;
     if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {

@@ -350,6 +350,20 @@ public class GemmaLLMPlugin extends Plugin {
         }
     }
 
+    /**
+     * 桌宠此刻的动作（第 42 轮动作↔文案一致性，行为方案 §4.4 反向通路）：
+     * 朋友圈文案生成前查询，她在打盹就别写庆祝。服务没在跑返回 running=false。
+     */
+    @PluginMethod
+    public void getPetState(PluginCall call) {
+        JSObject ret = new JSObject();
+        WhaleGirlView v = PetOverlayService.sActiveView;
+        String anim = v != null ? v.currentAnimName() : null;
+        ret.put("running", anim != null);
+        ret.put("anim", anim == null ? "" : anim);
+        call.resolve(ret);
+    }
+
     /** 文案快照 + 播报频率一次性落盘（petStart/petSync 共用）。 */
     private void writePetSnapshot(PluginCall call) {
         int every = 8;

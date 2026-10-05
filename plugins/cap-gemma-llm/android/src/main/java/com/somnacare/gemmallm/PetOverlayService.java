@@ -69,6 +69,8 @@ public class PetOverlayService extends Service {
     private WindowManager.LayoutParams fanLp;
     private FrameLayout eyeBtn;
     private WhaleGirlView whale;
+    /** 在跑的桌宠视图（getPetState 查询用）：同进程静态可达，随 whale 生命周期同步置空。 */
+    private static volatile WhaleGirlView sActiveView;
     private WindowManager.LayoutParams petParams;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -196,7 +198,7 @@ public class PetOverlayService extends Service {
                 if (fanShown) hideFan();
                 if (bubbleShown) hideBubble();
                 if (pickerShown) hideZonePicker();
-                if (whale != null) { try { whale.stop(); } catch (Exception ignored) { } whale = null; }
+                if (whale != null) { try { whale.stop(); } catch (Exception ignored) { } whale = null; sActiveView = null; }
                 if (petRoot != null) {
                     try { wm.removeViewImmediate(petRoot); } catch (Exception ignored) { }
                     petRoot = null;
@@ -221,6 +223,7 @@ public class PetOverlayService extends Service {
             petRoot = new FrameLayout(this);
             currentSkin = sp.getString("pet_skin", "default");
             whale = new WhaleGirlView(this, currentSkin);
+            sActiveView = whale;   // getPetState 查询通道（动作↔文案一致性）
             petRoot.addView(whale, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
@@ -264,6 +267,7 @@ public class PetOverlayService extends Service {
             }
             petRoot = null;
             whale = null;
+            sActiveView = null;
             stopSelf();
         }
     }
@@ -1140,6 +1144,7 @@ public class PetOverlayService extends Service {
             petRoot = null;
         }
         whale = null;
+        sActiveView = null;
         super.onDestroy();
     }
 }

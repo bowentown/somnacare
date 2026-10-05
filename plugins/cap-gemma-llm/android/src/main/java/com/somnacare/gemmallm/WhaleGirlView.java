@@ -34,9 +34,12 @@ public class WhaleGirlView extends View {
     private static final int IDLE_PAUSE_VAR = 35000;
     private static final int AMBIENT_MIN = 6000;
     private static final int AMBIENT_VAR = 6000;
+    /** 状态切换的交叉溶解时长（第 42 轮：硬切是"贴图换位"，180ms 溶解才像角色在动）。 */
+    private static final long FADE_MS = 180;
 
     /** 一个状态的素材与播放参数（参数抄自上游 manifest.json）。 */
     private static final class Anim {
+        final String name;
         final Bitmap sheet;
         final int frames;
         final long frameMs;
@@ -46,7 +49,8 @@ public class WhaleGirlView extends View {
         final boolean floatMotion;
         final boolean wiggleMotion;
 
-        Anim(Bitmap sheet, int frames, int fps, String playback, String motion) {
+        Anim(String name, Bitmap sheet, int frames, int fps, String playback, String motion) {
+            this.name = name;
             this.sheet = sheet;
             this.frames = Math.max(1, frames);
             this.frameMs = Math.max(80, 1000L / Math.max(1, fps));
@@ -61,6 +65,7 @@ public class WhaleGirlView extends View {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Random rng = new Random();
     private final Rect src = new Rect();
+    private final Rect srcPrev = new Rect();   // 交叉溶解的旧帧源矩形
     private final RectF dst = new RectF();
 
     private final Anim idle, joy, celebrate, sleep, drag, welcome;
@@ -69,6 +74,8 @@ public class WhaleGirlView extends View {
     private final Anim[] cheers;    // 庆祝池
 
     private Anim current;
+    private Anim prevAnim;          // 交叉溶解的旧状态（pick 换位时登记）
+    private long swappedAt;         // 本次换位时刻（淡入进度基准）
     private long stateSince;
     private long cheerUntil;        // 庆祝播到这个时刻
     private long ambientUntil;      // 小动作播到这个时刻
@@ -100,8 +107,9 @@ public class WhaleGirlView extends View {
                 } else if (drowsy > 0.5f) {
                     ambientUntil = now + 15000;  // 深夜困倦时不折腾，安静睡觉
                 } else {
-                    // 待机歇够了 → 随机来一段小动作
-                    Anim next = ambient[rng.nextInt(ambient.length)];
+                    // 待机歇够了 → 按【时段权重】挑小动作（不再是均匀随机）：
+                    // 午饭时间吃东西、下午茶喝茶、傍晚看书、深夜不打扰
+                    Anim next = pickAmbient();
                     if (next != null) {
                         pick(next);
                         ambientUntil = now + AMBIENT_MIN + rng.nextInt(AMBIENT_VAR);
@@ -158,7 +166,7 @@ public class WhaleGirlView extends View {
         try (java.io.InputStream in = getContext().getAssets().open(dir + name + ".png")) {
             Bitmap b = BitmapFactory.decodeStream(in);
             if (b == null) return null;
-            return new Anim(b, frames, fps, playback, motion);
+            return new Anim(name, b, frames, fps, playback, motion);
         } catch (OutOfMemoryError e) {
             // 低内存设备解码 256×256 × 18 张可能 OOM：缺一张比崩进程好
             return null;
@@ -227,9 +235,62 @@ public class WhaleGirlView extends View {
 
     private void pick(Anim a) {
         if (a == null || a == current) return;
+        prevAnim = current;
+        swappedAt = System.currentTimeMillis();
         current = a;
-        stateSince = System.currentTimeMillis();
+        stateSince = swappedAt;
         invalidate();
+    }
+
+    /** 桌宠此刻的动作名（getPetState 查询用；动作↔文案一致性）。 */
+    public String currentAnimName() {
+        return current != null ? current.name : null;
+    }
+
+    /**
+     * 环境动作权重表（第 42 轮，行为方案 §二；思路同 dsh-chicken-pet 的
+     * 加权待机）：权重即人格——午饭时间吃东西、下午茶喝茶、傍晚看书抱枕头、
+     * 深夜不喝茶不吃饭不上班。深夜 23-06 另有 drowsy 闸门整体关停小动作，
+     * 这里的深夜 0 值只作兜底。记录类上下文（连续未记录/昨晚分数）待
+     * JS→原生结构化通道就绪后接入（方案 §二 后半）。
+     */
+    private int weightOf(Anim a, int hour) {
+        switch (a.name) {
+            case "headtilt": return 6;
+            case "wait":     return 6;
+            case "think":    return 5;
+            case "reading":  return (hour >= 18) ? 16 : 6;
+            case "tea":      return (hour >= 23 || hour < 5) ? 0
+                                  : (hour >= 14 && hour < 17) ? 10
+                                  : (hour < 10) ? 6 : 8;
+            case "pillow":   return (hour >= 21 || hour < 2) ? 16 : (hour >= 18 ? 10 : 3);
+            case "eat":      return (hour >= 11 && hour < 13) ? 16
+                                  : (hour >= 17 && hour < 20) ? 12
+                                  : (hour >= 23 || hour < 6) ? 0 : 4;
+            case "play":     return (hour >= 9 && hour < 22) ? 6 : 2;
+            case "walk":     return (hour >= 6 && hour < 10) ? 14
+                                  : (hour >= 23 || hour < 6) ? 0 : 6;
+            case "working":  return ((hour >= 9 && hour < 12) || (hour >= 14 && hour < 18)) ? 12
+                                  : (hour >= 23 || hour < 7) ? 0 : 4;
+            case "nap":      return (hour >= 13 && hour < 15) ? 14
+                                  : (hour >= 21) ? 12 : 3;
+            default:         return 4;
+        }
+    }
+
+    /** 按权重选环境动作（权重全 0 时均匀兜底——不应发生）。 */
+    private Anim pickAmbient() {
+        if (ambient.length == 0) return null;
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        long total = 0;
+        for (Anim a : ambient) total += Math.max(0, weightOf(a, hour));
+        if (total <= 0) return ambient[rng.nextInt(ambient.length)];
+        long roll = (long) (rng.nextDouble() * total);
+        for (Anim a : ambient) {
+            roll -= Math.max(0, weightOf(a, hour));
+            if (roll < 0) return a;
+        }
+        return ambient[ambient.length - 1];
     }
 
     @Override
@@ -264,6 +325,16 @@ public class WhaleGirlView extends View {
         int idx = frameIndex(a, now - stateSince);
         src.set(idx * fw, 0, (idx + 1) * fw, fh);
 
+        // 交叉溶解窗口：刚换位且旧状态可用 → 旧帧淡出、新帧淡入（FADE_MS）
+        long sinceSwap = now - swappedAt;
+        boolean fading = prevAnim != null && prevAnim != a && !prevAnim.sheet.isRecycled()
+                && sinceSwap >= 0 && sinceSwap < FADE_MS;
+        if (fading) {
+            int pfw = prevAnim.sheet.getWidth() / prevAnim.frames;
+            int pidx = (int) ((sinceSwap / prevAnim.frameMs) % prevAnim.frames);
+            srcPrev.set(pidx * pfw, 0, (pidx + 1) * pfw, prevAnim.sheet.getHeight());
+        }
+
         // 帧是正方形、窗口高>宽：按宽定边、垂直居中
         float side = Math.min(w, h) * 0.97f;
         float cx = w / 2f, cy = h / 2f;
@@ -284,7 +355,16 @@ public class WhaleGirlView extends View {
             c.translate(0, (float) Math.sin(t * Math.PI * 2) * side * amp);
         }
         dst.set(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f);
-        c.drawBitmap(a.sheet, src, dst, paint);
+        if (fading) {
+            float t = sinceSwap / (float) FADE_MS;
+            paint.setAlpha((int) ((1f - t) * 255));
+            c.drawBitmap(prevAnim.sheet, srcPrev, dst, paint);
+            paint.setAlpha((int) (t * 255));
+            c.drawBitmap(a.sheet, src, dst, paint);
+            paint.setAlpha(255);   // paint 常驻复用，溶解后必须还原
+        } else {
+            c.drawBitmap(a.sheet, src, dst, paint);
+        }
         c.restore();
     }
 
