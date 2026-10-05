@@ -229,7 +229,7 @@ async function callLlm(cfg: any, system: string, user: string, kind?: string): P
     if (u) {
       const hit = u.prompt_cache_hit_tokens ?? 0;
       const miss = u.prompt_cache_miss_tokens ?? 0;
-      console.log('[llm usage]', { model: data.model, completion: u.completion_tokens, hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a', kind: tag ?? 'moments' });
+      console.log('[llm usage]', { model: data.model, completion: u.completion_tokens, hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a', kind: kind ?? 'moments' });
     }
     return data.choices?.[0]?.message?.content ?? null;
   } catch {
