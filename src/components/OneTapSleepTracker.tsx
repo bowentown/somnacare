@@ -56,10 +56,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   useEffect(() => {
     if (!isNativePlatform()) return;
     const stop = subscribeUsage(setUsageDays);
-    // 作息类型决定采样窗口（D3）：'irregular' 不做自动提议（store 层短路）
+    // 授权即时生效（第 42 轮）：从系统设置授权返回后 usagePerm 变 granted，
+    // 此前本 effect 只依赖 chronotype——不重跑，usageDays 停留在授权前的
+    // 空态，启发式永远"没有手机使用数据"，直到手动切分区重挂载
     void ensureUsageLoaded(2, userProfile?.chronotype ?? 'night');
     return stop;
-  }, [userProfile?.chronotype]);
+  }, [userProfile?.chronotype, usagePerm]);
 
   // ── 模型化提议（第 26 轮）：SensibleSleep 贝叶斯模型优先，旧启发式作回退 ──
   // 三态：pending（拟合中）→ 不渲染任何提议——此前 decided=false 期间旧启发式
@@ -101,7 +103,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       }
     })();
     return () => { cancelled = true; };
-  }, [usageDays, records, handledDate, chronotype, sessionActive]);
+    // usagePerm 入依赖：授权返回后无需重开页面，引擎立即重跑（第 42 轮）
+  }, [usageDays, records, handledDate, chronotype, sessionActive, usagePerm]);
 
   const heuristicProposal = useMemo(
     () => computeProposal({

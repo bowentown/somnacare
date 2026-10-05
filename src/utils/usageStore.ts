@@ -34,9 +34,15 @@ function load(days: number, chronotype: 'night' | 'day' | 'irregular'): Promise<
   loading = refreshUsageDays(days, chronotype)
     .then((list) => {
       loading = null;
-      cache = list;
-      cacheKey = key;
-      cacheAt = Date.now();
+      // 空结果不入缓存（第 42 轮授权流 e2e 实证）：授权前的查询被原生拒绝时
+      // refreshUsageDays 静默回退空数组——把它连同 30min TTL 一起缓存，会让
+      // 授权后的重跑继续拿到空数据，卡片直到 TTL 过期或重启才可能出现。
+      // 空 = "此刻没有数据"，不是"数据就是这么空"
+      if (list.length > 0) {
+        cache = list;
+        cacheKey = key;
+        cacheAt = Date.now();
+      }
       emit();
       return list;
     })

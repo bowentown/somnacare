@@ -134,6 +134,71 @@ test('gate 4：目标夜已有夜睡记录 → 不出卡（尊重用户）', asy
   await expect(page.getByText('今晚准备入睡')).toBeVisible();   // 页面本身健康
 });
 
+test('授权即时生效：设置返回后引擎自动重跑出卡，无需重开页面', async ({ page }) => {
+  // 第 42 轮迭代发现的缺口：usageDays/模型两个 effect 均不依赖权限状态，
+  // 从系统设置授权返回后引擎停在授权前的空态，直到手动切分区才恢复。
+  // 本用例锁住修复：授权 → 轮询捕捉 → 引擎重跑 → 卡片出现（全程不重挂载）
+  const fixed = new Date();
+  fixed.setHours(9, 30, 0, 0);
+  const now = fixed.getTime();
+  let s = 7;
+  const rnd = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const events: number[] = [];
+  const day0 = new Date(fixed);
+  day0.setHours(0, 0, 0, 0);
+  for (let d = 16; d >= 1; d--) {
+    const base = day0.getTime() - d * 86400000;
+    for (let t = base + 10 * 3600e3 + 30 * 60e3; t < base + 26 * 3600e3 + 30 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      events.push(Math.round(t));
+    }
+  }
+  for (let t = day0.getTime() + 10 * 3600e3 + 30 * 60e3; t <= now - 10 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+    events.push(Math.round(t));
+  }
+  events.sort((a, b) => a - b);
+
+  await page.addInitScript(({ evs, ud }: { evs: number[]; ud: unknown[] }) => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    const granted = (): boolean => (window as any).__usageGranted === true;
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, {
+        get: (t, p) => t[p as string] ?? stub(),
+      }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      // 初始未授权；openPermissionSettings 模拟"用户在系统设置里完成授权"
+      hasPermission: async () => ({ granted: granted() }),
+      openPermissionSettings: async () => { (window as any).__usageGranted = true; },
+      queryDailyUsage: async () => {
+        if (!granted()) throw new Error('缺少使用情况访问权限');
+        return { days: ud };
+      },
+      queryScreenOnEvents: async () => {
+        if (!granted()) throw new Error('缺少使用情况访问权限');
+        return { events: evs, observedUntil: Date.now() };
+      },
+    };
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  }, { evs: events, ud: [{ date: dstr(-1, fixed), lastActive: '02:30', firstActive: '10:30', nightPickups: 0 }] });
+
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 授权前：无卡（查询全被拒），处于手动档默认态
+  await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
+
+  // 切到自动档 → 点"开启自动记录"（跳系统设置，stub 里直接完成授权）
+  await page.getByRole('button', { name: '自动', exact: true }).click();
+  await page.getByRole('button', { name: /开启自动记录/ }).click();
+
+  // 轮询（2s 间隔）捕捉到授权 → 引擎重跑 → 晚睡回退卡片出现，全程不重挂载
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible({ timeout: 20000 });
+});
+
 test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡片出现（第 42 轮真机场景）', async ({ page }) => {
   // 真机自检实证的场景：用户作息 01:59→10:31，记录不足 3 晚 → 先验取缺省
   // 23:30/07:00 → 重定位偏差 >3h → 模型拒绝。此前组件对拒绝一律不回退

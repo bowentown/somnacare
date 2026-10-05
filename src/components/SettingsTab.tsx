@@ -118,7 +118,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       const model = computeModelProposal({
         events: ev?.events ?? [],
         observedUntil: ev?.observedUntil ?? Date.now(),
-        chronotype: 'night',
+        chronotype,   // ★ 用用户真实作息——此前硬编码 'night'，白天作息用户自检结果全错
         records,
         sessionActive: false,
         handledDate,
