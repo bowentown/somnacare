@@ -144,6 +144,7 @@ export function buildPetSayLines(
     }
     if (tonight.awakeMinutes >= 30) {
       say.push('半夜醒那么多次……记住，睡前少喝水！本鱼可绕不了你。');
+      say.push(`夜醒累计 ${fmtDuration(tonight.awakeMinutes)}——本鱼差点以为你在烙饼。`);
     }
   } else if (until != null && until > 0) {
     if (until <= 60) {
@@ -161,7 +162,8 @@ export function buildPetSayLines(
   say.push('卧槽……不是，本鱼是说，你该睡了。');
   say.push('哼，今晚也乖乖来找本鱼报道了？算你识相。');
   say.push('得加钱。……算了，看你今天表现还行的份上，免了。');
-  say.push('你昨晚翻了那么多次身，本鱼差点以为你在烙饼。');
+  // （烙饼梗已移入上方夜醒数据块——应用从不测量翻身动作，无条件讲述
+  //   夜翻次数违背本词库"没有的数据绝不编"的纪律，第 42 轮语料审计）
   say.push('事已至此，先睡觉吧！明天的事明天再说。');
 
   return say;

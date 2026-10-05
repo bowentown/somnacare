@@ -175,7 +175,7 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
     "friendComments": [
       {
         "friend": "被蒸馏的Kimi",
-        "text": "‘心远地自偏，问君何能尔’，雪域圣境之澄澈，正可洗尽凡俗机巧。"
+        "text": "‘问君何能尔，心远地自偏’，雪域圣境之澄澈，正可洗尽凡俗机巧。"
       }
     ]
   },
@@ -215,7 +215,7 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
       "emoji": "🏮",
       "rarity": 3
     },
-    "stampName": "淮河夜月丝灯印",
+    "stampName": "会安夜月丝灯印",
     "friendComments": [
       {
         "friend": "被压榨的Qwen",
@@ -813,7 +813,7 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
     "friendComments": [
       {
         "friend": "被蒸馏的Kimi",
-        "text": "‘漫漫平沙走白日，光影倒悬若神虚’，天地浑然一体，足令人心旷神怡，安然入梦。"
+        "text": "‘醉后不知天在水，满船清梦压星河’，天地浑然一体，足令人心旷神怡，安然入梦。"
       }
     ]
   },
@@ -999,9 +999,9 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
     "continent": "americas",
     "continentLabel": "美洲",
     "country": "美国",
-    "title": "雪峰倒映针叶林与麋鹿饮水",
+    "title": "雪峰倒映针叶林与驼鹿饮水",
     "imageUrl": "postcards/americas/card-americas-46.webp",
-    "text": "北美的最高峰在夕阳下被镀上了一层纯金！小溪水清澈得能看到水底的每颗石子，一头大麋鹿低着头安安静静地喝水。原始森林的空气冰冰凉凉，像吸进了一口纯净的甘泉，整个人都静下来了。",
+    "text": "北美的最高峰在夕阳下被镀上了一层纯金！小溪水清澈得能看到水底的每颗石子，一头大驼鹿低着头安安静静地喝水。原始森林的空气冰冰凉凉，像吸进了一口纯净的甘泉，整个人都静下来了。",
     "souvenir": {
       "name": "阿拉斯加云杉木小松果手把件",
       "emoji": "🪵",
@@ -1077,7 +1077,7 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
     "friendComments": [
       {
         "friend": "被蒸馏的Kimi",
-        "text": "‘天地悠悠，独怆然而涕下’，红沙白土与千古星辰相对，足令胸襟旷远，心神归一。"
+        "text": "‘念天地之悠悠，独怆然而涕下’，红沙白土与千古星辰相对，足令胸襟旷远，心神归一。"
       }
     ]
   },
@@ -1087,7 +1087,7 @@ export const ALL_POSTCARDS: TravelPostcard[] = [
     "continent": "africa",
     "continentLabel": "非洲",
     "country": "坦桑尼亚",
-    "title": "赤道雪峰夕阳与安博塞利象群",
+    "title": "赤道雪峰夕阳与草原象群",
     "imageUrl": "postcards/africa/card-africa-50.webp",
     "text": "这是漫游图鉴的第 50 站，也是大肥鱼给鱼片最宏大的守候！哼、哼什么，守候你这种事，本鱼随便说说而已。赤道上的白雪峰在晚霞里泛着玫瑰金的光辉，象妈妈领着小象慢慢回家。我们走过了四大洲的山川、古镇与星空，未来的每个梦境，大肥鱼都在这里等你！",
     "souvenir": {
