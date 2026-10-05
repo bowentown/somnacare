@@ -1070,7 +1070,9 @@ public class PetOverlayService extends Service {
             android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             if (todayKey().equals(sp.getString(K_NAG_DATE, null))) return;   // 每晚至多一次
             sp.edit().putString(K_NAG_DATE, todayKey()).apply();
-            showBubble("都这个点了还在滑……明天又要赖床了哦。放下，闭眼，本鱼看着你呢", 6000);
+            // 措辞不假设场景：isInteractive 只说明"屏幕亮着"——用户可能在本 App
+            // 里记录睡眠，说"还在滑"就冤枉了；"亮着屏幕"对两种情形都成立
+            showBubble("都这个点了还亮着屏幕呢……明天又要赖床了哦。放下，闭眼，本鱼看着你呢", 6000);
         } catch (Exception ignored) {
         }
     }
