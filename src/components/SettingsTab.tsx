@@ -18,6 +18,14 @@ import { CustomAISettingsModal } from './CustomAISettingsModal';
 import { createPortal } from 'react-dom';
 import { APP_THEMES, ThemeConfig } from '../utils/themeStyles';
 import { loadShadowStore, shadowStats, HIT_THRESHOLD_MIN } from '../utils/modelShadow';
+import { computeModelProposal, computeProposalTraced } from '../utils/proposal';
+import {
+  queryScreenOnEvents,
+  usageHasPermission,
+  getLastUsageQueryState,
+} from '../utils/usageSignal';
+import { forceRefreshUsage } from '../utils/usageStore';
+import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
 function switchLauncherIcon(themeId: string) {
@@ -76,6 +84,70 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 }) => {
   const [themeOpen, setThemeOpen] = useState(false);
   const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
+
+  // ── 提议链路自检（第 42 轮）：自动记录"已开启却永远不出卡"此前完全静默，
+  // 真机上无法区分"没数据 / 被闸门拒绝 / 引擎没跑"。这里把整条链路
+  // （权限 → 原生查询 → 模型 → 启发式回退）跑一遍并逐站报状态。
+  const [chainDiag, setChainDiag] = useState<string | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+  const runProposalSelfCheck = async () => {
+    setDiagBusy(true);
+    try {
+      if (!isNativePlatform()) {
+        setChainDiag('当前是网页预览环境——自动记录链路只在 APK 内运行，请在手机上点此自检。');
+        return;
+      }
+      const chronotype = userProfile.chronotype ?? 'night';
+      if (chronotype === 'irregular') {
+        setChainDiag('作息类型为"不规律"：自动提议已整体关闭（设计内），手动补录不受影响。');
+        return;
+      }
+      const perm = await usageHasPermission();
+      if (!perm) {
+        setChainDiag('✗ 使用情况访问权限未开启——数据源不可用。回睡眠页点"开启自动记录"完成授权后再自检。');
+        return;
+      }
+      // 双查询都强制绕过 30min 缓存：自检的意义就是"现在到底通不通"
+      const [usageDays, ev] = await Promise.all([
+        forceRefreshUsage(2, chronotype),
+        queryScreenOnEvents(14, true),
+      ]);
+      const handledDate = (() => {
+        try { return localStorage.getItem('somnacare_proposal_handled'); } catch { return null; }
+      })();
+      const model = computeModelProposal({
+        events: ev?.events ?? [],
+        observedUntil: ev?.observedUntil ?? Date.now(),
+        chronotype: 'night',
+        records,
+        sessionActive: false,
+        handledDate,
+      });
+      const heur = computeProposalTraced({
+        usageDays, records, sessionActive: false, handledDate, chronotype,
+      });
+      const last = usageDays.length > 0 ? usageDays[usageDays.length - 1] : null;
+      const lines: string[] = [];
+      lines.push('① 权限：✓ 使用情况访问已开启');
+      const st = getLastUsageQueryState();
+      lines.push(`② 原生查询：${st.error ? `✗ ${st.error}` : '✓ 正常'}`);
+      lines.push(`③ 亮屏事件：${ev ? `${ev.events.length} 条（近 14 天）` : '✗ 拿不到（见②）'}`);
+      lines.push(`④ 最近一夜信号：${last ? `${last.date} ${last.lastActive} 放下 → ${last.firstActive} 拿起` : '无——近两日没有配对成夜的熄屏/亮屏'}`);
+      if (model.fit && model.fit.status !== 'ok') {
+        lines.push(`⑤ 模型：${model.fit.status === 'insufficient' ? '数据不足，已回退启发式' : model.fit.status === 'rejected' ? '明确拒绝（按设计不回退，防止乱报）' : '未运行'}——${model.fit.reason}`);
+      } else if (model.fit) {
+        lines.push(`⑤ 模型：跑通（${model.fit.reason}）${model.proposal ? `，提议 ${model.proposal.bedtime} → ${model.proposal.wakeTime}` : model.block ? `，但被拦：${model.block}` : ''}`);
+      }
+      lines.push(`⑥ 启发式回退：${heur.proposal ? `提议 ${heur.proposal.bedtime} → ${heur.proposal.wakeTime}（置信${heur.proposal.confidence === 'high' ? '高' : '中'}）` : `被拦——${heur.block}`}`);
+      const final = model.proposal ?? heur.proposal;
+      lines.push(final
+        ? `⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认没有进行中的监测会话、且距醒来不足 12 小时。`
+        : '⑦ 结论：✗ 引擎此刻不会出提议——原因见上面第一条 ✗/被拦。');
+      setChainDiag(lines.join('\n'));
+    } finally {
+      setDiagBusy(false);
+    }
+  };
 
   // 大肥鱼桌宠
   const petNative = isPetNative();
@@ -411,6 +483,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <p className="text-[9px] text-slate-400 leading-relaxed">
                 需要开启使用情况访问且积累 ≥7 天数据，模型才会介入提议。误差 = 提议时刻与你最终确认/补录时刻的差异（按圆周口径，跨午夜安全）。
               </p>
+              {/* 第 42 轮：链路失败此前完全静默——用户区分不了"没数据"和"被拒绝"，
+                  真机问题（如事件日志被 ROM 裁剪）只能靠这里自检暴露 */}
+              <button
+                type="button"
+                onClick={() => void runProposalSelfCheck()}
+                disabled={diagBusy}
+                className="w-full py-2.5 rounded-xl bg-slate-800/70 border border-slate-600 text-slate-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-60"
+              >
+                {diagBusy ? '自检中…' : '早上没等到提议卡？点此自检链路'}
+              </button>
+              {chainDiag && (
+                <pre className="whitespace-pre-wrap text-[10px] font-mono text-slate-300 bg-black/25 rounded-xl p-3 leading-relaxed border border-slate-700">{chainDiag}</pre>
+              )}
             </div>
           );
         })()}

@@ -29,6 +29,15 @@ export interface UsageRegularity {
 const CACHE_KEY = 'somnacare_usage_days';
 const PROMPTED_KEY = 'somnacare_usage_prompted';
 
+// 第 42 轮教训：原生查询失败此前被完全吞掉（"失败静默——提议消失"），
+// 权限已授予但查询一直失败时，用户看到的是"已开启自动记录"却永远没有提议，
+// 且无任何线索。这里留痕最近一次失败/成功，供模型诊断卡自检显示。
+let lastUsageError: string | null = null;
+let lastUsageOkAt = 0;
+export function getLastUsageQueryState(): { error: string | null; okAt: number } {
+  return { error: lastUsageError, okAt: lastUsageOkAt };
+}
+
 function usage(): any {
   if (!isNativePlatform()) return null;
   try {
@@ -86,8 +95,13 @@ export async function refreshUsageDays(days = 7, chronotype: 'night' | 'day' | '
           nightPickups: typeof d.nightPickups === 'number' ? d.nightPickups : 0,
         }));
     }
-  } catch { /* 权限/内核问题：回退缓存 */ }
+  } catch (err) {
+    lastUsageError = `每日聚合查询失败：${err instanceof Error ? err.message : String(err)}`;
+    /* 权限/内核问题：回退缓存 */
+  }
   if (list) {
+    lastUsageError = null;
+    lastUsageOkAt = Date.now();
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify(list));
     } catch { /* ignore */ }
@@ -131,22 +145,29 @@ export interface ScreenOnEvents {
 let eventsCache: { at: number; data: ScreenOnEvents } | null = null;
 const EVENTS_TTL_MS = 30 * 60 * 1000;
 
-/** 拉取最近 N 天的亮屏事件时间戳（非 native / 无权限 / 失败 → null，调用方回退）。 */
-export async function queryScreenOnEvents(days = 14): Promise<ScreenOnEvents | null> {
+/** 拉取最近 N 天的亮屏事件时间戳（非 native / 无权限 / 失败 → null，调用方回退）。
+ *  force=true 绕过 30min TTL：模型诊断卡"自检"要用最新数据，不能吃旧缓存。 */
+export async function queryScreenOnEvents(days = 14, force = false): Promise<ScreenOnEvents | null> {
   const pl = usage();
   if (!pl) return null;
-  if (eventsCache && Date.now() - eventsCache.at < EVENTS_TTL_MS) return eventsCache.data;
+  if (!force && eventsCache && Date.now() - eventsCache.at < EVENTS_TTL_MS) return eventsCache.data;
   try {
     const res = await pl.queryScreenOnEvents?.({ days });
-    if (!res || !Array.isArray(res.events)) return null;
+    if (!res || !Array.isArray(res.events)) {
+      lastUsageError = '亮屏事件查询返回为空（可能内核不支持或事件日志被系统裁剪）';
+      return null;
+    }
     const data: ScreenOnEvents = {
       events: (res.events as unknown[]).filter((n): n is number =>
         typeof n === 'number' && Number.isFinite(n)),
       observedUntil: typeof res.observedUntil === 'number' ? res.observedUntil : Date.now(),
     };
     eventsCache = { at: Date.now(), data };
+    lastUsageError = null;
+    lastUsageOkAt = Date.now();
     return data;
-  } catch {
+  } catch (err) {
+    lastUsageError = `亮屏事件查询失败：${err instanceof Error ? err.message : String(err)}`;
     return null;
   }
 }

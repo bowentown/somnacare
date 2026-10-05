@@ -10,7 +10,7 @@
  * 本实现通过 epoch 重建（§3.2 gate 链之后由 verify-proposal 反向注入验证）。
  */
 import { SleepRecord } from '../types/sleep';
-import { bedClockAxis, circularMedian, median, shortArc, clockMinutes } from './clockMath';
+import { circularMedian, shortArc, clockMinutes } from './clockMath';
 import { nightsOnly } from './recordFilter';
 import { fitSleepModel, modelWindowStart } from './sleepModel';
 import type { UsageDay } from './usageSignal';
@@ -50,17 +50,23 @@ function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-export function computeProposal(input: ProposalInput): Proposal | null {
+/**
+ * computeProposal 的带轨迹版本：模型诊断卡的"自检"需要知道启发式
+ * 【被哪道门拦住】——此前整条链路失败是静默的（返回 null 无任何解释），
+ * 用户在真机上永远无法区分"没数据"和"被闸门拒绝"（第 42 轮实证的
+ * "自动记录提议永不出现"正是这样漏进线上的）。
+ */
+export function computeProposalTraced(input: ProposalInput): { proposal: Proposal | null; block: string } {
   const now = input.now ?? new Date();
-  if (input.chronotype === 'irregular') return null;          // gate 0：不作息者不自动提议
-  if (input.sessionActive) return null;                       // gate 5：进行中不提议
-  if (input.usageDays.length === 0) return null;              // 无数据（未授权/老内核）
+  if (input.chronotype === 'irregular') return { proposal: null, block: '作息类型=不规律：自动提议整体关闭（设计内）' };
+  if (input.sessionActive) return { proposal: null, block: '有进行中的监测会话：不出提议' };
+  if (input.usageDays.length === 0) return { proposal: null, block: '没有手机使用数据（未授权 / 原生查询失败 / 内核过旧）' };
 
   // 只提议最近一晚（决策 2）：取最后一晚（时间序末尾）
   const day = input.usageDays[input.usageDays.length - 1];
-  if (!day) return null;
+  if (!day) return { proposal: null, block: '使用数据为空' };
 
-  if (!day.lastActive || !day.firstActive) return null;       // gate 1：信号不全不编数字
+  if (!day.lastActive || !day.firstActive) return { proposal: null, block: `最近一夜（${day.date}）信号不全：放下/拿起时刻缺失，不编数字` };
 
   // gate 7（防御性复验，Java 已保证；缓存数据可能陈旧畸形）。
   // 窗口必须跟原生端 UsageSignalPlugin 的采样窗口同源——day 作息此前被
@@ -70,14 +76,14 @@ export function computeProposal(input: ProposalInput): Proposal | null {
   const wakeH = parseInt(day.firstActive.split(':')[0], 10);
   const bedOk = isDay ? bedH >= 6 && bedH < 18 : bedH >= 18 || bedH < 6;
   const wakeOk = isDay ? wakeH >= 12 && wakeH < 20 : wakeH >= 4 && wakeH < 12;
-  if (!bedOk || !wakeOk) return null;
+  if (!bedOk || !wakeOk) return { proposal: null, block: `最近一夜（${day.date}）信号 ${day.lastActive}→${day.firstActive} 不在采样窗口内（防御性拒绝）` };
 
   const bedtimeMs = epochOfEvent(day.date, day.lastActive, 'lastActive', isDay);
   const wakeMs = epochOfEvent(day.date, day.firstActive, 'firstActive', isDay);
-  if (!(wakeMs > bedtimeMs)) return null;                     // 时序防御
+  if (!(wakeMs > bedtimeMs)) return { proposal: null, block: '时序异常（拿起早于放下），防御性拒绝' };
 
   const windowMinutes = Math.round((wakeMs - bedtimeMs) / 60000);
-  if (windowMinutes < 240 || windowMinutes > 960) return null; // gate 2：4h~16h
+  if (windowMinutes < 240 || windowMinutes > 960) return { proposal: null, block: `窗口 ${Math.floor(windowMinutes / 60)}h${windowMinutes % 60}m 不在 4h–16h 内` };
 
   // ★ targetDate = 醒来那天的日历日（由 wakeMs 取，绝不用 day.date——差一天）
   const w = new Date(wakeMs);
@@ -88,17 +94,19 @@ export function computeProposal(input: ProposalInput): Proposal | null {
   // 超过 3 天的目标夜直接不提议（模型路径的窗口本身锚定 now，无此问题）
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const target0 = new Date(w.getFullYear(), w.getMonth(), w.getDate()).getTime();
-  if ((today0 - target0) / 86400000 > 3) return null;
+  if ((today0 - target0) / 86400000 > 3) return { proposal: null, block: `目标夜 ${targetDate} 已超过 3 天（陈旧缓存），不补发旧账` };
 
   // gate 4：已有夜睡记录 → 不提议。必须只看夜睡——小睡与夜睡共存是合法状态
   // （mergeRecord 契约），下午记了午睡不该把"昨晚还没确认"的提议挡掉
-  if (nightsOnly(input.records).some((r) => r.date === targetDate)) return null;
-  if (input.handledDate === targetDate) return null;                  // gate 6：已处理过
+  if (nightsOnly(input.records).some((r) => r.date === targetDate)) return { proposal: null, block: `目标夜 ${targetDate} 已有夜睡记录（尊重用户）` };
+  if (input.handledDate === targetDate) return { proposal: null, block: `目标夜 ${targetDate} 已被你处理过（确认/改一下/忽略）` };
 
 
   // gate 8：置信度 = 与历史就寝中位数（近 14 晚）的偏差（用你自己的历史判据）
-  // 置信度判据用【夜睡】历史（小睡是资产不是作息），并改用圆周短弧——
-  // 日界断点对白睡者会把高置信误判为低（D2 同源）
+  // 置信度判据用【夜睡】历史（小睡是资产不是作息）。中位数必须用【圆周】口径——
+  // 第 42 轮实证：就寝横跨午夜（23:4x / 00:3x 混合）时线性中位会落到中午
+  // （如 12:05），与 00:33 的短弧偏差 692 分钟 → 恒判"低置信" → 永不出卡。
+  // 模型路径（computeModelProposal）一直是圆周中位，这条回退路径漏修了
   const history = nightsOnly(input.records)
     .slice(0, 14)
     .map((r) => clockMinutes(r.bedtime));
@@ -106,22 +114,29 @@ export function computeProposal(input: ProposalInput): Proposal | null {
   if (history.length < 3) {
     confidence = 'medium';
   } else {
-    const med = median(history);
+    const med = circularMedian(history);
     const diff = shortArc(clockMinutes(day.lastActive), med);
     confidence = diff <= 90 ? 'high' : diff <= 180 ? 'medium' : 'low';
   }
-  if (confidence === 'low') return null;                      // 低置信：不预填，走手动补录
+  if (confidence === 'low') return { proposal: null, block: `与历史就寝中位数的偏差超过 3 小时（低置信，不预填错值）` };
 
   return {
-    targetDate,
-    bedtime: day.lastActive,
-    wakeTime: day.firstActive,
-    bedtimeMs,
-    wakeMs,
-    windowMinutes,
-    confidence,
-    nightPickups: day.nightPickups,
+    proposal: {
+      targetDate,
+      bedtime: day.lastActive,
+      wakeTime: day.firstActive,
+      bedtimeMs,
+      wakeMs,
+      windowMinutes,
+      confidence,
+      nightPickups: day.nightPickups,
+    },
+    block: '',
   };
+}
+
+export function computeProposal(input: ProposalInput): Proposal | null {
+  return computeProposalTraced(input).proposal;
 }
 
 /**
@@ -152,14 +167,18 @@ export interface ModelProposalInput {
 export interface ModelProposalResult {
   proposal: Proposal | null;
   fallbackAllowed: boolean;
+  /** 第 42 轮诊断：模型原始状态与原因（不改变任何决策语义，仅供自检显示） */
+  fit?: { status: 'ok' | 'insufficient' | 'rejected' | 'skipped'; reason: string };
+  /** fit=ok 但提议仍为 null 时的事由（gate 2/4/6/置信），fit 未跑时缺省 */
+  block?: string;
 }
 
 // 拟合结果缓存（单条）：键见 computeModelProposal 内注释
 let fitCache: { events: number[]; key: string; outcome: ReturnType<typeof fitSleepModel> } | null = null;
 
 export function computeModelProposal(input: ModelProposalInput): ModelProposalResult {
-  if (input.chronotype === 'irregular') return { proposal: null, fallbackAllowed: false };  // gate 0
-  if (input.sessionActive) return { proposal: null, fallbackAllowed: false };               // gate 5
+  if (input.chronotype === 'irregular') return { proposal: null, fallbackAllowed: false, fit: { status: 'skipped', reason: '作息类型=不规律：自动提议整体关闭（设计内）' } };  // gate 0
+  if (input.sessionActive) return { proposal: null, fallbackAllowed: false, fit: { status: 'skipped', reason: '有进行中的监测会话：不出提议' } };               // gate 5
 
   // 先验中心：确认夜睡中位数（≥3 晚）→ 作息类型默认。
   // ★ 必须用圆周中位数——就寝横跨午夜时线性中位会偏 ~2.5h（模型命门）
@@ -187,28 +206,28 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
     fitCache = { events: input.events, key: fitKey, outcome: fit };
   }
   if (fit.status === 'insufficient') {
-    return { proposal: null, fallbackAllowed: true };   // 跑不了模型 → 旧算法顶上
+    return { proposal: null, fallbackAllowed: true, fit: { status: 'insufficient', reason: fit.reason } };   // 跑不了模型 → 旧算法顶上
   }
   if (fit.status === 'rejected') {
-    return { proposal: null, fallbackAllowed: false };  // 模型明确拒绝 → 不回退
+    return { proposal: null, fallbackAllowed: false, fit: { status: 'rejected', reason: fit.reason } };  // 模型明确拒绝 → 不回退
   }
 
   const targetDate = fit.targetDate;
   if (nightsOnly(input.records).some((r) => r.date === targetDate)) {
-    return { proposal: null, fallbackAllowed: false };  // gate 4：已有记录
+    return { proposal: null, fallbackAllowed: false, fit: { status: 'ok', reason: `Δ=${fit.delta} · ${fit.nightsFitted} 夜` }, block: `目标夜 ${targetDate} 已有夜睡记录（尊重用户）` };  // gate 4：已有记录
   }
   if (input.handledDate === targetDate) {
-    return { proposal: null, fallbackAllowed: false };  // gate 6：已处理过
+    return { proposal: null, fallbackAllowed: false, fit: { status: 'ok', reason: `Δ=${fit.delta} · ${fit.nightsFitted} 夜` }, block: `目标夜 ${targetDate} 已被你处理过` };  // gate 6：已处理过
   }
 
   const windowMinutes = Math.round((fit.wakeMs - fit.bedtimeMs) / 60000);
   if (windowMinutes < 240 || windowMinutes > 960) {
-    return { proposal: null, fallbackAllowed: false };  // gate 2（比模型 [3,14]h 更紧）
+    return { proposal: null, fallbackAllowed: false, fit: { status: 'ok', reason: `Δ=${fit.delta} · ${fit.nightsFitted} 夜` }, block: `窗口 ${Math.floor(windowMinutes / 60)}h${windowMinutes % 60}m 不在 4h–16h 内` };  // gate 2（比模型 [3,14]h 更紧）
   }
 
   // 置信度：Δ 映射（实测正常夜 710–830、真实用户 865–1573）
   const confidence = fit.delta >= 800 ? 'high' : fit.delta >= 300 ? 'medium' : null;
-  if (!confidence) return { proposal: null, fallbackAllowed: false };
+  if (!confidence) return { proposal: null, fallbackAllowed: false, fit: { status: 'ok', reason: `Δ=${fit.delta} · ${fit.nightsFitted} 夜` }, block: `似然比 Δ=${fit.delta} 不足以支撑提议（<300）` };
 
   return {
     proposal: {
@@ -222,5 +241,6 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
       nightPickups: fit.sleepEventsInTarget,
     },
     fallbackAllowed: false,
+    fit: { status: 'ok', reason: `Δ=${fit.delta} · λ比=${fit.lambdaRatio.toFixed(1)} · ${fit.nightsFitted} 夜` },
   };
 }
