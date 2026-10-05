@@ -133,16 +133,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       lines.push(`② 原生查询：${st.error ? `✗ ${st.error}` : '✓ 正常'}`);
       lines.push(`③ 亮屏事件：${ev ? `${ev.events.length} 条（近 14 天）` : '✗ 拿不到（见②）'}`);
       lines.push(`④ 最近一夜信号：${last ? `${last.date} ${last.lastActive} 放下 → ${last.firstActive} 拿起` : '无——近两日没有配对成夜的熄屏/亮屏'}`);
+      // ★ ⑦ 的结论必须与睡眠页组件的真实决策完全一致：
+      //   组件 = 模型提议 ??（模型放行回退时才用启发式）。面板曾按
+      //   "模型 ∥ 启发式"取或——模型拒绝时会虚报"能出提议"（第 42 轮真机实证：
+      //   晚睡用户被先验错位拒绝，面板说能出、页面永远不出）
+      const modelRejected = model.fit?.status === 'rejected';
       if (model.fit && model.fit.status !== 'ok') {
-        lines.push(`⑤ 模型：${model.fit.status === 'insufficient' ? '数据不足，已回退启发式' : model.fit.status === 'rejected' ? '明确拒绝（按设计不回退，防止乱报）' : '未运行'}——${model.fit.reason}`);
+        const modelLine = model.fit.status === 'insufficient'
+          ? '数据不足，已回退启发式'
+          : modelRejected
+            ? (model.fallbackAllowed
+              ? '拒绝：先验与推断作息不符（晚睡作息/记录不足）——已放行启发式回退'
+              : '明确拒绝（证据不支持存在睡眠，按设计不回退）')
+            : '未运行';
+        lines.push(`⑤ 模型：${modelLine}——${model.fit.reason}`);
       } else if (model.fit) {
         lines.push(`⑤ 模型：跑通（${model.fit.reason}）${model.proposal ? `，提议 ${model.proposal.bedtime} → ${model.proposal.wakeTime}` : model.block ? `，但被拦：${model.block}` : ''}`);
       }
-      lines.push(`⑥ 启发式回退：${heur.proposal ? `提议 ${heur.proposal.bedtime} → ${heur.proposal.wakeTime}（置信${heur.proposal.confidence === 'high' ? '高' : '中'}）` : `被拦——${heur.block}`}`);
-      const final = model.proposal ?? heur.proposal;
+      const heurShown = !!heur.proposal && !model.proposal
+        && (model.fallbackAllowed || model.fit?.status === 'insufficient' || !model.fit);
+      lines.push(`⑥ 启发式回退：${heur.proposal
+        ? `提议 ${heur.proposal.bedtime} → ${heur.proposal.wakeTime}（置信${heur.proposal.confidence === 'high' ? '高' : '中'}）${model.proposal ? '——模型已有提议，不采用' : heurShown ? '，将作为卡片显示' : '——模型拒绝且不放行，不会显示'}`
+        : `被拦——${heur.block}`}`);
+      const final = model.proposal ?? (model.fallbackAllowed ? heur.proposal : null);
       lines.push(final
         ? `⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认没有进行中的监测会话、且距醒来不足 12 小时。`
-        : '⑦ 结论：✗ 引擎此刻不会出提议——原因见上面第一条 ✗/被拦。');
+        : `⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），按设计不回退。` : '原因见上面被拦记录。'}`);
       setChainDiag(lines.join('\n'));
     } finally {
       setDiagBusy(false);

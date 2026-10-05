@@ -143,12 +143,15 @@ export function computeProposal(input: ProposalInput): Proposal | null {
  * 模型化提议（第 26 轮）：用 SensibleSleep 贝叶斯切换点模型替代
  * "固定窗内最后一次熄屏"的启发式（起夜会把就寝顶到后半夜的结构性缺陷）。
  *
- * 回退策略（关键设计）：
- *  - fallbackAllowed=true 仅当【模型跑不了】（数据不足/非 native）——此时回退
- *    computeProposal 是既有行为
- *  - 模型【跑出了结论但被闸门拒绝】（通宵用机/作息可疑/观测未到起床）→
- *    proposal=null 且 fallbackAllowed=false——绝不回退，否则旧算法会把
- *    "通宵没睡"报成一次睡眠，正是本方案要根治的场景
+ * 回退策略（关键设计，第 42 轮真机自检后按拒绝原因细化）：
+ *  - fallbackAllowed=true 当【模型跑不了】（数据不足/非 native）或【拒绝原因是
+ *    先验错位】——先验中心偏差 >3h 只说明"先验猜错了作息"（晚睡用户 + 记录
+ *    <3 晚时先验是缺省 23:30/07:00），不是"没睡"的证据；对它放行启发式回退，
+ *    用户才有确认通路让先验学会真实作息。启发式自己的 4–16h 窗口与置信门
+ *    仍然兜底（真通宵的"假窗"普遍 <4h，过不了）。
+ *  - 其余拒绝（λ 对比度不足 / Δ 不足 / 未检出可信睡眠段）= 证据本身不支持
+ *    存在睡眠 → proposal=null 且 fallbackAllowed=false——绝不回退，否则旧
+ *    算法会把"通宵没睡"报成一次睡眠，正是本方案要根治的场景
  *
  * 先验中心（模型的命门，§4.2）：优先用用户确认的夜睡记录中位数（近 14 晚），
  * 其次用作息类型默认值。模型推断中位数偏离先验 >3h 会在模型层直接拒绝
@@ -209,7 +212,12 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
     return { proposal: null, fallbackAllowed: true, fit: { status: 'insufficient', reason: fit.reason } };   // 跑不了模型 → 旧算法顶上
   }
   if (fit.status === 'rejected') {
-    return { proposal: null, fallbackAllowed: false, fit: { status: 'rejected', reason: fit.reason } };  // 模型明确拒绝 → 不回退
+    // 按拒绝原因分流：先验错位（晚睡作息/记录不足）放行回退，证据型拒绝不放行
+    return {
+      proposal: null,
+      fallbackAllowed: fit.code === 'prior-mismatch',
+      fit: { status: 'rejected', reason: fit.reason },
+    };
   }
 
   const targetDate = fit.targetDate;

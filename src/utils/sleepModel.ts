@@ -76,7 +76,14 @@ export type SleepModelOutcome =
       nightsFitted: number;
     }
   | { status: 'insufficient'; reason: string }   // 数据不足，允许回退旧启发式
-  | { status: 'rejected'; reason: string };      // 闸门拒绝，不回退（旧算法会乱报）
+  | {
+      status: 'rejected';                        // 闸门拒绝（是否回退按 code 分流，见 proposal 层）
+      reason: string;
+      /** 第 42 轮：拒绝原因分类。prior-mismatch = 先验猜错（晚睡作息/记录不足），
+       *  不是"没睡"的证据——证据仍在事件里，proposal 层对它放行启发式回退；
+       *  其余三类是"证据本身不支持存在睡眠"，回退会复活"把没睡报成睡了"。 */
+      code: 'prior-mismatch' | 'low-contrast' | 'low-delta' | 'no-trustworthy-sleep';
+    };
 
 interface DayData {
   counts: number[];
@@ -295,7 +302,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   const medTs = median3(midActive.map((_, i) => assigns[i + 1].ts));
   const medTa = median3(midActive.map((_, i) => assigns[i + 1].ta));
   if (Math.abs(medTs - cb0) > RECENTRE_MAX_BINS || Math.abs(medTa - cw0) > RECENTRE_MAX_BINS) {
-    return { status: 'rejected', reason: '推断作息与先验中心偏差 >3h（作息类型可能不符）' };
+    return { status: 'rejected', reason: '推断作息与先验中心偏差 >3h（作息类型可能不符）', code: 'prior-mismatch' };
   }
   // 第二遍：以重估中位数收紧
   runPass(SIGMA_PASS2, medTs, medTa);
@@ -306,7 +313,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   const lambdaAwake = (A_W + g.K2) / (B_W + g.n2);
   const lambdaRatio = lambdaAwake / Math.max(1e-9, lambdaSleep);
   if (lambdaRatio < LAMBDA_RATIO_MIN) {
-    return { status: 'rejected', reason: `λ 对比度不足（${lambdaRatio.toFixed(1)}）` };
+    return { status: 'rejected', reason: `λ 对比度不足（${lambdaRatio.toFixed(1)}）`, code: 'low-contrast' };
   }
 
   // Δ 置信度：两态（含时间先验）vs 单态零模型
@@ -314,7 +321,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   const singleState = marginalLogP(g.K1 + g.K2, g.n1 + g.n2, g.S1 + g.S2, A_W, B_W);
   const delta = twoState - singleState;
   if (!(delta >= DELTA_MIN)) {
-    return { status: 'rejected', reason: `似然比 Δ=${Math.round(delta)} < ${DELTA_MIN}` };
+    return { status: 'rejected', reason: `似然比 Δ=${Math.round(delta)} < ${DELTA_MIN}`, code: 'low-delta' };
   }
 
   // ── 4) 逐夜闸门：时长 [3,14]h + 偏离本人中位 ≤ 2.5h（§5.2/§5.3）──
@@ -360,7 +367,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
     }
   }
   if (targetIdx < 0) {
-    return { status: 'rejected', reason: '未检出可信的睡眠段（可能还在睡，或与平时作息差异过大）' };
+    return { status: 'rejected', reason: '未检出可信的睡眠段（可能还在睡，或与平时作息差异过大）', code: 'no-trustworthy-sleep' };
   }
   const targetDay = days[targetIdx];
   const target = assigns[activeIdx.indexOf(targetIdx)];

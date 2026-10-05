@@ -233,6 +233,40 @@ const baseRecords = [
     events, observedUntil: now, chronotype: 'night', records: [rec(dstr(0), '22:00')], sessionActive: false, handledDate: null, now: fixed,
   });
   check('模型：目标夜已有记录 → 拒且不回退（block 可读）', taken.proposal === null && taken.fallbackAllowed === false && (taken.block ?? '').includes('已有夜睡记录'), taken.block);
+
+  // 回归锚（第 42 轮真机自检实证）：晚睡用户（02:30→10:30）+ 记录不足 3 晚
+  // → 先验取缺省 23:30/07:00，重定位偏差 >3h → 模型拒绝。此拒绝是"先验猜错"
+  // 而非"没睡"——必须放行启发式回退，否则晚睡用户每个早晨都没有卡片，
+  // 也没有让先验学会真实作息的确认通路（此前 fallbackAllowed=false 曾是
+  // "自检说能出、页面永不出"的直接根因）
+  const owlFixed = new Date();
+  owlFixed.setHours(12, 0, 0, 0);
+  const owlNow = owlFixed.getTime();
+  let owlSeed = 7;
+  const owlRnd = (): number => { owlSeed = (owlSeed * 1664525 + 1013904223) % 4294967296; return owlSeed / 4294967296; };
+  const owlEvents: number[] = [];
+  const owlDay0 = new Date(owlNow);
+  owlDay0.setHours(0, 0, 0, 0);
+  // 清醒段 10:30 → 次日 02:30（跨午夜），睡眠 02:30→10:30
+  for (let d = 16; d >= 1; d--) {
+    const base = owlDay0.getTime() - d * 86400000;
+    for (let t = base + 10 * 3600e3 + 30 * 60e3; t < base + 26 * 3600e3 + 30 * 60e3; t += (8 + owlRnd() * 10) * 60e3) {
+      owlEvents.push(Math.round(t));
+    }
+  }
+  for (let t = owlDay0.getTime() + 10 * 3600e3 + 30 * 60e3; t <= owlNow - 10 * 60e3; t += (8 + owlRnd() * 10) * 60e3) {
+    owlEvents.push(Math.round(t));
+  }
+  owlEvents.sort((a, b) => a - b);
+  const owl = computeModelProposal({
+    events: owlEvents, observedUntil: owlNow, chronotype: 'night', records: [], sessionActive: false, handledDate: null, now: owlFixed,
+  });
+  check('模型：晚睡作息 vs 缺省先验 → prior-mismatch 拒绝但放行回退', owl.proposal === null && owl.fallbackAllowed === true && owl.fit?.status === 'rejected', owl.fit?.reason);
+  const owlHeur = computeProposalTraced({
+    usageDays: [{ date: dstr(-1), lastActive: '02:30', firstActive: '10:30', nightPickups: 0 }],
+    records: [], sessionActive: false,
+  });
+  check('晚睡用户：启发式在此夜能出提议（组件将显示）', owlHeur.proposal !== null && owlHeur.proposal.bedtime === '02:30', owlHeur.proposal ? `${owlHeur.proposal.bedtime}→${owlHeur.proposal.wakeTime} ${owlHeur.proposal.confidence}` : owlHeur.block);
 }
 
 if (failures > 0) {

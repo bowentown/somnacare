@@ -134,6 +134,67 @@ test('gate 4：目标夜已有夜睡记录 → 不出卡（尊重用户）', asy
   await expect(page.getByText('今晚准备入睡')).toBeVisible();   // 页面本身健康
 });
 
+test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡片出现（第 42 轮真机场景）', async ({ page }) => {
+  // 真机自检实证的场景：用户作息 01:59→10:31，记录不足 3 晚 → 先验取缺省
+  // 23:30/07:00 → 重定位偏差 >3h → 模型拒绝。此前组件对拒绝一律不回退
+  // → 永不出卡；修复后 prior-mismatch 拒绝放行启发式，卡片必须出现
+  const fixed = new Date();
+  fixed.setHours(11, 30, 0, 0);   // 醒来 10:30 后 1 小时：新鲜度门内
+  const now = fixed.getTime();
+  let s = 7;
+  const rnd = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const events: number[] = [];
+  const day0 = new Date(fixed);
+  day0.setHours(0, 0, 0, 0);
+  for (let d = 16; d >= 1; d--) {
+    const base = day0.getTime() - d * 86400000;
+    for (let t = base + 10 * 3600e3 + 30 * 60e3; t < base + 26 * 3600e3 + 30 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      events.push(Math.round(t));
+    }
+  }
+  for (let t = day0.getTime() + 10 * 3600e3 + 30 * 60e3; t <= now - 10 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+    events.push(Math.round(t));
+  }
+  events.sort((a, b) => a - b);
+
+  await page.addInitScript(({ evs, ud }: { evs: number[]; ud: unknown[] }) => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, {
+        get: (t, p) => t[p as string] ?? stub(),
+      }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      hasPermission: async () => ({ granted: true }),
+      openPermissionSettings: async () => ({}),
+      queryDailyUsage: async () => ({ days: ud }),
+      queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
+    };
+    localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  }, { evs: events, ud: [{ date: dstr(-1, fixed), lastActive: '02:30', firstActive: '10:30', nightPickups: 0 }] });
+
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 模型拒绝（先验错位）→ 启发式回退出卡
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  const cardText = await page.evaluate(() => document.body.innerText);
+  expect(cardText).toMatch(/02:[0-5]\d 放下/);
+  expect(cardText).toMatch(/10:[0-5]\d 拿起/);
+
+  // 自检面板：⑤ 应报"已放行启发式回退"，⑦ 应报能出提议（与组件一致）
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /点此自检链路/ }).click();
+  const diag = await page.locator('pre').filter({ hasText: '⑦ 结论' }).innerText({ timeout: 15000 });
+  expect(diag).toContain('已放行启发式回退');
+  expect(diag).toContain('⑦ 结论：✓');
+});
+
 test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自检报"跑通" → 采纳', async ({ page }) => {
   const fixed = new Date();
   fixed.setHours(8, 30, 0, 0);
