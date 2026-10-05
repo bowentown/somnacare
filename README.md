@@ -18,6 +18,27 @@
 
 ---
 
+## 🚀 快速开始
+
+**📱 手机用户 — 三步开跑**
+
+1. 从 [Releases](../../releases/latest) 下载最新的 `SomnaCare-*.apk`，点开安装（允许"安装未知来源应用"）；
+2. 打开 App，在 **偏好 → 我的作息** 设好就寝/起床目标；
+3. **睡眠** 页记第一晚：按"开始夜间监测"，或开启 **自动记录** 授权——之后每晚交给手机识别，醒来点一下确认即可。
+
+**💻 开发者 — 本地跑起**
+
+```bash
+git clone https://github.com/bowentown/somnacare.git
+cd somnacare
+npm install --legacy-peer-deps
+npm run dev          # http://localhost:3000
+```
+
+> Android 构建、发布签名见下文「构建与开发」「发布与签名」。
+
+---
+
 ## ✨ 它能做什么
 
 五个分区（底栏切换，支持左右滑动）：**睡眠 · 趋势 · AI 顾问 · 护眼 · 偏好**，外加一只会看你睡眠数据的鲸鱼娘桌宠。

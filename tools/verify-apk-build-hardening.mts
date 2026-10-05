@@ -42,6 +42,11 @@ for (const attr of ['android:allowBackup="false"', 'android:usesCleartextTraffic
 if (!wf.includes('npm ci --legacy-peer-deps || npm install --legacy-peer-deps'))
   fail('A10：主安装步骤未优先 npm ci（锁文件精确解析）');
 
+// versionName 跟随发布标签：tag 构建时 stamp，设置页版本号与 Release 一致
+if (!wf.includes('GITHUB_REF_NAME#v') || !wf.includes('grep -q "versionName')) {
+  fail('versionName 标签 stamp 缺失——Release 版本号会与系统显示错位');
+}
+
 // 反向自检：删掉 A1 硬失败分支后，同一断言路径必须失去判据
 {
   const doctored = wf.replace(

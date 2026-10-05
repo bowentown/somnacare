@@ -242,6 +242,15 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          # versionName 跟随发布标签：tag v1.1.0 → APK 设置页显示 1.1.0，
+          # 避免"Release 叫 v1.1.0、系统版本号还是 1.0.0"的错位。
+          # 模板格式为 versionName "1.0.0"——sed 必须命中，否则 CI 直接失败
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+            sed -i.bak -E "s/versionName \"[0-9.]+\"/versionName \"${VER}\"/" android/app/build.gradle
+            grep -q "versionName \"${VER}\"" android/app/build.gradle
+            echo "versionName stamped → ${VER}"
+          fi
           cd android
           chmod +x gradlew
           if [ "$SIGN_VARIANT" = "release" ]; then
