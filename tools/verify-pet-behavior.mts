@@ -43,7 +43,8 @@ check('溶解双帧绘制（setAlpha）', view.includes('paint.setAlpha'));
 
 // ── 3) 动作↔文案反向通路 ──
 check('WhaleGirlView 暴露 currentAnimName', view.includes('public String currentAnimName()'));
-check('PetOverlayService 持有 sActiveView', service.includes('private static volatile WhaleGirlView sActiveView'));
+check('PetOverlayService 持有 sActiveView（包内可见，跨类可查询）',
+  service.includes('static volatile WhaleGirlView sActiveView') && !service.includes('private static volatile WhaleGirlView sActiveView'));
 check('sActiveView 生命周期同步（创建+至少两处置空）',
   service.includes('sActiveView = whale;') && count(service, 'sActiveView = null') >= 2);
 check('GemmaLLMPlugin 暴露 getPetState', plugin.includes('public void getPetState(PluginCall call)'));
