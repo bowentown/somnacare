@@ -138,8 +138,19 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, 'AI 顾问模型设置');
   if (!isOpen) return null;
 
+  // V14：自填端点必须 https——明文 http 会把睡眠数据裸露在网络上
+  const ensureHttpsEndpoint = (): boolean => {
+    if (provider === 'custom_openai' && customBaseUrl.trim()
+      && !customBaseUrl.trim().startsWith('https://')) {
+      alert('自定义端点必须是 https:// 地址（明文 http 会把睡眠数据裸露在网络上）');
+      return false;
+    }
+    return true;
+  };
+
   // Real-time API Endpoint Model Query Function
   const handleQueryRemoteModels = async () => {
+    if (!ensureHttpsEndpoint()) return;
     setIsQueryingModels(true);
     setQueryError(null);
     setQueriedModels([]);
@@ -190,6 +201,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   };
 
   const handleSave = () => {
+    if (!ensureHttpsEndpoint()) return;
     setHfToken(hfTokenVal.trim());
     onSaveConfig({
       provider,

@@ -34,8 +34,10 @@ const KEYS = {
   petEnabled: 'somnacare_pet_enabled',
 } as const;
 
-/** 这些 profile 字段是凭据，默认不进备份文件。 */
-const SENSITIVE_PROFILE_KEYS = ['deepseekApiKey', 'customApiKey'];
+/** 这些字段属于"数据去向"类凭据，默认不进备份文件（customBaseUrl 第 45 轮 F1 加入：
+ *  恶意备份可借它把睡眠数据与对话改道到攻击者服务器——策略级修复：地址永不随
+ *  备份迁移，导入后保留本机值，没有则要求手工重填）。 */
+const SENSITIVE_PROFILE_KEYS = ['deepseekApiKey', 'customApiKey', 'customBaseUrl'];
 const SENSITIVE_TOP_KEYS = ['somnacare_hf_token'];
 
 /**
@@ -53,28 +55,6 @@ const AI_CONFIG_FIELDS = [
   'provider', 'deepseekApiKey', 'deepseekModel', 'customBaseUrl',
   'customApiKey', 'customModelName', 'systemPersona', 'localModelVariant',
 ] as const;
-
-/**
- * customBaseUrl 的客户端精简校验（isSafeHttpsUrl 的 APK 版）：
- * 仅 https + 非 loopback/私网/元数据/IPv4-mapped。server.ts 的完整版不进 APK。
- */
-function isSafeEndpoint(url: unknown): boolean {
-  if (typeof url !== 'string' || !url.startsWith('https://')) return false;
-  try {
-    const h = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    if (!h) return false;
-    if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return false;
-    if (h.startsWith('::ffff:')) return false;   // IPv4-mapped（Node 归一化形态，已实证可绕过字符串判定）
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
-      const [a, b] = h.split('.').map(Number);
-      if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
-        || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224) return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function readJson(key: string): unknown {
   try {
@@ -162,8 +142,29 @@ export function parseBackup(raw: string): ParsedBackup {
   throw new Error('not-a-backup');
 }
 
-/** 落盘全量恢复（各数据域沿用读取端已有的逐字段清洗，坏数据自然回退默认）。 */
+/** 落盘全量恢复（各数据域沿用读取端已有的逐字段清洗，坏数据自然回退默认）。
+ *  复审 45 轮 F2：任一域写入失败会留下新旧混合状态——先把 8 个目标 key 的
+ *  旧值快照到内存，任一写入抛错时整体回滚再抛出（records 是最大域先写，
+ *  最可能的失败点发生在其他域尚未被触碰时）。 */
 export function restoreFullBackup(data: FullBackup): {
+  records: number; moments: number; chat: number; travel: boolean; profile: boolean;
+} {
+  const snapshotKeys = [KEYS.records, KEYS.profile, KEYS.travel, KEYS.moments, KEYS.chat, KEYS.skin, KEYS.bubble, KEYS.petEnabled];
+  const snapshot = snapshotKeys.map((k) => [k, localStorage.getItem(k)] as const);
+  try {
+    return restoreFullBackupInner(data);
+  } catch (err) {
+    for (const [k, v] of snapshot) {
+      try {
+        if (v === null) localStorage.removeItem(k);
+        else localStorage.setItem(k, v);
+      } catch { /* 回滚本身失败已尽力：目标 key 保留崩溃态 */ }
+    }
+    throw err;
+  }
+}
+
+function restoreFullBackupInner(data: FullBackup): {
   records: number; moments: number; chat: number; travel: boolean; profile: boolean;
 } {
   // records：保留原始数组，读取端 App.tsx 已有逐条 sanitize + 过滤
@@ -189,12 +190,17 @@ export function restoreFullBackup(data: FullBackup): {
     }
     const srcAi = (src.aiConfig ?? {}) as Record<string, unknown>;
     const restoredAi: Record<string, unknown> = { ...(currentAi) };
+    // 复审 45 轮 F1：凭据（两类密钥）同样【永不自备份迁移】——恶意备份
+    // 携带的密钥一律丢弃，backfill 保留本机值
+    const NEVER_FROM_BACKUP = new Set(['deepseekApiKey', 'customApiKey']);
     for (const k of AI_CONFIG_FIELDS) {
-      if (srcAi[k] !== undefined) restoredAi[k] = srcAi[k];
+      if (srcAi[k] !== undefined && !NEVER_FROM_BACKUP.has(k)) restoredAi[k] = srcAi[k];
     }
-    if (restoredAi.customBaseUrl !== undefined && !isSafeEndpoint(restoredAi.customBaseUrl)) {
-      delete restoredAi.customBaseUrl;   // 非 https / 内网 / 元数据地址：整条丢弃
-    }
+    // 复审 45 轮 F1（策略级修复）：customBaseUrl 属"数据去向"，【永不随备份
+    // 迁移】——旧备份携带的任何值（含合法 https，含内网/公网攻击者地址）
+    // 一律丢弃，backfill 回填本机值，没有则要求手工重填。此前的地址级过滤
+    // （isSafeEndpoint）有 7 类内网形态逃逸且拦不住公网改道，已删除。
+    delete restoredAi.customBaseUrl;
     // 凭据回填：备份里没有（空/缺失）→ 保留本机已有值
     for (const k of SENSITIVE_PROFILE_KEYS) {
       if (!restoredAi[k]) restoredAi[k] = currentAi[k] ?? '';

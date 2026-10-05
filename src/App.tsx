@@ -759,7 +759,8 @@ export const App: React.FC = () => {
           onDone={(finalPhase) => {
             if (finalPhase === 'good') {
               const now = Date.now();
-              localStorage.setItem('somnacare_bedtime_start', String(now));
+              // 复审 45 轮 F3：配额满时 setItem 会抛，回调中断会让"晚安"无响应
+              try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
               setSleepStartSignal(now);
               setActiveTab('today');
               showToast('晚安💤');

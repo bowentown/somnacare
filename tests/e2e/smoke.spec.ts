@@ -47,13 +47,19 @@ test('得分曲线几何自洽：100 分点在 90 分绿线上方', async ({ pag
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '趋势' }).click();
   await page.waitForTimeout(600);
   const geo = await page.evaluate(() => {
-    // 90 分参考线（emerald）与 100 分数据点（cy 最小的 circle）
+    // 90 分参考线（emerald）与 100 分数据点（cy 最小的 circle）。
+    // cy 缺失的圆点必须过滤——Number(null)===0 曾让断言对着一堆
+    // 无坐标圆点假绿（复审 45 轮 D5）
     const line = document.querySelector('svg line.text-emerald-300') as SVGLineElement | null;
-    const circles = [...document.querySelectorAll('svg circle')].map((c) => Number(c.getAttribute('cy')));
+    const circles = [...document.querySelectorAll('svg circle')]
+      .map((c) => c.getAttribute('cy'))
+      .filter((v): v is string => v !== null)
+      .map(Number);
     const topPoint = circles.length ? Math.min(...circles) : null;
-    return { lineY: line ? Number(line.getAttribute('y1')) : null, topPoint };
+    return { lineY: line ? Number(line.getAttribute('y1')) : null, topPoint, circleCount: circles.length };
   });
   expect(geo.lineY).not.toBeNull();
+  expect(geo.circleCount).toBeGreaterThan(0);   // 至少存在带坐标的数据点
   expect(geo.topPoint).not.toBeNull();
   // 回归锁：最高分点（100 分 → y=10）必须在 90 线（y=22）之上
   expect(geo.topPoint).toBeLessThan(geo.lineY as number);

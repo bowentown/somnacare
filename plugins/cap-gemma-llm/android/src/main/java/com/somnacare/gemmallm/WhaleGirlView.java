@@ -260,10 +260,11 @@ public class WhaleGirlView extends View {
 
     /**
      * 环境动作权重表（第 42 轮，行为方案 §二；思路同 dsh-chicken-pet 的
-     * 加权待机）：权重即人格——午饭时间吃东西、下午茶喝茶、傍晚看书抱枕头、
-     * 深夜不喝茶不吃饭不上班。深夜 23-06 另有 drowsy 闸门整体关停小动作，
-     * 这里的深夜 0 值只作兜底。记录类上下文（连续未记录/昨晚分数）待
-     * JS→原生结构化通道就绪后接入（方案 §二 后半）。
+     * 加权待机）：权重即人格——午饭时间吃东西、下午茶喝茶、傍晚看书抱枕头。
+     * 深夜 23-06 另有 drowsy 闸门整体关停小动作，因此 tea/eat/walk/working
+     * 的深夜 0 值分支【当前不可达】——是 drowsy 阈值变更时的防御性预留，
+     * 不是清理对象（第 44 轮 D1 意图确认：保留并标注）。
+     * 记录感知上下文（missedDays/lastNightRecorded/lastScore）经 setContext 接入。
      */
     private int weightOf(Anim a, int hour) {
         int w;
@@ -275,7 +276,9 @@ public class WhaleGirlView extends View {
             case "tea":      w = (hour >= 23 || hour < 5) ? 0
                                   : (hour >= 14 && hour < 17) ? 10
                                   : (hour < 10) ? 6 : 8; break;
-            case "pillow":   w = (hour >= 21 || hour < 2) ? 16 : (hour >= 18 ? 10 : 3); break;
+            // 整个深夜口径（第 44 轮 D3 意图确认：21-06 全程高权重）；
+            // 若本意是"刚上床那段"，改回 hour < 2
+            case "pillow":   w = (hour >= 21 || hour < 6) ? 16 : (hour >= 18 ? 10 : 3); break;
             case "eat":      w = (hour >= 11 && hour < 13) ? 16
                                   : (hour >= 17 && hour < 20) ? 12
                                   : (hour >= 23 || hour < 6) ? 0 : 4; break;

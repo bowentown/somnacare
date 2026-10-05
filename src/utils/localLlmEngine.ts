@@ -281,14 +281,27 @@ export async function downloadLocalLlm(
   let lastError: unknown = null;
   for (const url of MODEL_SOURCES) {
     if (signal?.aborted) throw lastError ?? new Error('下载已取消');
+    // 复审 45 轮 D4：停滞看门狗 + 用户取消中继。fetch 只接受一个 signal——
+    // 自建 dlCtrl 把用户 signal 的取消转发过来；每个数据块重置 30s 计时，
+    // 停滞即中止并重试下一源（此前卡死无任何反馈）
+    const dlCtrl = new AbortController();
+    const onUserAbort = () => dlCtrl.abort();
+    signal?.addEventListener('abort', onUserAbort);
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const armStall = () => {
+      if (stallTimer !== undefined) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => dlCtrl.abort(), 30000);
+    };
     try {
-      const res = await fetch(url, { signal });
+      armStall();
+      const res = await fetch(url, { signal: dlCtrl.signal });
       if (!res.ok || !res.body) throw new Error(`下载源响应异常 (HTTP ${res.status})`);
 
       const total = Number(res.headers.get('content-length') || 0);
       let loaded = 0;
       const progressStream = new TransformStream({
         transform(chunk, controller) {
+          armStall();   // 有数据就续命
           loaded += chunk.byteLength;
           if (total > 0) onProgress(Math.min(99, Math.round((loaded / total) * 100)));
           controller.enqueue(chunk);
@@ -301,9 +314,12 @@ export async function downloadLocalLlm(
       onProgress(100);
       return;
     } catch (e: any) {
-      if (signal?.aborted) throw e;
-      lastError = e;
+      if (signal?.aborted) throw e;   // 用户取消：原样上抛
+      lastError = e;                   // 停滞/网络错误：重试下一源
       onProgress(0);
+    } finally {
+      if (stallTimer !== undefined) clearTimeout(stallTimer);
+      signal?.removeEventListener('abort', onUserAbort);
     }
   }
   const detail = lastError instanceof Error ? lastError.message : String(lastError);

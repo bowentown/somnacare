@@ -6,6 +6,8 @@
  *
  * 方法论约束：护栏必须能反向验证——构造含密钥的 profile 必须被剥掉。
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // localStorage polyfill（Node 环境跑真实 backup 模块）
@@ -88,39 +90,65 @@ restoreFullBackup(p1.kind === 'full' ? p1.data : (null as never));
 const prof2 = JSON.parse(store.get('somnacare_user_profile')!);
 check('恢复：本机已有密钥被保留（不被空值覆盖）', prof2.aiConfig.deepseekApiKey === 'sk-LOCAL-EXISTING');
 
-// ── V13 残留（第 44 轮复审）：profile 字段注入 —— 恶意备份改写 customBaseUrl 必须被挡 ──
-// （对象展开本身无原型污染——CreateDataProperty，复审实测——真正的面是"任意字段注入"）
+// ── V13/F1（第 45 轮）：customBaseUrl 策略级——地址永不随备份迁移 ──
+// 此前地址级过滤有 7 类内网形态逃逸且拦不住公网改道；策略级修复后
+// 备份携带的任何 customBaseUrl（含合法 https）一律不落盘，本机值保留。
 {
-  const malicious = {
+  const mk = (customBaseUrl?: string) => ({
     app: 'somnacare', schema: BACKUP_SCHEMA, exportedAt: '2026-10-05T00:00:00.000Z',
     records: [],
     profile: {
       name: '受害者',
+      hackerField: 'pwned',   // 白名单外的字段 → 不得进入 profile
       aiConfig: {
         provider: 'custom_openai',
-        customBaseUrl: 'http://169.254.169.254/steal',   // 非 https + 元数据地址 → 必须整条丢弃
-        customApiKey: 'attacker-key',
+        customApiKey: 'attacker-key',   // 凭据同理：永不自备份迁移
+        ...(customBaseUrl ? { customBaseUrl } : {}),
       },
-      hackerField: 'pwned',                              // 白名单外的字段 → 不得进入 profile
     },
+  });
+  const restoreWith = (customBaseUrl?: string): any => {
+    store.set('somnacare_user_profile', JSON.stringify({
+      aiConfig: { provider: 'custom_openai', customBaseUrl: 'https://api.deepseek.com', customApiKey: 'sk-LOCAL' },
+    }));
+    restoreFullBackup((parseBackup(JSON.stringify(mk(customBaseUrl))) as { kind: 'full'; data: never }).data);
+    return JSON.parse(store.get('somnacare_user_profile')!);
   };
-  const parsed = parseBackup(JSON.stringify(malicious));
-  if (parsed.kind !== 'full') {
-    check('V13：恶意全量备份可解析', false);
-  } else {
-    restoreFullBackup(parsed.data);
-    const prof = JSON.parse(store.get('somnacare_user_profile')!);
-    check('V13：白名单外字段（hackerField）不进入 profile', !('hackerField' in prof));
-    check('V13：customBaseUrl 非 https/元数据地址 → 被丢弃', prof.aiConfig?.customBaseUrl === undefined);
-    check('V13：无原型污染残留', (Object.prototype as any).hackerField === undefined);
+  // 45 轮 F1 的 7 类逃逸形态 + 公网攻击者地址：策略级下全部不落盘
+  const probeUrls = [
+    'http://169.254.169.254/steal',
+    'https://[::1]:8443/',
+    'https://[0:0:0:0:0:0:0:1]/',
+    'https://[fd00::1]/',
+    'https://[fc00::1]/',
+    'https://[fe80::1]/',
+    'https://100.64.0.1/',
+    'https://198.18.0.1/',
+    'https://attacker.example/v1',
+    'https://api.deepseek.com',   // 连合法 https 也不随备份走（手工重填）
+  ];
+  for (const url of probeUrls) {
+    const prof = restoreWith(url);
+    check(`V13/F1：备份携带的 customBaseUrl 不落盘（${url}）`,
+      prof.aiConfig.customBaseUrl === 'https://api.deepseek.com');
+    check(`V13/F1：备份携带的凭据不落盘（${url}）`, prof.aiConfig.customApiKey === 'sk-LOCAL');
   }
-  // 合法 https 端点照常保留
-  const okBody = { app: 'somnacare', schema: BACKUP_SCHEMA, exportedAt: '', records: [],
-    profile: { aiConfig: { provider: 'custom_openai', customBaseUrl: 'https://api.deepseek.com' } } };
-  restoreFullBackup((parseBackup(JSON.stringify(okBody)) as { kind: 'full'; data: never }).data);
-  const prof3 = JSON.parse(store.get('somnacare_user_profile')!);
-  check('V13：合法 https customBaseUrl 保留', prof3.aiConfig.customBaseUrl === 'https://api.deepseek.com');
-  // 上限分流：条数 / 字符长度（R2 纵深）
+  check('V13/F1：白名单外字段不进入 profile', !('hackerField' in restoreWith('https://attacker.example/v1')));
+  check('V13：无原型污染残留', (Object.prototype as any).hackerField === undefined);
+  // 本机也没有 → 不留半截值，要求手工重填（backfill 只会填空串占位）
+  store.set('somnacare_user_profile', JSON.stringify({}));
+  restoreFullBackup((parseBackup(JSON.stringify(mk('https://attacker.example/v1'))) as { kind: 'full'; data: never }).data);
+  const profEmpty = JSON.parse(store.get('somnacare_user_profile')!);
+  check('V13/F1：本机无值时也不落盘（要求手工重填）', !profEmpty.aiConfig?.customBaseUrl, profEmpty.aiConfig?.customBaseUrl);
+  // 导出剥离：本机的 customBaseUrl 不进备份文件（与凭据同策）
+  store.set('somnacare_user_profile', JSON.stringify({
+    aiConfig: { provider: 'custom_openai', customBaseUrl: 'https://api.deepseek.com', customApiKey: 'sk-X' },
+  }));
+  const exportRaw = JSON.stringify(buildFullBackup());
+  check('V13/F1：导出不含 customBaseUrl', !exportRaw.includes('customBaseUrl'));
+  check('V13：导出不含 customApiKey（既有凭据纪律）', !exportRaw.includes('sk-X'));
+  check('V13：无原型污染残留', (Object.prototype as any).hackerField === undefined);
+  // 上限分流（R2）
   try {
     parseBackup('[' + '1,'.repeat(60000) + '1]');
     check('V13：记录超 5 万条被拒', false);
@@ -133,6 +161,10 @@ check('恢复：本机已有密钥被保留（不被空值覆盖）', prof2.aiCo
   } catch (e) {
     check('V13：raw 超 20MB 被拒（too-big）', (e as Error).message === 'too-big');
   }
+  // V14：模态框保存/查询前强制 https（结构锁）
+  const modal = readFileSync(join(ROOT, 'src/components/CustomAISettingsModal.tsx'), 'utf-8');
+  check('V14：自填端点保存/查询前强制 https（模态框门控）',
+    modal.includes('ensureHttpsEndpoint') && modal.includes("startsWith('https://')"));
 }
 
 if (failures > 0) {

@@ -26,9 +26,12 @@ interface LoadedImg {
 }
 
 async function loadImage(url: string): Promise<LoadedImg> {
-  // 同源 fetch → Blob → createImageBitmap（不经 <img> 解码，杜绝跨域污染）
+  // 同源 fetch → Blob → createImageBitmap（不经 <img> 解码，杜绝跨域污染）。
+  // 复审 45 轮 D4：图源停顿时此前会永久挂起——10s 超时（失败走老内核兜底）
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: ctrl.signal });
     const blob = await res.blob();
     if (typeof createImageBitmap === 'function') {
       const el = await createImageBitmap(blob);
@@ -43,6 +46,8 @@ async function loadImage(url: string): Promise<LoadedImg> {
       img.onerror = () => reject(new Error('插画加载失败: ' + url));
       img.src = url;
     });
+  } finally {
+    clearTimeout(timer);
   }
 }
 

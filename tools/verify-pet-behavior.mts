@@ -45,7 +45,9 @@ function weightTableFailures(src: string): string[] {
   // ① 时段条件密度：真权重表按小时开合，常数化后归零
   const hourConds = (body.match(/hour\s*(?:>=|<)/g) ?? []).length;
   if (hourConds < 8) out.push(`hour 条件仅 ${hourConds} 处（<8，疑似退化常数表）`);
-  // ② 深夜禁令的代码形态（? 0 权重），不是注释
+  // ② 深夜禁令的代码形态（? 0 权重），不是注释。
+  //    契约（第 44 轮 D1 意图确认）：这些分支【当前不可达】（drowsy 闸门
+  //    覆盖 23-06），是 drowsy 阈值变更时的防御性预留——保留其形态正确。
   for (const act of ['tea', 'eat', 'working']) {
     if (!new RegExp(`case "${act}":[^;]*\\? 0`).test(body)) out.push(`${act} 缺深夜 0 权重的代码形态`);
   }
@@ -56,6 +58,7 @@ function weightTableFailures(src: string): string[] {
 check('ambientTick 走 pickAmbient（不再是均匀随机）', view.includes('Anim next = pickAmbient();'));
 const wtFails = weightTableFailures(view);
 check('权重表形状：时段条件密度 ≥8 + 深夜禁令代码形态', wtFails.length === 0, wtFails.join('；'));
+check('pillow 整夜口径（第 44 轮 D3 确认：21-06 全程高权重）', /case "pillow":[^;]*hour < 6/.test(view));
 const legacyUniform = 'ambient[rng.nextInt(ambient.length)]';
 check(`旧均匀随机写法只剩 pickAmbient 兜底一处（实际 ${count(view, legacyUniform)} 处）`,
   count(view, legacyUniform) === 1 && view.indexOf('private Anim pickAmbient') < view.indexOf(legacyUniform));

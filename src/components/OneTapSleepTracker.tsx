@@ -226,13 +226,14 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     if (!startSignal) return;
     const now = Date.now();
     setSleepStartTime(now);
-    localStorage.setItem('somnacare_bedtime_start', String(now));
+    // 复审 45 轮 F3：配额满时 setItem 会抛——按全仓惯例包住，内存态仍生效
+    try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
   }, [startSignal]);
 
   const handleStartSleep = () => {
     const now = Date.now();
     setSleepStartTime(now);
-    localStorage.setItem('somnacare_bedtime_start', String(now));
+    try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
   };
 
   const handleWakeUp = () => {

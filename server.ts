@@ -41,6 +41,11 @@ setInterval(() => {
 // 折中实现（不破坏现有部署）：设置 SOMNA_API_TOKEN 环境变量后强制 Bearer 校验；
 // 未设置时中间件直接放行（GEMINI_API_KEY 未配置时该代理本就零成本——只走本地规则）
 const SOMNA_API_TOKEN = process.env.SOMNA_API_TOKEN ?? '';
+// D6（复审）：fail-open 是有意的部署折中，但未设令牌时必须让部署者知道——
+// 此前只在 .env.example 注释里可发现，裸奔启动无任何提示
+if (!SOMNA_API_TOKEN) {
+  console.warn('[security] SOMNA_API_TOKEN 未设置 —— /api/sleep/* 无鉴权（fail-open 折中；公开部署前必须设置，见 .env.example）');
+}
 
 // 安全审计 A3：鉴权中间件必须【顶层定义、顶层注册且仅注册一次】。
 // 此前它被写在限流中间件的回调体里 app.use(...)——每个请求都会向 Express
@@ -555,33 +560,35 @@ ${JSON.stringify(recentLogs, null, 2)}
 
 // Sleep Coach Chat Consultation Endpoint
 app.post('/api/sleep/chat', async (req: Request, res: Response): Promise<void> => {
-  try {
-    // Normalize messages payload: accept messages array or { message, history }
-    let chatMessages: Array<{ role: string; content: string }> = [];
-    if (Array.isArray(req.body.messages) && req.body.messages.length > 0) {
-      chatMessages = req.body.messages;
-    } else if (Array.isArray(req.body.history)) {
-      chatMessages = [...req.body.history];
-      if (req.body.message) {
-        chatMessages.push({ role: 'user', content: req.body.message });
-      }
-    } else if (req.body.message) {
-      chatMessages = [{ role: 'user', content: req.body.message }];
+  // 消息归一化 + 睡眠概况现算放在 try 外（第 44 轮 D7）：外层兜底此前读
+  // req.body.currentSleepStats——客户端从不发该字段，走到外层 catch 时
+  // 兜底回复退化为无数据的泛泛之谈。纯解析不会抛，无需在 try 内。
+  let chatMessages: Array<{ role: string; content: string }> = [];
+  if (Array.isArray(req.body?.messages) && req.body.messages.length > 0) {
+    chatMessages = req.body.messages;
+  } else if (Array.isArray(req.body?.history)) {
+    chatMessages = [...req.body.history];
+    if (req.body.message) {
+      chatMessages.push({ role: 'user', content: req.body.message });
     }
+  } else if (req.body?.message) {
+    chatMessages = [{ role: 'user', content: req.body.message }];
+  }
+  const { currentSleepStats: legacyStats, aiConfig } = req.body ?? {};
+  const { recentLogs } = req.body ?? {};
+  // 第 31 轮 F1：客户端发的是 recentLogs，没有 currentSleepStats 字段——
+  // 此前提示词里的"睡眠概况参考"恒为 {}，云端个性化形同虚设。
+  // 从 recentLogs[0] 现算（旧字段兼容：显式传入时优先）
+  const firstLog = Array.isArray(recentLogs) ? recentLogs[0] : undefined;
+  const currentSleepStats = legacyStats ?? {
+    latestScore: firstLog?.sleepScore,
+    deepSleepMin: firstLog?.deepSleepMinutes,
+    bedtime: firstLog?.bedtime,
+    wakeTime: firstLog?.wakeTime,
+    date: firstLog?.date,
+  };
 
-    const { currentSleepStats: legacyStats, aiConfig } = req.body;
-    const { recentLogs } = req.body;
-    // 第 31 轮 F1：客户端发的是 recentLogs，没有 currentSleepStats 字段——
-    // 此前提示词里的"睡眠概况参考"恒为 {}，云端个性化形同虚设。
-    // 从 recentLogs[0] 现算（旧字段兼容：显式传入时优先）
-    const firstLog = Array.isArray(recentLogs) ? recentLogs[0] : undefined;
-    const currentSleepStats = legacyStats ?? {
-      latestScore: firstLog?.sleepScore,
-      deepSleepMin: firstLog?.deepSleepMinutes,
-      bedtime: firstLog?.bedtime,
-      wakeTime: firstLog?.wakeTime,
-      date: firstLog?.date,
-    };
+  try {
 
     const systemInstruction = `你叫“极光睡眠伴侣（Somna AI）”，是极光睡眠安卓客户端专属的随身睡眠健康顾问。
 你的语气：温柔、治愈、严谨专业、条理清晰，多用温和关切的词句，避免机械化的冷淡回答。
@@ -717,7 +724,8 @@ ${JSON.stringify(currentSleepStats || {}, null, 2)}
     res.json({ reply: fallbackReply, provider: 'ClinicalEngine' });
   } catch (error: any) {
     console.error('Sleep chat error:', error);
-    const fallbackReply = generateClinicalChatResponse([], req.body?.currentSleepStats);
+    // D7 修复：用 try 外已算出的概况兜底（此前读客户端从不发的字段，数据全空）
+    const fallbackReply = generateClinicalChatResponse(chatMessages, currentSleepStats);
     res.json({ reply: fallbackReply, provider: 'ClinicalEngine' });
   }
 });

@@ -59,6 +59,8 @@ const AC_ALLOW: Record<string, number> = {
   'src/utils/petMoments.ts': 1,           // callLlm 25s 保护
   'src/components/AIAdvicePanel.tsx': 1,  // 端侧模型生成中止（非 fetch 包装）
   'src/components/CustomAISettingsModal.tsx': 1, // 模型下载取消
+  'src/utils/localLlmEngine.ts': 1,       // 下载停滞看门狗（45 轮 D4：30s 无数据中止重试）
+  'src/utils/sleepShareCard.ts': 1,       // 分享卡图源 10s 超时（45 轮 D4）
   'server.ts': 1,                         // 服务端上游 40s 保护
 };
 {
