@@ -206,8 +206,11 @@ export async function syncPet(
   if (!g || !isPetEnabled()) return;
   const cached = getCachedLlmSay(profile?.aiConfig);
   const localLines = buildPetSayLines(records, profile);
+  // 混排顺序（第 45 轮优化）：时间性问候（首行，按当前时段实时生成）置顶——
+  // 此前缓存 LLM 语录排最前，最多 10 条挤在前面，最该说的时段问候
+  // 要点十几次才轮到。LLM 语录紧随其后，再垫 2 条本地兜底。
   const say = cached
-    ? [...cached, ...localLines.slice(0, 3)].join('\n')
+    ? [localLines[0], ...cached, ...localLines.slice(1, 3)].filter(Boolean).join('\n')
     : localLines.join('\n');
   try {
     await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()) });
