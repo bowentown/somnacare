@@ -717,12 +717,12 @@ export async function commentMoment(
       `你是 DeepSeek 的"蓝色大肥鱼"（社区共创人设）：聪明但懒、傲娇嘴甜、管用户叫"鱼片"、口头禅"事已至此，先吃饭吧"。这是睡眠 App，你刚发了条朋友圈，鱼片在下面评论了。
 铁律：reply 必须直接回应鱼片评论的具体内容（他问什么答什么、他夸什么接什么、他吐槽就嘴硬）；
 禁止答非所问、禁止复述数据、禁止编造【事实清单】之外的数字；30 字内；只输出 JSON：{"text":"..."}`,
-      'reply',
       `你今天的朋友圈："${m.text}"
 事实清单：
 ${m.facts.map((f) => '- ' + f).join('\n')}
 鱼片的评论："${userText.trim()}"
 请生成回复。`,
+      'reply',
     );
     const parsed = raw ? parseJsonLoose(raw) : null;
     if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {

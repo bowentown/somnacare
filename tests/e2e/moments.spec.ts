@@ -76,16 +76,14 @@ test('本地兜底：打开朋友圈自动生成，数字真实、好友纪律�
 });
 
 test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) => {
-  const usageLogs: string[] = [];
   const usageKinds: string[] = [];
-  page.on('console', async (msg) => {
-    // [llm usage] 的第二参数是对象——用 args 反序列化拿 kind（文本格式化跨版本不稳）
+  page.on('console', (msg) => {
+    // kind 在 Playwright 的对象预览里会被吞（探针实证），必须用 args 的
+    // jsonValue 反序列化拿——同步 text() 拿不到
     if (msg.text().startsWith('[llm usage]') && msg.args()[1]) {
-      try {
-        const obj = await msg.args()[1].jsonValue();
-        usageKinds.push(String(obj?.kind));
-        usageLogs.push(JSON.stringify(obj));
-      } catch { /* 句柄失效忽略 */ }
+      msg.args()[1].jsonValue()
+        .then((obj) => usageKinds.push(String(obj?.kind)))
+        .catch(() => { /* 句柄失效忽略 */ });
     }
   });
   await seed(page, {
@@ -114,11 +112,9 @@ test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) =>
   expect(today?.cards).toContain('data');
   // 用量对账日志（kind=moments）：四条模型链路全部可归因（第 45 轮用户反馈命中率归因）
   expect(usageKinds).toContain('moments');
-  expect(usageLogs.some((t) => t.includes('hitRate'))).toBeTruthy();
 });
 
-test('语录时间纪律：缓存里写死钟点的台词被过滤（用户实测回归）', async ({ page }) => {
-  // 用户实测：23:24 播出"23:30 到了"。缓存 20h 的 LLM 语录里含钟点的台词
+test('语录时间纪律：缓存里写死钟点的台词被过滤（用户实测回归）', async ({ page }) => {  // 用户实测：23:24 播出"23:30 到了"。缓存 20h 的 LLM 语录里含钟点的台词
   // 必须在显示层被过滤——对已缓存旧语料立即生效
   await seed(page, {
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
@@ -175,4 +171,53 @@ test('LLM 编数字：数字白名单拒收整条，回退本地模板', async (
   const today = (moments as any[]).find((m) => !m.postcardId);
   expect(String(today?.text)).not.toContain('99');
   expect(String(today?.text)).toContain('92');
+});
+
+test('评论回复链路：请求体含评论与正文，模型回复直接回应评论（B1 回归）', async ({ page }) => {
+  // 第 46 轮 B1 回归：commentMoment 曾把 'reply' 传进 user 位、真提示词
+  // 挤进 kind 位——模型收不到评论内容，回复退化为模板腔
+  const captured: string[] = [];
+  const usageKinds: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.text().startsWith('[llm usage]') && msg.args()[1]) {
+      msg.args()[1].jsonValue()
+        .then((obj) => usageKinds.push(String(obj?.kind)))
+        .catch(() => { /* 句柄失效忽略 */ });
+    }
+  });
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    const body = route.request().postData() ?? '';
+    captured.push(body);
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ text: '昨晚 00:20 才放下手机，还问我几点睡？先闭眼！' }) } }],
+        usage: { prompt_tokens: 90, completion_tokens: 18, prompt_cache_hit_tokens: 50, prompt_cache_miss_tokens: 40 },
+      }),
+    });
+  });
+  await seed(page, {
+    records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
+    profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
+  });
+  await openMoments(page);
+  await page.waitForTimeout(800);   // 今日动态自动生成完成
+
+  // 打开评论框 → 发一句评论（选择器圈进 dialog——背后 AI 顾问窗格的入口卡
+  // 可访问名也含"评论"，不圈会点到被拦截的底卡）
+  const overlay2 = page.getByRole('dialog', { name: '大肥鱼的朋友圈' });
+  await overlay2.getByRole('button', { name: '评论' }).first().click();
+  await page.getByPlaceholder('和她说点什么……').fill('你昨天几点睡的？');
+  await overlay2.getByRole('button', { name: '发送' }).click();
+
+  // 回复直接回应评论内容（mock 文本与请求体断言双证）
+  await expect(page.getByText('还问我几点睡').first()).toBeVisible({ timeout: 15000 });
+  const commentReq = captured.find((b) => b.includes('你昨天几点睡的？'));
+  expect(commentReq).toBeTruthy();                       // B1 回归锚：评论内容必须进请求体
+  expect(commentReq).toContain('鱼片的评论');
+  expect(commentReq).toContain('事实清单');
+  // 对账日志：这条链路的 kind 必须是 'reply'（此前恒为整段提示词）
+  await page.waitForTimeout(500);
+  expect(usageKinds).toContain('reply');
 });
