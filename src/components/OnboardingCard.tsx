@@ -152,7 +152,7 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ theme, allowAuto
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-white">选择你的作息类型</p>
                   <p className={`text-[10px] ${theme.textMuted} leading-relaxed mt-0.5`}>
-                    决定哪一段算主睡；上夜班或白天睡觉的人尤其要选。
+                    在 偏好 → 我的作息 里选（决定哪段算主睡，夜班/白天睡觉的人尤其要选）。选错也没关系，随时能改。
                   </p>
                 </div>
               </div>
@@ -163,7 +163,7 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ theme, allowAuto
               <p className={`text-[10px] ${theme.textMuted} leading-relaxed`}>
                 第一次提议要到
                 <span className="text-white font-bold">明早</span>
-                才会出现——它需要一整晚的数据。今晚先用一键就寝。
+                才会出现——它需要一整晚的数据。今晚先用一键就寝，明早点一下确认就完成记录。
               </p>
             </div>
 
