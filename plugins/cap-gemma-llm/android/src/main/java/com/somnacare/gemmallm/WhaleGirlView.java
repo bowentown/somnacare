@@ -93,7 +93,10 @@ public class WhaleGirlView extends View {
         @Override public void run() {
             if (!running) return;
             invalidate();
-            main.postDelayed(this, TICK_MS);
+            // A12 功耗优化（第 45 轮）：深夜困倦态降到 ~10fps——角色在睡觉，
+            // 呼吸浮动 ±1.5% 的幅度下 100ms 步进肉眼无感，通宵 8 小时
+            // 省下约 2/3 的全屏重绘（30fps × 8h 是桌宠最大的常驻功耗项）
+            main.postDelayed(this, drowsy > 0.5f ? 100 : TICK_MS);
         }
     };
 
