@@ -43,6 +43,13 @@ const openMoments = async (page: Page): Promise<void> => {
   await expect(page.getByText('她不许自己编数字').first()).toBeVisible({ timeout: 15000 });
 };
 
+/** 不进朋友圈的普通打开（漫游到指定底栏分区）。 */
+const open = async (page: Page): Promise<void> => {
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+};
+
 const readStore = (page: Page, key: string): Promise<any> =>
   page.evaluate((k) => {
     const raw = localStorage.getItem(k);
@@ -69,6 +76,18 @@ test('本地兜底：打开朋友圈自动生成，数字真实、好友纪律�
 });
 
 test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) => {
+  const usageLogs: string[] = [];
+  const usageKinds: string[] = [];
+  page.on('console', async (msg) => {
+    // [llm usage] 的第二参数是对象——用 args 反序列化拿 kind（文本格式化跨版本不稳）
+    if (msg.text().startsWith('[llm usage]') && msg.args()[1]) {
+      try {
+        const obj = await msg.args()[1].jsonValue();
+        usageKinds.push(String(obj?.kind));
+        usageLogs.push(JSON.stringify(obj));
+      } catch { /* 句柄失效忽略 */ }
+    }
+  });
   await seed(page, {
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
@@ -81,7 +100,7 @@ test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) =>
       text: '昨晚 8 小时 0 分拿下 92 分，哼，算你识相 😊',
       cards: ['data'],
       comments: [{ friend: '楼下Claude', text: '恕我直言，92 分的含金量，明天请继续保持。' }],
-    }) } }] }),
+    }) } }], usage: { prompt_tokens: 120, completion_tokens: 40, prompt_cache_hit_tokens: 80, prompt_cache_miss_tokens: 40 } }),
   }));
   await openMoments(page);
 
@@ -93,6 +112,41 @@ test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) =>
   const today = (moments as any[]).find((m) => !m.postcardId && String(m.text).includes('算你识相'));
   expect(today?.comments?.[0]?.friend).toBe('楼下Claude');
   expect(today?.cards).toContain('data');
+  // 用量对账日志（kind=moments）：四条模型链路全部可归因（第 45 轮用户反馈命中率归因）
+  expect(usageKinds).toContain('moments');
+  expect(usageLogs.some((t) => t.includes('hitRate'))).toBeTruthy();
+});
+
+test('语录时间纪律：缓存里写死钟点的台词被过滤（用户实测回归）', async ({ page }) => {
+  // 用户实测：23:24 播出"23:30 到了"。缓存 20h 的 LLM 语录里含钟点的台词
+  // 必须在显示层被过滤——对已缓存旧语料立即生效
+  await seed(page, {
+    records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
+    // getCachedLlmSay 对非 LLM 档位返回 null（撤 Key 不吃云端缓存）——
+    // 测试缓存过滤必须配一个有 Key 的档案
+    profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem('somnacare_pet_say_llm', JSON.stringify({
+      at: Date.now(),
+      lines: [
+        '23:30 到了，肥鱼都睡了你还醒着',
+        '昨晚你把睡眠记录藏哪了，交出来',
+        '100分是空气打的，系统都不好意思',
+      ],
+    }));
+  });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  // 预览在 <details> 折叠面板里——innerText 不含折叠内容，先展开再断言
+  await page.getByText(/傲娇播报预览/).click();
+  await page.waitForTimeout(400);
+  const text = await page.evaluate(() => document.body.innerText);
+  expect(text).not.toContain('23:30 到了');                       // 钟点台词消失
+  expect(text).toContain('昨晚你把睡眠记录藏哪了');               // 干净台词保留
+  expect(text).toContain('100分是空气打的');                     // 非钟点台词不受牵连
 });
 
 test('LLM 编数字：数字白名单拒收整条，回退本地模板', async ({ page }) => {
