@@ -47,6 +47,14 @@ if (!wf.includes('GITHUB_REF_NAME#v') || !wf.includes('grep -q "versionName')) {
   fail('versionName 标签 stamp 缺失——Release 版本号会与系统显示错位');
 }
 
+// V12（第 44/45 轮复审遗留）：Actions 全部钉 commit SHA——tag 引用可被
+// 移植/覆盖，是供应链风险；钉死后升级必须显式改 SHA（注释保留版本号）
+{
+  const unpinned = wf.split('\n').filter((l) => l.includes('uses: actions/') && /@v\d+\s*$/.test(l.trim()));
+  if (unpinned.length > 0) fail(`V12：${unpinned.length} 个 action 仍按 tag 引用未钉 SHA：\n${unpinned.join('\n')}`);
+  console.log('✓ V12：Actions 全部钉 commit SHA（tag 引用清零）');
+}
+
 // 反向自检：删掉 A1 硬失败分支后，同一断言路径必须失去判据
 // （作用域必须限定在签名步骤自身——Compile 步骤的 versionName stamp 与
 //  release job 的 APK 校验也含 refs/tags 与 exit 1，跨界会误报）

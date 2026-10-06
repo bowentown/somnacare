@@ -28,25 +28,3 @@ export function getMoonInfo(date: Date = new Date()): MoonInfo {
   return { age, illumination, waxing, phaseName: names[nameIdx] };
 }
 
-/**
- * 生成月面受光区域的 SVG path（viewBox 内以 cx,cy 为圆心、r 为半径）。
- * phase 0..1：0=新月（全暗）0.25=上弦（右半亮）0.5=满月（全亮）0.75=下弦（左半亮）。
- * 算法：受光侧外缘半圆 + 明暗界线椭圆弧（半轴 rx = r·|cos(2π·phase)|）闭合。
- */
-export function moonLitPath(cx: number, cy: number, r: number, phase: number): string {
-  const twoPi = 2 * Math.PI;
-  const waxing = phase <= 0.5;
-  const illum = (1 - Math.cos(twoPi * phase)) / 2;
-  // 界线椭圆的横向半轴：新月/满月时 = r（半圆界线），弦月时 ≈ 0（直线）
-  const rx = Math.max(0.5, r * Math.abs(Math.cos(twoPi * phase)));
-
-  const top = `${cx} ${cy - r}`;
-  const bottom = `${cx} ${cy + r}`;
-
-  // 受光侧外缘：盈月亮面在右，亏月在左
-  const limbSweep = waxing ? 1 : 0;
-  // 界线弧的弯曲方向：凸月时向外鼓（与外缘同侧形成大亮面），娥眉时向内凹
-  const termSweep = illum > 0.5 ? (waxing ? 0 : 1) : (waxing ? 1 : 0);
-
-  return `M ${top} A ${r} ${r} 0 0 ${limbSweep} ${bottom} A ${rx} ${r} 0 0 ${termSweep} ${top} Z`;
-}

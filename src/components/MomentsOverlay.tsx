@@ -4,6 +4,8 @@ import type { SleepRecord, UserProfile } from '../types/sleep';
 import { useModalA11y } from '../utils/modalA11y';
 import {
   ensureTodayMoment,
+  isRegenCoolingDown,
+  markRegenDone,
   likeMoment,
   commentMoment,
   loadMoments,
@@ -201,10 +203,17 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
   }, []);
 
   const regenerate = async () => {
+    // M6 冷却接线（第 45 轮死代码扫描发现：isRegenCoolingDown/markRegenDone
+    // 建好后从未被调用——冷却形同虚设，每次点击都直打 LLM）
+    if (isRegenCoolingDown()) {
+      setNote('刚生成过啦，让本鱼歇几分钟再来');
+      return;
+    }
     setBusy(true);
     setNote(null);
     try {
       const res = await ensureTodayMoment(records, userProfile, new Date(), true);
+      markRegenDone();   // 成功后才起 10 分钟冷却（失败的生成不占用）
       setMoments(res.moments);
       setNote(res.generated ? '大肥鱼发新动态了！' : '今天她已经发过了～');
     } finally {

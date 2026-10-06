@@ -326,17 +326,6 @@ export async function downloadLocalLlm(
   throw new Error(detail || '所有下载源均不可用');
 }
 
-export async function cancelNativeDownload(): Promise<void> {
-  const plugin = getNativePlugin();
-  if (plugin) {
-    try {
-      await plugin.cancelDownload();
-    } catch {
-      // ignore
-    }
-  }
-}
-
 export async function deleteLocalLlm(): Promise<void> {
   const plugin = getNativePlugin();
   if (plugin) {
