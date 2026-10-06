@@ -434,7 +434,7 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
     const { aiConfig: _stripAi, ...safeProfile } = (userProfile || {}) as Record<string, unknown>;
     const userPrompt = `用户档案：${JSON.stringify(Object.keys(safeProfile).length ? safeProfile : { age: 28, targetHours: 8 })}
 近期睡眠记录数据：
-${JSON.stringify(recentLogs, null, 2)}
+        ${JSON.stringify(recentLogs)}
 
 请结合以上数据生成精准的睡眠医学诊断报告，返回纯JSON。`;
 
@@ -600,7 +600,7 @@ app.post('/api/sleep/chat', async (req: Request, res: Response): Promise<void> =
 5. 解梦与晨间情绪疏导。
 
 当前用户的睡眠概况参考：
-${JSON.stringify(currentSleepStats || {}, null, 2)}
+${JSON.stringify(currentSleepStats || {})}
 
 回答要求：
 1. 语言简练亲切，通常在150-300字内，分段清晰或列出2-3个直接可行的点。

@@ -167,6 +167,49 @@ check('恢复：本机已有密钥被保留（不被空值覆盖）', prof2.aiCo
     modal.includes('ensureHttpsEndpoint') && modal.includes("startsWith('https://')"));
 }
 
+// ── N1（第 46 轮复审）：导入白名单与类型定义【双向一致】──
+// PROFILE_FIELDS/AI_CONFIG_FIELDS 是导入时的字段闸门——若与
+// UserProfile/CustomAIConfig 漂移，新增字段会被静默丢弃且无护栏报红。
+// 从 types/sleep.ts 抽接口字段名，与两个白名单做双向集合断言。
+{
+  const typesSrc = readFileSync(join(ROOT, 'src/types/sleep.ts'), 'utf-8');
+  const backupSrc = readFileSync(join(ROOT, 'src/utils/backup.ts'), 'utf-8');
+
+  const ifaceFields = (name: string): string[] => {
+    const start = typesSrc.indexOf(`export interface ${name}`);
+    if (start < 0) return [];
+    const open = typesSrc.indexOf('{', start);
+    const close = typesSrc.indexOf('\n}', open);
+    const body = typesSrc.slice(open, close);
+    return [...body.matchAll(/^\s{2}([A-Za-z]\w*)\??:/gm)].map((m) => m[1]);
+  };
+  const listedFields = (constName: string): string[] => {
+    const m = backupSrc.match(new RegExp(`const ${constName} = \\[([\\s\\S]*?)\\]`));
+    return m ? [...m[1].matchAll(/'(\w+)'/g)].map((x) => x[1]) : [];
+  };
+  const diff = (a: string[], b: string[]): string[] =>
+    [...new Set(a.filter((x) => !b.includes(x)).concat(b.filter((x) => !a.includes(x))))];
+
+  const upTypes = ifaceFields('UserProfile');
+  const upListed = listedFields('PROFILE_FIELDS');
+  const upDiff = diff(upTypes, upListed);
+  check(`N1：PROFILE_FIELDS 与 UserProfile 双向一致（类型 ${upTypes.length} 项）`,
+    upTypes.length > 0 && upDiff.length === 0, upDiff.join('、') || '一致');
+
+  const aiTypes = ifaceFields('CustomAIConfig');
+  const aiListed = listedFields('AI_CONFIG_FIELDS');
+  const aiDiff = diff(aiTypes, aiListed);
+  check(`N1：AI_CONFIG_FIELDS 与 CustomAIConfig 双向一致（类型 ${aiTypes.length} 项）`,
+    aiTypes.length > 0 && aiDiff.length === 0, aiDiff.join('、') || '一致');
+
+  // 反向自检：白名单里塞一个类型没有的字段必须被检出
+  {
+    const ghostListed = [...upListed, 'ghostField'];
+    const ghostDiff = ghostListed.filter((x) => !upTypes.includes(x));
+    check('N1 反向自检：白名单幽灵字段可被检出', ghostDiff.includes('ghostField'), ghostDiff.join('、'));
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——备份护栏口径不符`);
   process.exit(1);
