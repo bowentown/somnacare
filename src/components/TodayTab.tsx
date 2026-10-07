@@ -17,6 +17,7 @@ import { SoundscapePlayer } from './SoundscapePlayer';
 import { Music2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
 import { requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
+import { PondCard } from './PondCard';
 
 interface TodayTabProps {
   records: SleepRecord[];
@@ -94,6 +95,9 @@ export const TodayTab: React.FC<TodayTabProps> = ({
     <div className={`space-y-4 pb-28 ${theme.textPrimary}`}>
       {/* 1. Primary One-Tap Sleep Tracker */}
       {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} />}
+
+      {/* 活的海：程序化脊柱鱼横幅（水色=睡眠债 / 萤火=昨晚深睡 / 星点=已记录夜） */}
+      <PondCard records={records} userProfile={userProfile} theme={theme} />
 
       {/* 当天小睡紧凑行（主卡只显示夜睡；小睡不顶掉主卡） */}
       {todayNaps.length > 0 && (
