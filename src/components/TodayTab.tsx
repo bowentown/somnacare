@@ -96,8 +96,8 @@ export const TodayTab: React.FC<TodayTabProps> = ({
       {/* 1. Primary One-Tap Sleep Tracker */}
       {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} />}
 
-      {/* 活的海：程序化脊柱鱼横幅（水色=睡眠债 / 萤火=昨晚深睡 / 星点=已记录夜） */}
-      <PondCard records={records} userProfile={userProfile} theme={theme} />
+      {/* 活的海：nagomi 程序化锦鲤池（主题 → 月夜/晴日/黄昏/雨），点水聚鱼 */}
+      <PondCard theme={theme} />
 
       {/* 当天小睡紧凑行（主卡只显示夜睡；小睡不顶掉主卡） */}
       {todayNaps.length > 0 && (

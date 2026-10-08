@@ -252,3 +252,6 @@ APK 由 CI 用**固定签名**构建：签名密钥存放在 GitHub Secrets（`A
 角色美术素材**不在 MIT 范围内**：非商业授权、须保留署名，署名链见
 `plugins/cap-gemma-llm/android/src/main/assets/pet/NOTICE.md`
 （樱花变体同源同条款，见 `pet-sport/NOTICE.md`）。
+Today 页"活的海"池塘引擎同样**不在 MIT 范围内**：移植自开源项目
+[nagomi](https://github.com/msk1039/nagomi)（PolyForm Noncommercial 1.0.0，
+非商业使用，署名 Mayank Kadam），全文见 `src/pond/LICENSE.nagomi`。

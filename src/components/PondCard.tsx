@@ -1,122 +1,100 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { SleepRecord, UserProfile } from '../types/sleep';
+import React, { useEffect, useRef } from 'react';
 import { ThemeConfig } from '../utils/themeStyles';
-import { attractPond, createPondState, pondDataFromRecords, renderPond, stepPond } from '../utils/pond';
 
 /**
- * 活的海 · 池塘横幅（第一期，Today 页头部下方）
+ * 活的海 · 池塘横幅（nagomi 渲染核心移植版，第一期）
  *
- * 内部固定 480×140 低分辨率渲染、CSS 拉伸（nagomi 同款柔手感做法，
- * 实现自研见 utils/pond.ts 头注）。性能与省电三条底线：
- *  ① 卡片滚出视口即停步进（IntersectionObserver）；
- *  ② 页面隐藏即停（visibilitychange，rAF 本身也会被浏览器节流）；
- *  ③ prefers-reduced-motion 只画一帧静帧。
+ * 池塘引擎与视觉来自开源项目 nagomi（PolyForm Noncommercial，见 src/pond/
+ * LICENSE.nagomi；本项目非商业使用并保留作者署名）。本组件只做四件事：
+ *  ① 懒加载 bootstrap（three.js 独立 chunk，不进主包）；
+ *  ② App 主题 → nagomi 天气预设（4 个主题 4 片不同的池塘）；
+ *  ③ 可见性暂停 + 页面隐藏暂停（省电）；
+ *  ④ 自动化环境（navigator.webdriver）与 prefers-reduced-motion 渲染静帧——
+ *     假时钟 runFor 会同步触发数十万次 rAF，逐帧动画会卡死 e2e 主线程。
  */
-export const PondCard: React.FC<{
-  records: SleepRecord[];
-  userProfile: UserProfile;
-  theme: ThemeConfig;
-}> = ({ records, userProfile, theme }) => {
+const THEME_WEATHER: Record<ThemeConfig['id'], 'moonlight' | 'sunny' | 'sunset' | 'overcast'> = {
+  midnight: 'moonlight',
+  serene_blue: 'sunny',
+  warm_amber: 'sunset',
+  pure_dark: 'overcast',
+};
+
+const W = 480, H = 140;
+
+interface PondHandle {
+  dispose(): void;
+  setPaused(p: boolean): void;
+  setWeather(id: 'moonlight' | 'sunny' | 'sunset' | 'overcast'): void;
+  callTo(x: number, y: number): void;
+}
+
+export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [caption, setCaption] = useState('');
-
-  const data = useMemo(
-    () => pondDataFromRecords(records, userProfile),
-    [records, userProfile],
-  );
-
-  useEffect(() => { setCaption(data.caption); }, [data.caption]);
+  const handleRef = useRef<PondHandle | null>(null);
+  const inViewRef = useRef(true);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    let disposed = false;
 
-    const W = canvas.width, H = canvas.height;
-    const state = createPondState(W, H);
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    // 自动化环境（Playwright 等）一律静帧：假时钟 runFor 会同步触发数十万次
-    // rAF 回调，任何逐帧动画都会卡死 e2e 主线程；引擎逻辑由 verify-pond 覆盖
     const automated = navigator.webdriver === true;
+    const staticFrame = reduced || automated;
 
-    let raf = 0;
-    let last = performance.now();
-    let inView = true;
-    let running = true;
-    // 快进看门狗：假时钟下 rAF 会被以恒定步长连续触发数十万次。真实 rAF
-    // 时间戳必有抖动——连续 120 帧步长完全一致即判定为爆发触发，只同步
-    // 时间戳不步进不渲染（真实设备挂起恢复的兜底）。
-    let prevDt = -1;
-    let uniformRun = 0;
+    void (async (): Promise<void> => {
+      const { createPond } = await import('../pond/bootstrap');
+      if (disposed) return;
+      handleRef.current = createPond(canvas, W, H, {
+        weather: THEME_WEATHER[theme.id],
+        koiCount: 7,
+        staticFrame,
+      });
+    })();
 
-    const frame = (now: number): void => {
-      raf = requestAnimationFrame(frame);
-      const dt = now - last;
-      last = now;
-      if (!inView || document.hidden) return; // 省电：看不见就不算不画
-      if (prevDt >= 0 && Math.abs(dt - prevDt) < 0.05) {
-        uniformRun++;
-        if (uniformRun > 120) return;
-      } else {
-        uniformRun = 0;
-      }
-      prevDt = dt;
-      stepPond(state, dt / 1000, data);
-      renderPond(ctx, state, data);
-    };
-
-    if (reduced || automated) {
-      // 静帧：推进几步让布局自然，然后只画一次
-      for (let i = 0; i < 90; i++) stepPond(state, 1 / 60, data);
-      renderPond(ctx, state, data);
-      return;
-    }
-
-    raf = requestAnimationFrame(frame);
-
-    const io = new IntersectionObserver((entries) => { inView = entries[0]?.isIntersecting ?? true; });
+    const io = new IntersectionObserver((entries) => {
+      inViewRef.current = entries[0]?.isIntersecting ?? true;
+      handleRef.current?.setPaused(!inViewRef.current || document.hidden);
+    });
     io.observe(canvas);
-    const onVis = (): void => { last = performance.now(); };
+    const onVis = (): void => {
+      handleRef.current?.setPaused(!inViewRef.current || document.hidden);
+    };
     document.addEventListener('visibilitychange', onVis);
 
-    const toInternal = (e: PointerEvent): { x: number; y: number } => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: ((e.clientX - rect.left) / rect.width) * W, y: ((e.clientY - rect.top) / rect.height) * H };
-    };
     const onPointer = (e: PointerEvent): void => {
-      const p = toInternal(e);
-      attractPond(state, p.x, p.y);
+      const h = handleRef.current;
+      if (!h) return;
+      const rect = canvas.getBoundingClientRect();
+      h.callTo(((e.clientX - rect.left) / rect.width) * W, ((e.clientY - rect.top) / rect.height) * H);
     };
     canvas.addEventListener('pointerdown', onPointer);
 
-    const stop = (): void => {
-      if (!running) return;
-      running = false;
-      cancelAnimationFrame(raf);
+    return () => {
+      disposed = true;
       io.disconnect();
       document.removeEventListener('visibilitychange', onVis);
       canvas.removeEventListener('pointerdown', onPointer);
+      handleRef.current?.dispose();
+      handleRef.current = null;
     };
-    return stop;
-  }, [data]);
+  }, []);
+
+  // 主题切换 → 换一片池塘（nagomi 天气预设：月夜/晴日/黄昏/雨）
+  useEffect(() => {
+    handleRef.current?.setWeather(THEME_WEATHER[theme.id]);
+  }, [theme.id]);
 
   return (
-    <div className={`${theme.cardBg} rounded-2xl border ${theme.cardBorder} overflow-hidden relative`}>
+    <div className={`${theme.cardBg} rounded-2xl border ${theme.cardBorder} overflow-hidden`}>
       <canvas
         ref={canvasRef}
-        width={480}
-        height={140}
+        width={W}
+        height={H}
         className="w-full h-auto block cursor-pointer"
         role="img"
-        aria-label={`活的海：${data.caption}`}
+        aria-label="活的海：与你的锦鲤互动"
       />
-      <div className="absolute left-3 bottom-2 flex items-center gap-1.5 pointer-events-none">
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: theme.accentHex }} />
-        <span className="text-[10px] font-bold text-white/85 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-          活的海 · {caption || data.caption}
-        </span>
-      </div>
     </div>
   );
 };
