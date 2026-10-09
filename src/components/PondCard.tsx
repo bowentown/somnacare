@@ -40,7 +40,9 @@ export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
 
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     const automated = navigator.webdriver === true;
-    const staticFrame = reduced || automated;
+    // 自动化只需几十步铺开画面（CI 软件渲染下数百步会阻塞主线程逼死
+    // Playwright 超时）；真实用户减少动态需要 240 步让天气渐变收敛
+    const staticSteps = automated ? 30 : reduced ? 240 : 0;
 
     void (async (): Promise<void> => {
       const { createPond } = await import('../pond/bootstrap');
@@ -48,7 +50,7 @@ export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
       handleRef.current = createPond(canvas, W, H, {
         weather: THEME_WEATHER[theme.id],
         koiCount: 7,
-        staticFrame,
+        staticSteps,
       });
     })();
 

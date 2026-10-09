@@ -43,7 +43,7 @@ ok(bootstrap.includes('new School()') && bootstrap.includes('new FishRenderer(ca
   '接线：bootstrap 完整连接 School + FishRenderer + settings effects');
 const card = read('src/components/PondCard.tsx');
 ok(card.includes('await import(\'../pond/bootstrap\')'), '接线：bootstrap 走动态 import（three 独立 chunk 不进主包）');
-ok(card.includes('navigator.webdriver') && card.includes('staticFrame'), '接线：自动化/减少动态静帧门（假时钟 runFor×rAF 卡死防护）');
+ok(card.includes('navigator.webdriver') && card.includes('staticSteps'), '接线：自动化/减少动态静帧门（假时钟 runFor×rAF 卡死防护 + CI 软件渲染步数分级）');
 ok(card.includes('setPaused') && card.includes('visibilitychange') && card.includes('IntersectionObserver'),
   '接线：离屏/隐藏双通道暂停');
 ok(!card.includes('活的海 ·') || !card.match(/活的海 · \$\{/), '简约：卡片上无文字标注（aria-label 不受影响）');

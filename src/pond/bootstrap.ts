@@ -42,11 +42,17 @@ export interface PondOptions {
   weather: WeatherPresetId;
   koiCount?: number;
   /**
-   * 静帧模式：prefers-reduced-motion 或自动化环境（navigator.webdriver）。
-   * 假时钟下 runFor 会同步触发数十万次 rAF，任何逐帧动画都会卡死 e2e，
-   * 因此自动化一律只推进模拟并绘制一帧。
+   * 静帧模式的模拟步数（0/缺省 = 正常逐帧动画）。
+   *
+   * 两个调用场景步数不同：
+   *  - 自动化环境（navigator.webdriver）：只需几十步铺开画面布局即可，
+   *    因为 CI 是 SwiftShader 软件渲染，每步 renderer.draw 数十毫秒，
+   *    数百步会阻塞主线程逼死 Playwright 超时（CI 实测 240 步挂掉
+   *    proposal.spec）；且自动化下画面无人看。
+   *  - 真实用户的 prefers-reduced-motion：需要 ~240 步（4s 模拟时间）
+   *    让天气渐变（每帧 lerp 1.6%）收敛到主题对应状态。
    */
-  staticFrame?: boolean;
+  staticSteps?: number;
 }
 
 export function createPond(
@@ -128,11 +134,11 @@ export function createPond(
     },
   };
 
-  if (opts.staticFrame) {
+  const staticSteps = opts.staticSteps ?? 0;
+  if (staticSteps > 0) {
     // settings 的部分效果延迟到 rAF 刷新（settings/effects.ts flushLight），
-    // 而天气切换在渲染器里还有指数渐变（约 1.3s 模拟时间收敛）。静帧没有
-    // 自己的循环：搭两帧真实 rAF 让效果落地，再推进 4s 模拟时间跨过渐变。
-    requestAnimationFrame(() => requestAnimationFrame(() => simulateOnce(240)));
+    // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再模拟绘制
+    requestAnimationFrame(() => requestAnimationFrame(() => simulateOnce(staticSteps)));
   } else {
     raf = requestAnimationFrame(animate);
   }
