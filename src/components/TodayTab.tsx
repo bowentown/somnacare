@@ -387,6 +387,36 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           </button>
         </div>
 
+        <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
+          <div>
+            <span className="text-xs font-bold text-slate-200 block">深夜救援</span>
+            <span className="text-[10px] text-slate-400">半夜拿起手机时，给对的那句话（15 分钟规则）</span>
+          </div>
+          <button
+            type="button"
+            data-no-swipe
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdateProfile({ nightRescueEnabled: userProfile.nightRescueEnabled === false });
+            }}
+            aria-pressed={userProfile.nightRescueEnabled !== false}
+            aria-label="深夜救援"
+            className="relative inline-flex items-center cursor-pointer shrink-0"
+          >
+            <span
+              className={`block w-10 h-5 rounded-full transition-colors relative ${
+                userProfile.nightRescueEnabled !== false ? 'bg-sky-500' : 'bg-slate-600'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${
+                  userProfile.nightRescueEnabled !== false ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </span>
+          </button>
+        </div>
+
         {userProfile.bedtimeReminderEnabled && bedtimePerm === false && (
           <button
             type="button"

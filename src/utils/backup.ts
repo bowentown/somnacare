@@ -49,7 +49,8 @@ const PROFILE_FIELDS = [
   'name', 'age', 'targetBedtime', 'targetWakeTime', 'targetDurationHours',
   'smartAlarmEnabled', 'smartWakeWindowMinutes', 'soundDetectionSensitivity',
   'themeColor', 'brightnessLevel', 'warmthFilter', 'eyeCare', 'chronotype',
-  'bedtimeReminderEnabled', 'alarms', 'sleepRecordMode', 'aiConfig',
+  'bedtimeReminderEnabled',
+  'nightRescueEnabled', 'alarms', 'sleepRecordMode', 'aiConfig',
 ] as const;
 const AI_CONFIG_FIELDS = [
   'provider', 'deepseekApiKey', 'deepseekModel', 'customBaseUrl',

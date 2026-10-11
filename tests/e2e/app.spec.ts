@@ -227,3 +227,18 @@ test('全分区漫游：零未捕获错误（React 开发警告除外）', async
   const realErrors = consoleErrors.filter((t) => !/^Warning:/.test(t));
   expect(realErrors, '非警告类 console.error').toEqual([]);
 });
+
+
+test('深夜救援开关：默认开启 → 关闭 → 落库', async ({ page }) => {
+  const fixed = await openAt(page, 9, 0);
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:40', '08:10')]);
+  await open(page);
+
+  const sw = page.getByRole('button', { name: '深夜救援' });
+  await expect(sw).toHaveAttribute('aria-pressed', 'true');   // 默认开启语义
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-pressed', 'false');
+
+  const prof = await readStore(page, 'somnacare_user_profile');
+  expect(prof.nightRescueEnabled).toBe(false);
+});

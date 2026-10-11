@@ -59,7 +59,7 @@ public class GemmaLLMPlugin extends Plugin {
 
     // ==== 主题联动桌面图标（activity-alias） ====
 
-    private static final String PREFS = "somnacare_prefs";
+    static final String PREFS = "somnacare_prefs";   // 包内可见：Bedtime/Pet/NightRescue 共用同一偏好文件
     private static final String KEY_PENDING_ICON = "pending_launcher_icon";
     private volatile String pendingIconTheme;
 
@@ -419,6 +419,37 @@ public class GemmaLLMPlugin extends Plugin {
     private static String safe(PluginCall call, String key, String fallback) {
         String v = call.getString(key, fallback);
         return v == null ? fallback : v;
+    }
+
+    /** 使用情况访问授权（救援/自动记录共用的数据源口径）。 */
+    public static boolean hasUsageAccess(Context context) {
+        try {
+            android.app.AppOpsManager ops =
+                    (android.app.AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+            if (ops == null) return false;
+            return ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), context.getPackageName())
+                    == android.app.AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 深夜救援开关与醒来目标（NightRescueReceiver 每次亮屏解锁都会读）。 */
+    @PluginMethod
+    public void nightRescueSet(PluginCall call) {
+        try {
+            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("night_rescue_enabled", call.getBoolean("enabled", true))
+                    .putString("wake_target", safe(call, "wake", "07:00"))
+                    .apply();
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("写入失败: " + e.getMessage());
+        }
     }
 
     // ==== 作息目标到点提醒（原生精确闹钟 + 全屏悬浮提醒） ====

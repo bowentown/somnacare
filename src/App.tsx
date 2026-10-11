@@ -373,6 +373,11 @@ export const App: React.FC = () => {
       } else {
         cap.Plugins?.GemmaLLM?.bedtimeReminderCancel?.();
       }
+      // 深夜救援开关 + 醒来目标（夜间窗口用；默认开启，!== false 语义）
+      cap.Plugins?.GemmaLLM?.nightRescueSet?.({
+        enabled: userProfile.nightRescueEnabled !== false,
+        wake: userProfile.targetWakeTime,
+      });
       cap.Plugins?.GemmaLLM?.bedtimeAutoStartConsume?.().then((res: any) => {
         if (res?.consume) runGoodPath();
       });

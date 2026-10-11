@@ -48,6 +48,12 @@ public class BedtimeOverlayService extends Service {
     private static final int MOON_COLOR_DEEP = 0xFF2563EB;
 
     private static View overlay;
+
+    /** 悬浮卡是否正在显示（深夜救援据此避让，不叠加打断）。 */
+    public static boolean isShowing() {
+        return overlay != null;
+    }
+
     private static final long AUTO_DISMISS_MS = 90_000;   // 全屏提醒的自动收场时限
     private Runnable autoDismiss;                          // 未触发的超时回调引用，dismiss 时取消
     private static WindowManager wmRef;
