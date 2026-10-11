@@ -102,6 +102,15 @@ jobs:
           }
           EOF
 
+      - name: Strip Web-only Local-LLM Wasm from Android Assets
+        # wllama 的 llama.cpp wasm（8.1M）只服务 Web/PWA 的本地生成路径；
+        # Android 端走原生 MediaPipe Gemma 插件（localLlmEngine 对原生环境
+        # 直接返回 null），且 APK 内本就不注册 Service Worker（main.tsx 门控）。
+        # 不剥离的话每个 APK 白白多背 8.1M。
+        run: |
+          rm -f dist/assets/wllama-*.wasm
+          ls -lh dist/assets/ | grep -i wllama || echo "wasm stripped ✓"
+
       - name: Create Native Android Project & Embed Offline Assets
         run: |
           npx cap add android
