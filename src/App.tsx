@@ -841,7 +841,7 @@ export const App: React.FC = () => {
                 className="h-full overflow-y-auto no-scrollbar swipe-pane"
                 style={{ width: `${100 / TAB_ORDER.length}%` }}
               >
-                <div className="p-4 space-y-4 pb-32">
+                <div className="p-4 space-y-4">
                   {id === 'today' && (
                     <TodayTab
                       records={records}
