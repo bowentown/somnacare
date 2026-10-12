@@ -71,7 +71,6 @@ export function createPond(
   // 天气/雨 → 渲染器与模拟的同步。nagomi 原版把这段放在 React 层的
   // useEffect 里；移植版收进引擎（store 是唯一真源，订阅变化即同步）。
   const syncWeather = (): void => {
-    console.log('[pond-debug] syncWeather →', settings.meta().weather);
     renderer.setWeatherPreset(getWeatherPreset(settings.meta().weather).id);
     school.setRainIntensity(settings.meta().rain ? 1 : 0);
   };

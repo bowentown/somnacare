@@ -12,6 +12,7 @@ import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../u
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
+import { tapTick } from '../utils/haptics';
 
 
 interface OneTapSleepTrackerProps {
@@ -178,6 +179,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
 
   // 确认：用共享构建器落库（recordSource: 'usage'），完成小结与一键就寝同款
   const handleAcceptProposal = () => {
+    tapTick();
     if (!visibleProposal) return;
     const built = buildRecordFromWindow({
       sleepStartMs: visibleProposal.bedtimeMs,
@@ -231,6 +233,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   }, [startSignal]);
 
   const handleStartSleep = () => {
+    tapTick();
     const now = Date.now();
     setSleepStartTime(now);
     try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }

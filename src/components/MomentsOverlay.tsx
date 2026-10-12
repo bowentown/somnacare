@@ -325,6 +325,14 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
           {moments.length === 0 && !busy && (
             <p className="text-center text-xs text-slate-400 pt-10">她还没发过动态……去睡一觉再来催她。</p>
           )}
+          {moments.length === 0 && busy && (
+            <div className="rounded-2xl border border-slate-700/60 bg-slate-800/40 p-4 animate-pulse" aria-label="正在生成动态">
+              <div className="h-3.5 w-1/3 bg-white/10 rounded-full mb-3" />
+              <div className="h-3 w-full bg-white/10 rounded-full mb-2" />
+              <div className="h-3 w-5/6 bg-white/10 rounded-full" />
+              <p className="text-[11px] text-sky-300/80 font-bold pt-3">大肥鱼正在写今天的动态…</p>
+            </div>
+          )}
           {moments.map((m) => (
             <div key={m.id} className="flex gap-2.5">
               <div className="w-9 h-9 shrink-0 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-lg">

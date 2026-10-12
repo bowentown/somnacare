@@ -127,8 +127,19 @@ export class WeatherPass {
     this.mesh.frustumCulled = false;
   }
 
-  public setPreset(id: WeatherPresetId): void {
-    this.target = stateFromPreset(getWeatherPreset(id));
+  public setPreset(id: WeatherPresetId, immediate = false): void {
+    const state = stateFromPreset(getWeatherPreset(id));
+    this.target = state;
+    if (immediate) {
+      // 静帧模式（自动化/减少动态）没有逐帧渐变可用——逐字段直接贴到目标
+      this.current.tint.copy(state.tint);
+      this.current.lightColor.copy(state.lightColor);
+      this.current.lightDirection.copy(state.lightDirection);
+      for (const property of scalarProperties) {
+        this.current[property] = state[property];
+      }
+      this.previousTime = -1;
+    }
   }
 
   public update(time: number): void {

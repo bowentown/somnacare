@@ -8,6 +8,7 @@ import { SleepRecord, WakingMood } from '../types/sleep';
 import { calculateSleepScore, generateSleepStages } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
+import { tapTick } from '../utils/haptics';
 
 interface ManualLogModalProps {
   isOpen: boolean;
@@ -74,6 +75,8 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const [selectedMood, setSelectedMood] = useState<WakingMood>('refreshed');
   const [selectedHabits, setSelectedHabits] = useState<string[]>(['reading', 'hot_bath']);
   const [dreamNotes, setDreamNotes] = useState('');
+  // 表单校验的内联错误（替代原生 alert 阻塞弹窗）；必须在 isOpen 早退之前声明
+  const [error, setError] = useState<string | null>(null);
 
   const modalBg = theme?.cardBg || 'bg-[#1e293b]';
   const modalBorder = theme?.cardBorder || 'border-slate-700';
@@ -94,12 +97,13 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const handleSave = () => {
     // 清空的 <input type="time"> 会让 setHours 产出 NaN（落库成 null、
     // 首页渲染「NaN小时」）；清空的日期会被清洗丢弃——先挡住并提示
+    setError(null);
     if (!bedtime || !wakeTime) {
-      alert('请填写就寝和起床时间');
+      setError('请填写就寝和起床时间');
       return;
     }
     if (bedtime === wakeTime) {
-      alert('就寝与起床时间不能相同');
+      setError('就寝与起床时间不能相同');
       return;
     }
     const stagesData = generateSleepStages(bedtime, wakeTime, latencyMinutes, wakeCount);
@@ -151,6 +155,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
       stages: stagesData.stages,
     };
 
+    tapTick();
     onSaveRecord(record);
     onClose();
   };
@@ -331,6 +336,12 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
             />
           </div>
         </div>
+
+        {error && (
+          <div role="alert" className="mb-3 px-3.5 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold">
+            {error}
+          </div>
+        )}
 
         {/* Save button */}
         <button

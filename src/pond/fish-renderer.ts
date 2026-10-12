@@ -429,8 +429,8 @@ export class FishRenderer {
     this.renderer.dispose();
   }
 
-  public setWeatherPreset(id: WeatherPresetId): void {
-    this.weather.setPreset(id);
+  public setWeatherPreset(id: WeatherPresetId, immediate = false): void {
+    this.weather.setPreset(id, immediate);
   }
 
   public setPreviewFamily(index: number | null): void {

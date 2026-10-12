@@ -1,4 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { SleepRecord, UserProfile } from '../types/sleep';
+import { nightsOnly } from '../utils/recordFilter';
 import { ThemeConfig } from '../utils/themeStyles';
 
 /**
@@ -21,17 +23,34 @@ const THEME_WEATHER: Record<ThemeConfig['id'], 'moonlight' | 'sunny' | 'sunset' 
 
 const W = 480, H = 140;
 
+/** 近 7 夜睡眠债 0（睡饱）~1（严重欠觉）：池塘天气的唯一数据源（纯联动，无新功能）。 */
+function sleepDebtOf(records: SleepRecord[], userProfile: UserProfile): number {
+  const nights = nightsOnly(records).slice(0, 7);
+  if (nights.length === 0) return 0.4;
+  const target = Math.max(240, (userProfile.targetDurationHours || 8) * 60);
+  const avg = nights.reduce((a, r) => a + r.durationMinutes, 0) / nights.length;
+  return Math.max(0, Math.min(1, 1 - avg / target));
+}
+
 interface PondHandle {
   dispose(): void;
   setPaused(p: boolean): void;
-  setWeather(id: 'moonlight' | 'sunny' | 'sunset' | 'overcast'): void;
+  setWeather(id: 'moonlight' | 'sunny' | 'sunset' | 'overcast' | 'rain'): void;
   callTo(x: number, y: number): void;
 }
 
-export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
+export const PondCard: React.FC<{ theme: ThemeConfig; records: SleepRecord[]; userProfile: UserProfile }> = ({ theme, records, userProfile }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // 数据联动：欠觉（近 7 夜平均时长不足目标 55%）→ 池塘转阴天；
+  // 睡饱了回归主题本色。刻意的单档宽阈值——这是氛围，不是仪表盘
+  const weather = useMemo<'moonlight' | 'sunny' | 'sunset' | 'overcast'>(() => {
+    if (sleepDebtOf(records, userProfile) >= 0.45) return 'overcast';
+    return THEME_WEATHER[theme.id];
+  }, [records, userProfile, theme.id]);
+
   const handleRef = useRef<PondHandle | null>(null);
   const inViewRef = useRef(true);
+  const weatherRef = useRef(weather);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,7 +67,7 @@ export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
       const { createPond } = await import('../pond/bootstrap');
       if (disposed) return;
       handleRef.current = createPond(canvas, W, H, {
-        weather: THEME_WEATHER[theme.id],
+        weather: weatherRef.current,
         koiCount: 7,
         staticSteps,
       });
@@ -82,10 +101,10 @@ export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
     };
   }, []);
 
-  // 主题切换 → 换一片池塘（nagomi 天气预设：月夜/晴日/黄昏/雨）
+  // 主题切换 / 睡眠债跨档 → 池塘渐变到对应天气（月夜/晴日/黄昏/阴雨）
   useEffect(() => {
-    handleRef.current?.setWeather(THEME_WEATHER[theme.id]);
-  }, [theme.id]);
+    handleRef.current?.setWeather(weather);
+  }, [weather]);
 
   return (
     <div className={`${theme.cardBg} rounded-2xl border ${theme.cardBorder} overflow-hidden`}>
@@ -96,6 +115,7 @@ export const PondCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
         className="w-full h-auto block cursor-pointer"
         role="img"
         aria-label="活的海：与你的锦鲤互动"
+        data-weather={weather}
       />
     </div>
   );

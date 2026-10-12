@@ -47,7 +47,9 @@ ok(card.includes('navigator.webdriver') && card.includes('staticSteps'), '接线
 ok(card.includes('setPaused') && card.includes('visibilitychange') && card.includes('IntersectionObserver'),
   '接线：离屏/隐藏双通道暂停');
 ok(!card.includes('活的海 ·') || !card.match(/活的海 · \$\{/), '简约：卡片上无文字标注（aria-label 不受影响）');
-ok(card.includes('THEME_WEATHER[theme.id]'), '简约：水色由主题驱动');
+ok(card.includes('THEME_WEATHER[theme.id]'), '简约：睡饱时水色回归主题驱动');
+ok(card.includes('sleepDebtOf') && card.includes("'overcast'") && card.includes('nightsOnly'),
+  '联动：池塘随近 7 夜睡眠债（欠觉→阴天，睡饱→主题本色，纯视觉零文字）');
 
 // ③ 主题映射（4 主题 → 4 片不同的池塘：月夜/晴日/黄昏/阴天）
 const weather = ['moonlight', 'sunny', 'sunset', 'overcast'];
