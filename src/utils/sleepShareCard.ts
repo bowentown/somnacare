@@ -87,7 +87,8 @@ function darken(hex: string, f: number): string {
 //    maxY ≤ CARD_H - 安全边距，这类越界从此在 CI 被拦。
 export interface WeeklyLayout {
   brandY: number;
-  ix: number; iy: number; iw: number; ih: number;
+  curtainTop: number;    // 底部渐变幕布起点（数据/语录都浮在幕布上）
+  curtainBottom: number; // 幕布在卡底的实际收点（卡片圆角外溢安全量）
   statsTop: number;
   regX: number | null;   // 规律度栏中心（null = 该栏不渲染）
   durX: number | null;   // 时长栏中心
@@ -106,39 +107,36 @@ export interface WeeklyLayout {
  * 布局规划（纯函数）：入参是【实际会渲染】的开关（规律度为 null 时
  * 传 false——第 19 轮 N-1 的教训：按"开关意图"留位会留下大空洞）。
  * 语录块按 maxQuoteLines 预算高度；短语录在渲染时于保留带内垂直居中。
+ *
+ * 构图（Wrapped 式）：明信片全图铺满整卡（明信片 896×1200 与卡
+ * 1080×1440 同为 3:4，全图几乎零裁切）；底部 ~44% 压主题色渐变幕布，
+ * 数据/语录/署名浮在幕布上——全图展示与可读性兼得。
  */
 export function planWeeklyLayout(showRegularity: boolean, showDuration: boolean): WeeklyLayout {
   const both = showRegularity && showDuration;
   const any = showRegularity || showDuration;
-  // 插画：宽幅横带（900×380，占卡高 26%）——竖版明信片按 bias 0.35 裁上部
-  // 保脸；此前 840×620 占 43% 把数据/语录挤成下三分之一，构图头重脚轻
-  const ix = 90;
-  const iw = CARD_W - 180;
-  const iy = 170;
-  const ih = 380;
-  const statsTop = iy + ih + 70;                 // 620
+  const curtainTop = 820;                 // 幕布从 57% 处开始
+  const curtainBottom = CARD_H + 4;       // 收到卡底（+4 防 1px 缝）
+  const statsTop = 896;
   const regX = !showRegularity ? null : both ? 320 : CARD_W / 2;
   const durX = !showDuration ? null : both ? 780 : CARD_W / 2;
-  const labelY = statsTop + 46;                  // 666
-  const numY = statsTop + 170;                   // 790
-  const subY = statsTop + 216;                   // 836
-  const statsBottom = statsTop + 250;            // 870
-  const quoteLineH = 62;
-  const maxQuoteLines = 3;                       // 语录 ≤60 字 @44px ≈ ≤3 行（保守预算）
-  const quoteBandH = maxQuoteLines * quoteLineH; // 186
-  const signatureY = CARD_H - 64 - 156;          // 1220（署名基线）
-  const footerY = CARD_H - 64;                   // 1376
-  // 语录保留带：有数据区 → 紧随其下；无 → 在中部留白带里垂直居中
-  const middleStart = iy + ih + 70;              // 620
-  const middleEnd = signatureY - 44;             // 1176
+  const labelY = statsTop + 40;
+  const numY = statsTop + 152;
+  const subY = statsTop + 196;
+  const statsBottom = statsTop + 228;     // 1124
+  const quoteLineH = 60;
+  const maxQuoteLines = 2;                // 幕布高度有限：语录上限 2 行（超长截断到
+                                          // 2 行是绘制段的事——预算必须保守）
+  const quoteBandH = maxQuoteLines * quoteLineH;
+  const signatureY = CARD_H - 176;        // 1264（署名基线）
+  const footerY = CARD_H - 96;            // 1344
   const quoteTop = any
-    ? statsBottom + 70
-    : middleStart + Math.max(0, (middleEnd - middleStart - quoteBandH) / 2);
+    ? Math.min(statsBottom + 56, signatureY - quoteBandH - 40)
+    : curtainTop + 110;                   // 全关时直接在幕布上部居中
   const maxY = Math.max(signatureY + 46, footerY);
-  return { brandY: 96, ix, iy, iw, ih, statsTop, regX, durX, labelY, numY, subY, statsBottom, quoteTop, quoteBandH, quoteLineH, maxQuoteLines, signatureY, footerY, maxY };
+  return { brandY: 96, curtainTop, curtainBottom, statsTop, regX, durX, labelY, numY, subY, statsBottom, quoteTop, quoteBandH, quoteLineH, maxQuoteLines, signatureY, footerY, maxY };
 }
 
-/** 宠物周报语录：按规律度分档 + 日期哈希确定选取（傲娇，零医疗声称）。 */
 export function petWeeklyQuote(regularity: RegularityResult | null, dayKey: number): string {
   const tier = regularity ? regularity.score >= 80 ? 'steady' : regularity.score >= 50 ? 'ok' : 'wild' : 'few';
   const pools: Record<string, string[]> = {
@@ -207,21 +205,17 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
   const effDur = input.showDuration && avgDurationMin !== null;
   const L = planWeeklyLayout(effReg, effDur);
 
-  // ── 背景：主题页面色 → 加深渐变 ──
-  const bg = input.pageBgHex || '#0B1026';
-  const grad = ctx.createLinearGradient(0, 0, 0, CARD_H);
-  grad.addColorStop(0, bg);
-  grad.addColorStop(1, darken(bg, 0.55));
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CARD_W, CARD_H);
-
-  // ── 顶部品牌行 ──
+  // ── 顶部品牌行（投影：浮在全图上；全图与幕布在下方绘制）──
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 12;
   ctx.fillStyle = '#FFFFFF';
   ctx.textAlign = 'center';
   ctx.font = '700 44px system-ui, sans-serif';
   ctx.fillText('🌙 极光睡眠 SomnaCare', CARD_W / 2, L.brandY);
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
 
-  // ── 插画：已解锁明信片按周数轮换（没解锁回默认自拍）──
+  // ── 背景：明信片全图铺满整卡（Wrapped 式）──
   const unlocked: TravelPostcard[] = [];
   for (const id of loadTravelState().unlockedCardIds) {
     const c = getPostcardById(id);
@@ -229,31 +223,54 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
   }
   const weekKey = Math.floor(now.getTime() / (7 * 86400000));
   const chosen = unlocked.length > 0 ? unlocked[weekKey % unlocked.length] : undefined;
-  const imgUrl = chosen ? thumbUrlOf(chosen.imageUrl) : `${import.meta.env.BASE_URL || '/'}whale-selfie.png`;
+  // 明信片走原尺寸图（sm 缩略图 360 宽铺 1080 会糊）；没解锁用自拍兜底
+  const imgUrl = chosen ? chosen.imageUrl : `${import.meta.env.BASE_URL || '/'}whale-selfie.png`;
   const img = await loadImage(imgUrl);
 
-  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 30);
-  ctx.save();
-  ctx.clip();
-  drawCover(ctx, img, L.ix, L.iy, L.iw, L.ih, 0.35);
-  ctx.restore();
-  ctx.save();
-  ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = input.accentHex;
-  ctx.lineWidth = 3;
-  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 30);
-  ctx.stroke();
-  ctx.restore();
+  const bg = input.pageBgHex || '#0B1026';
+  // 有明信片：全图铺满（同 3:4 ≈ 零裁切）；无：主题渐变底 + 自拍居中小像
+  // （自拍原件 225px，铺满 1080 是马赛克——绝不可 cover 全卡）
+  if (chosen) {
+    drawCover(ctx, img, 0, 0, CARD_W, CARD_H, 0.35);
+  } else {
+    const fallback = ctx.createLinearGradient(0, 0, 0, CARD_H);
+    fallback.addColorStop(0, bg);
+    fallback.addColorStop(1, darken(bg, 0.55));
+    ctx.fillStyle = fallback;
+    ctx.fillRect(0, 0, CARD_W, CARD_H);
+    const avatar = Math.round(420);
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    roundedPath(ctx, (CARD_W - avatar) / 2, 200, avatar, avatar, 36);
+    ctx.clip();
+    drawCover(ctx, img, (CARD_W - avatar) / 2, 200, avatar, avatar);
+    ctx.restore();
+  }
 
-  // 插画下沿地名签（有明信片时）
+  // 顶部压暗一层（品牌行可读），底部压主题色幕布（数据/语录载体）
+  const topShade = ctx.createLinearGradient(0, 0, 0, 320);
+  topShade.addColorStop(0, 'rgba(3,7,18,0.62)');
+  topShade.addColorStop(1, 'rgba(3,7,18,0)');
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, CARD_W, 320);
+  const n = parseInt(bg.replace('#', ''), 16);
+  const br = (n >> 16) & 255, bgc = (n >> 8) & 255, bb = n & 255;
+  const curtain = ctx.createLinearGradient(0, L.curtainTop - 140, 0, L.curtainBottom);
+  curtain.addColorStop(0, 'rgba(3,7,18,0)');
+  curtain.addColorStop(0.42, `rgba(${br},${bgc},${bb},0.90)`);            // 图隐约透出
+  curtain.addColorStop(1, `rgba(${Math.round(br * 0.62)},${Math.round(bgc * 0.62)},${Math.round(bb * 0.62)},1)`);
+  ctx.fillStyle = curtain;
+  ctx.fillRect(0, L.curtainTop - 140, CARD_W, L.curtainBottom - (L.curtainTop - 140));
+
+  // 地名签：右上角小签（全图模式下不再压在图的重心上）
   if (chosen) {
     ctx.fillStyle = 'rgba(2,6,23,0.72)';
-    roundedPath(ctx, L.ix + 20, L.iy + L.ih - 76, 300, 56, 14);
+    roundedPath(ctx, CARD_W - 300 - 32, 128, 300, 56, 14);
     ctx.fill();
     ctx.fillStyle = '#E2E8F0';
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'right';
     ctx.font = '700 28px system-ui, sans-serif';
-    ctx.fillText(`📍 ${chosen.country}`, L.ix + 42, L.iy + L.ih - 38);
+    ctx.fillText(`${chosen.country} 📍`, CARD_W - 44, 165);
   }
 
   // ── 数据区：两栏并排（单开居中占宽），只放聚合数字 ──
@@ -303,6 +320,15 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
     else cur += ch;
   }
   lines.push(cur);
+  // 幕布预算 2 行：超出时末行截断加省略号（布局器 quoteTop 已按 2 行贴署名留白）
+  if (lines.length > L.maxQuoteLines) {
+    const kept = lines.slice(0, L.maxQuoteLines);
+    let last = kept[kept.length - 1];
+    while (last.length > 1 && ctx.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    kept[kept.length - 1] = last + '…';
+    lines.length = 0;
+    lines.push(...kept);
+  }
   const actualH = lines.length * L.quoteLineH;
   let qy = L.quoteTop + (L.quoteBandH - actualH) / 2 + L.quoteLineH * 0.78;
   for (const line of lines) { ctx.fillText(line, CARD_W / 2, qy); qy += L.quoteLineH; }
