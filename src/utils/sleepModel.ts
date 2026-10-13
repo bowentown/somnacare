@@ -42,6 +42,11 @@ const NIGHT_MIN_BINS = 12;            // 逐夜时长 ∈ [3h, 14h]
 const NIGHT_MAX_BINS = 56;
 const NIGHT_DEV_BINS = 10;            // 逐夜就寝偏离本人中位 ≤ 2.5h（就寝信号弱，紧）
 const NIGHT_WAKE_DEV_BINS = 12;       // 逐夜起床偏离本人中位 ≤ 3.0h（起床信号强；
+const WAKE_CONFIRMED_MS = 90 * 60_000; // 拟合起床已被"现在"越过 ≥90 分钟 → 该夜完整，
+                                       // 起床侧偏离门豁免（用户正拿着手机 = 醒着的硬证据；
+                                       // 作息散布大的用户不该被自己的早期醒来惩罚。
+                                       // "还在睡"的保护不受影响：真还在睡时拟合起床
+                                       // 被钉在观测末端，now−wake ≈ 0 < 90min）
                                       // 3.5h 实测会让 03:30 打开误出"截断到此刻"的卡——§28.1.4）
 const RECENTRE_MAX_BINS = 12;         // 中位数重估偏离先验 > 3h = 作息可疑（防自我强化）
 const MAX_ITERS = 12;
@@ -335,11 +340,13 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   // 起床者约在 04:00 前生效）。更近的凌晨（04:00–06:30）仍可能产出"截至
   // 此刻"的提议——真早起与起夜后接着睡在屏幕数据上不可区分（信息论边界），
   // 由提议卡的"截至此刻"标注 + 用户自行判断兜底。
-  const targetOk = (a: Assign): boolean => {
+  const targetOk = (a: Assign, winStartMs: number): boolean => {
     const dur = a.ta - a.ts;
     if (dur < NIGHT_MIN_BINS || dur > NIGHT_MAX_BINS) return false;
     if (Math.abs(a.ts - medTs) > NIGHT_DEV_BINS) return false;      // 就寝侧紧（信号弱）
-    if (Math.abs(a.ta - medTa) > NIGHT_WAKE_DEV_BINS) return false; // 起床侧松（信号强+在场）
+    const wakeEpoch = winStartMs + a.ta * BIN_MS;
+    const wakeConfirmed = now - wakeEpoch >= WAKE_CONFIRMED_MS;     // 该夜已完整结束的硬证据
+    if (!wakeConfirmed && Math.abs(a.ta - medTa) > NIGHT_WAKE_DEV_BINS) return false; // 起床侧松（信号强+在场）
     return true;
   };
 
@@ -347,7 +354,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   {
     const d0 = days[0];
     const a0Idx = activeIdx.indexOf(0);
-    if (a0Idx >= 0 && d0.totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a0Idx])) {
+    if (a0Idx >= 0 && d0.totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a0Idx], windowStart0)) {
       targetIdx = 0;   // 早晨主场景：昨晚就落在当前窗
     } else {
       // 当前窗不构成完整夜：若还在"今晚就寝之前"（同一日历日且未到就寝时刻），
@@ -361,7 +368,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
       const bedClockMin = (cb0 * 15 + wsMin) % 1440;
       const a1Idx = activeIdx.indexOf(1);
       if (sameCalDay && nowMin < bedClockMin && days[1].ob === BINS
-          && a1Idx >= 0 && days[1].totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a1Idx])) {
+          && a1Idx >= 0 && days[1].totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a1Idx], windowStart0 - 86400000)) {
         targetIdx = 1;
       }
     }

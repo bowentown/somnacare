@@ -712,7 +712,7 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className={`h-[100dvh] w-full theme-${currentTheme.id} ${currentTheme.pageBg} ${currentTheme.textPrimary} ${currentTheme.selectionBg} relative flex flex-col overflow-hidden transition-colors duration-300`}
+      className={`app-shell w-full theme-${currentTheme.id} ${currentTheme.pageBg} ${currentTheme.textPrimary} ${currentTheme.selectionBg} relative flex flex-col overflow-hidden transition-colors duration-300`}
     >
       {/* 品牌氛围：页首背后的主题色极光带（呼应开屏动画） */}
       <div aria-hidden className="pointer-events-none absolute top-0 left-0 right-0 h-44 overflow-hidden">

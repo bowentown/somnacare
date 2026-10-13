@@ -273,6 +273,23 @@ html {
    （AI 顾问的提示词行就滑不动了），设 pan-x 则页面无法纵向滚动。
    横纵分流完全交给 App.tsx 的 Pointer Events 手势层：锁定横向时 preventDefault
    夺权，纵向则全程不干预，原生滚动照常。 */
+/* ── App 外壳高度链（双兜底）────────────────────────────────
+   旧 WebView 不认识 dvh 时 h-[100dvh] 整条失效 → 外壳高度 auto →
+   分区内部滚动退化为整页滚动，高个子分区的兄弟会把矮分区的底部
+   顶出一大片空白（真机实测）。html/body/#root 100% 锚链 + 100vh
+   兜底 + dvh 渐进增强，三层任一可用即成立。 */
+html, body, #root {
+  height: 100%;
+}
+.app-shell {
+  height: 100vh;
+}
+@supports (height: 100dvh) {
+  .app-shell {
+    height: 100dvh;
+  }
+}
+
 .swipe-track {
   /* 划动时禁用文本选中与长按菜单，否则手指滑动会选中一片文字 */
   -webkit-user-select: none;

@@ -315,6 +315,76 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   check('R2 反向：低对比度数据（λ 比不足）→ 拒绝', weak.status === 'rejected', weak.status === 'rejected' ? weak.reason : JSON.stringify(weak).slice(0, 80));
 }
 
+// ── D 组：作息散布用户的"窗口滚动死区"回归（真实用户 10-12 实测驱动）──
+// 模式：7 晚就寝 22:45–01:59 散布、起床 08:53–10:31；最后一夜 00:57→07:20
+// （比本人中位早 ~2h）。此前：起床侧偏离门（≤3h）把这种"早期醒来"拒绝，
+// 且窗口在 15:30 滚动后当前窗不再含昨夜 → 从上午到深夜全天无提议。
+// 修复（WAKE_CONFIRMED_MS）：拟合起床已被"现在"越过 ≥90 分钟 → 起床侧门豁免
+//（用户正拿着手机 = 醒着的硬证据）；"还在睡"保护不变（拟合起床钉在观测末端
+// 时 now−wake≈0，门仍生效——A11/B7 场景即证）。
+{
+  const WS = 15; // 习惯 23:30/07:30 → 睡眠中点 03:30 → 窗口起点 15:00
+  function mul32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  function pois(rng: () => number, lambda: number): number {
+    if (lambda <= 0) return 0;
+    const L = Math.exp(-lambda); let k = 0, p = 1;
+    do { k++; p *= rng(); } while (p > L); return k - 1;
+  }
+  const AW = 4.6, SL = 0.046;
+  // 每个窗口的睡眠段（相对窗口起点，分钟）：窗 1 = 最后完成的夜
+  const nights: Array<{ bed: number; wake: number }> = [
+    { bed: 9 * 60 + 57, wake: 16 * 60 + 20 },  // 窗1: 10-12 00:57→07:20
+    { bed: 10 * 60 + 33, wake: 17 * 60 + 53 }, // 窗2: 10-11 01:33→08:53
+    { bed: 7 * 60 + 45, wake: 18 * 60 },       // 窗3: 10-10 22:45→09:00
+    { bed: 8 * 60 + 15, wake: 18 * 60 + 15 },  // 窗4: 10-09 23:15→09:15
+    { bed: 9 * 60, wake: 18 * 60 },            // 窗5: 10-08 00:00→09:00
+    { bed: 8 * 60, wake: 19 * 60 + 15 },       // 窗6: 10-07 23:00→10:15
+    { bed: 9 * 60 + 39, wake: 17 * 60 + 8 },   // 窗7: 10-06 00:39→09:08
+    { bed: 10 * 60 + 59, wake: 19 * 60 + 31 }, // 窗8: 10-05 01:59→10:31
+  ];
+  function genD(now: number): { events: number[]; observedUntil: number } {
+    const rng = mul32(20261012);
+    const events: number[] = [];
+    const nd = new Date(now);
+    let ws0 = new Date(nd.getFullYear(), nd.getMonth(), nd.getDate(), WS, 0, 0, 0).getTime();
+    if (ws0 > now) ws0 -= 86400000;
+    for (let i = 0; i < 14; i++) {
+      const dayStart = ws0 - i * 86400000;
+      const n = nights[Math.min(i, nights.length - 1)];
+      const bedMs = dayStart + n.bed * 60000;
+      const wakeMs = dayStart + n.wake * 60000;
+      const segs: Array<[number, number, number]> = [
+        [dayStart, Math.min(bedMs, now), AW],
+        [Math.max(wakeMs, dayStart), Math.min(dayStart + 86400000, now), AW],
+        [bedMs, Math.min(wakeMs, now), SL],
+      ];
+      for (const [a, b, rate] of segs) {
+        for (let t = a; t < b; t += 900000) {
+          const c = pois(rng, rate * 0.25);
+          for (let k = 0; k < c; k++) events.push(t + Math.floor(rng() * 900000));
+        }
+      }
+    }
+    return { events, observedUntil: now };
+  }
+  const hb = 23 * 60 + 30, hw = 7 * 60 + 30;
+  const day0 = new Date(2026, 9, 12, 0, 0, 0, 0).getTime();
+
+  const morning = fitSleepModel({ ...genD(day0 + 10 * 3600000), chronotype: 'night', habitBedMin: hb, habitWakeMin: hw, now: day0 + 10 * 3600000 });
+  check('D1 散布作息：上午 10:00 打开（昨夜 07:20 早醒）→ 提议', (morning as any).status === 'ok',
+    (morning as any).status === 'ok' ? `${(morning as any).bedtime}/${(morning as any).wakeTime}` : (morning as any).reason);
+
+  const afternoon = fitSleepModel({ ...genD(day0 + 16 * 3600000 + 52 * 60000), chronotype: 'night', habitBedMin: hb, habitWakeMin: hw, now: day0 + 16 * 3600000 + 52 * 60000 });
+  check('D2 散布作息：下午 16:52 打开（窗口已滚动）→ 仍提议', (afternoon as any).status === 'ok',
+    (afternoon as any).status === 'ok' ? `${(afternoon as any).bedtime}/${(afternoon as any).wakeTime}` : (afternoon as any).reason);
+
+  const lateNight = fitSleepModel({ ...genD(day0 + 3 * 3600000 + 30 * 60000), chronotype: 'night', habitBedMin: hb, habitWakeMin: hw, now: day0 + 3 * 3600000 + 30 * 60000 });
+  check('D3 反向：凌晨 03:30 打开（真还在睡）→ 仍拒绝', lateNight.status === 'rejected', lateNight.status === 'rejected' ? (lateNight as any).reason : JSON.stringify(lateNight).slice(0, 60));
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——SensibleSleep 模型与规格书口径不符`);
   process.exit(1);
