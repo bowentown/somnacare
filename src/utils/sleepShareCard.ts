@@ -99,7 +99,6 @@ export interface WeeklyLayout {
   quoteLineH: number;
   maxQuoteLines: number;
   signatureY: number;
-  footerY: number;
   maxY: number;
 }
 
@@ -129,12 +128,11 @@ export function planWeeklyLayout(showRegularity: boolean, showDuration: boolean)
                                           // 2 行是绘制段的事——预算必须保守）
   const quoteBandH = maxQuoteLines * quoteLineH;
   const signatureY = CARD_H - 176;        // 1264（署名基线）
-  const footerY = CARD_H - 96;            // 1344
   const quoteTop = any
     ? Math.min(statsBottom + 56, signatureY - quoteBandH - 40)
     : curtainTop + 110;                   // 全关时直接在幕布上部居中
-  const maxY = Math.max(signatureY + 46, footerY);
-  return { brandY: 96, curtainTop, curtainBottom, statsTop, regX, durX, labelY, numY, subY, statsBottom, quoteTop, quoteBandH, quoteLineH, maxQuoteLines, signatureY, footerY, maxY };
+  const maxY = signatureY + 46;
+  return { brandY: 96, curtainTop, curtainBottom, statsTop, regX, durX, labelY, numY, subY, statsBottom, quoteTop, quoteBandH, quoteLineH, maxQuoteLines, signatureY, maxY };
 }
 
 export function petWeeklyQuote(regularity: RegularityResult | null, dayKey: number): string {
@@ -335,12 +333,6 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
   ctx.font = '600 34px system-ui, sans-serif';
   ctx.fillText('—— 蓝色大肥鱼 🐋', CARD_W / 2, L.signatureY);
-
-  // ── 底部诚实边界 ──
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,255,255,0.38)';
-  ctx.font = '400 26px system-ui, sans-serif';
-  ctx.fillText('数据仅存本机 · 统计为模型估算，非医疗诊断', CARD_W / 2, L.footerY);
 
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob 失败（canvas 被污染或内核不支持）'))), 'image/jpeg', 0.92)

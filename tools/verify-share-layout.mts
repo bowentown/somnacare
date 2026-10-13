@@ -36,7 +36,7 @@ for (const [reg, dur] of combos) {
   const label = `组合(${reg ? '规律度' : '-'}+${dur ? '时长' : '-'})`;
   check(`${label} maxY=${L.maxY} ≤ ${CARD_H - 40}`, L.maxY <= CARD_H - 40);
   check(`${label} 语录起点 ${L.quoteTop} < 署名 ${L.signatureY}`, L.quoteTop < L.signatureY);
-  check(`${label} 署名 < 底部说明 ${L.footerY}`, L.signatureY < L.footerY);
+
   if (reg && dur) {
     check(`${label} 双栏中心不重叠`, Math.abs((L.regX ?? 0) - (L.durX ?? 0)) >= 440,
       `regX=${L.regX} durX=${L.durX}`);
