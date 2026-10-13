@@ -62,13 +62,14 @@ function roundedPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.closePath();
 }
 
-/** cover 模式裁剪绘制（等比填满目标框，居中裁切）。 */
-function drawCover(ctx: CanvasRenderingContext2D, img: LoadedImg, x: number, y: number, w: number, h: number) {
+/** cover 模式裁剪绘制（等比填满目标框）。bias：纵向裁切锚点
+ *  0=顶 0.5=居中——竖版插画裁成横带时偏上（0.35）才保得住角色脸部。 */
+function drawCover(ctx: CanvasRenderingContext2D, img: LoadedImg, x: number, y: number, w: number, h: number, bias = 0.5) {
   const scale = Math.max(w / img.w, h / img.h);
   const sw = w / scale;
   const sh = h / scale;
   const sx = (img.w - sw) / 2;
-  const sy = (img.h - sh) / 2;
+  const sy = (img.h - sh) * bias;
   ctx.drawImage(img.el, sx, sy, sw, sh, x, y, w, h);
 }
 
@@ -109,27 +110,29 @@ export interface WeeklyLayout {
 export function planWeeklyLayout(showRegularity: boolean, showDuration: boolean): WeeklyLayout {
   const both = showRegularity && showDuration;
   const any = showRegularity || showDuration;
-  const ix = 120;
-  const iw = CARD_W - 240;
-  const iy = 140;
-  const ih = 620;
-  const statsTop = iy + ih + 44;                 // 804
-  const regX = !showRegularity ? null : both ? 300 : CARD_W / 2;
+  // 插画：宽幅横带（900×380，占卡高 26%）——竖版明信片按 bias 0.35 裁上部
+  // 保脸；此前 840×620 占 43% 把数据/语录挤成下三分之一，构图头重脚轻
+  const ix = 90;
+  const iw = CARD_W - 180;
+  const iy = 170;
+  const ih = 380;
+  const statsTop = iy + ih + 70;                 // 620
+  const regX = !showRegularity ? null : both ? 320 : CARD_W / 2;
   const durX = !showDuration ? null : both ? 780 : CARD_W / 2;
-  const labelY = statsTop + 42;                  // 846
-  const numY = statsTop + 158;                   // 962
-  const subY = statsTop + 204;                   // 1008
-  const statsBottom = statsTop + 236;            // 1040
-  const quoteLineH = 58;
-  const maxQuoteLines = 3;                       // 语录 ≤60 字 @40px ≈ ≤3 行（保守预算）
-  const quoteBandH = maxQuoteLines * quoteLineH; // 174
-  const signatureY = CARD_H - 64 - 62;           // 1314（署名基线）
+  const labelY = statsTop + 46;                  // 666
+  const numY = statsTop + 170;                   // 790
+  const subY = statsTop + 216;                   // 836
+  const statsBottom = statsTop + 250;            // 870
+  const quoteLineH = 62;
+  const maxQuoteLines = 3;                       // 语录 ≤60 字 @44px ≈ ≤3 行（保守预算）
+  const quoteBandH = maxQuoteLines * quoteLineH; // 186
+  const signatureY = CARD_H - 64 - 156;          // 1220（署名基线）
   const footerY = CARD_H - 64;                   // 1376
   // 语录保留带：有数据区 → 紧随其下；无 → 在中部留白带里垂直居中
-  const middleStart = iy + ih + 36;              // 796
-  const middleEnd = signatureY - 44;             // 1270
+  const middleStart = iy + ih + 70;              // 620
+  const middleEnd = signatureY - 44;             // 1176
   const quoteTop = any
-    ? statsBottom + 46
+    ? statsBottom + 70
     : middleStart + Math.max(0, (middleEnd - middleStart - quoteBandH) / 2);
   const maxY = Math.max(signatureY + 46, footerY);
   return { brandY: 96, ix, iy, iw, ih, statsTop, regX, durX, labelY, numY, subY, statsBottom, quoteTop, quoteBandH, quoteLineH, maxQuoteLines, signatureY, footerY, maxY };
@@ -229,25 +232,28 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
   const imgUrl = chosen ? thumbUrlOf(chosen.imageUrl) : `${import.meta.env.BASE_URL || '/'}whale-selfie.png`;
   const img = await loadImage(imgUrl);
 
-  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 36);
+  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 30);
   ctx.save();
   ctx.clip();
-  drawCover(ctx, img, L.ix, L.iy, L.iw, L.ih);
+  drawCover(ctx, img, L.ix, L.iy, L.iw, L.ih, 0.35);
   ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = 0.5;
   ctx.strokeStyle = input.accentHex;
-  ctx.lineWidth = 4;
-  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 36);
+  ctx.lineWidth = 3;
+  roundedPath(ctx, L.ix, L.iy, L.iw, L.ih, 30);
   ctx.stroke();
+  ctx.restore();
 
   // 插画下沿地名签（有明信片时）
   if (chosen) {
     ctx.fillStyle = 'rgba(2,6,23,0.72)';
-    roundedPath(ctx, L.ix + 20, L.iy + L.ih - 86, 320, 62, 16);
+    roundedPath(ctx, L.ix + 20, L.iy + L.ih - 76, 300, 56, 14);
     ctx.fill();
     ctx.fillStyle = '#E2E8F0';
     ctx.textAlign = 'left';
-    ctx.font = '700 30px system-ui, sans-serif';
-    ctx.fillText(`📍 ${chosen.country}`, L.ix + 44, L.iy + L.ih - 42);
+    ctx.font = '700 28px system-ui, sans-serif';
+    ctx.fillText(`📍 ${chosen.country}`, L.ix + 42, L.iy + L.ih - 38);
   }
 
   // ── 数据区：两栏并排（单开居中占宽），只放聚合数字 ──
@@ -288,7 +294,7 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
   const dayKey = Number((now.getFullYear() + '' + (now.getMonth() + 1) + now.getDate()).slice(-4)) + now.getDay();
   const quote = petWeeklyQuote(regularity, dayKey);
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '500 40px system-ui, sans-serif';
+  ctx.font = '500 44px system-ui, sans-serif';
   const maxW = CARD_W - 280;
   const lines: string[] = [];
   let cur = '';
