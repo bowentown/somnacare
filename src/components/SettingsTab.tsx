@@ -25,6 +25,7 @@ import {
   getLastUsageQueryState,
 } from '../utils/usageSignal';
 import { forceRefreshUsage } from '../utils/usageStore';
+import { unlockProposal } from '../utils/proposalUnlock';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
@@ -148,27 +149,41 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       //   "模型 ∥ 启发式"取或——模型拒绝时会虚报"能出提议"（第 42 轮真机实证：
       //   晚睡用户被先验错位拒绝，面板说能出、页面永远不出）
       const modelRejected = model.fit?.status === 'rejected';
+      // 用户显式请求 = 解锁（第 50 轮设计纠偏）：点"自检链路"本身就是在说
+      // "我要一张昨晚的记录卡"。模型证据型拒绝只是"证据不支持存在睡眠"，
+      // 不是"证明没睡"——用户是唯一知道自己睡没睡的人。此时启发式候选
+      // （已过窗口/置信/已记录/已处理全部门）若有，就解锁放行到睡眠页，
+      // 由用户确认/改一下/忽略裁决。自动链路的"拒绝不回退"铁律不动：
+      // 没点自检的早上，依然绝不由系统主动把没睡报成睡了。
+      const unlockNeeded = !model.proposal && !model.fallbackAllowed && !!heur.proposal;
+      if (unlockNeeded && heur.proposal) {
+        unlockProposal(heur.proposal.targetDate);   // 写盘 + 即时广播给睡眠页引擎
+      }
       if (model.fit && model.fit.status !== 'ok') {
         const modelLine = model.fit.status === 'insufficient'
           ? '数据不足，已回退启发式'
           : modelRejected
             ? (model.fallbackAllowed
               ? '拒绝：先验与推断作息不符（晚睡作息/记录不足）——已放行启发式回退'
-              : '明确拒绝（证据不支持存在睡眠，按设计不回退）')
+              : '明确拒绝（证据不支持存在睡眠，按设计不自动回退）')
             : '未运行';
         lines.push(`⑤ 模型：${modelLine}——${model.fit.reason}`);
       } else if (model.fit) {
         lines.push(`⑤ 模型：跑通（${model.fit.reason}）${model.proposal ? `，提议 ${model.proposal.bedtime} → ${model.proposal.wakeTime}` : model.block ? `，但被拦：${model.block}` : ''}`);
       }
       const heurShown = !!heur.proposal && !model.proposal
-        && (model.fallbackAllowed || model.fit?.status === 'insufficient' || !model.fit);
+        && (model.fallbackAllowed || model.fit?.status === 'insufficient' || !model.fit || unlockNeeded);
       lines.push(`⑥ 启发式回退：${heur.proposal
-        ? `提议 ${heur.proposal.bedtime} → ${heur.proposal.wakeTime}（置信${heur.proposal.confidence === 'high' ? '高' : '中'}）${model.proposal ? '——模型已有提议，不采用' : heurShown ? '，将作为卡片显示' : '——模型拒绝且不放行，不会显示'}`
+        ? `提议 ${heur.proposal.bedtime} → ${heur.proposal.wakeTime}（置信${heur.proposal.confidence === 'high' ? '高' : '中'}）${model.proposal ? '——模型已有提议，不采用' : unlockNeeded ? '——你点了自检（=要求出卡），已解锁放行' : heurShown ? '，将作为卡片显示' : '——模型拒绝且未放行，不会显示'}`
         : `被拦——${heur.block}`}`);
       const final = model.proposal ?? (model.fallbackAllowed ? heur.proposal : null);
-      lines.push(final
-        ? `⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认 ⓪ 无进行中的会话、且距醒来不足 12 小时。`
-        : `⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），按设计不回退。` : '原因见上面被拦记录。'}`);
+      if (final) {
+        lines.push(`⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认 ⓪ 无进行中的会话、且距醒来不足 12 小时。`);
+      } else if (unlockNeeded && heur.proposal) {
+        lines.push(`⑦ 结论：✓ 已按你的要求放行——卡片（${heur.proposal.bedtime} → ${heur.proposal.wakeTime}）已解锁，回睡眠页即可看到。模型证据不足以自动确认，请人工核对：对了点"记为这次就寝"，时刻不对点"改一下"，没睡点"忽略"。`);
+      } else {
+        lines.push(`⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），且没有可放行的候选记录。如确有睡眠，请用睡眠页"手动补录"。` : '原因见上面被拦记录。'}`);
+      }
       setChainDiag(lines.join('\n'));
     } finally {
       setDiagBusy(false);

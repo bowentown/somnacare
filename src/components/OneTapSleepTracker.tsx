@@ -9,6 +9,7 @@ import { computeProposal, computeModelProposal, type Proposal } from '../utils/p
 import { recordEngineRun, recordOutcome } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
 import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
+import { clearProposalUnlock, getProposalUnlock, initProposalUnlockFromStorage, subscribeProposalUnlock } from '../utils/proposalUnlock';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
@@ -62,6 +63,20 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   const [handledDate, setHandledDate] = useState<string | null>(() => {
     try { return localStorage.getItem('somnacare_proposal_handled'); } catch { return null; }
   });
+  // 用户显式解锁（第 50 轮）：偏好页"自检链路"点下去 = 用户在要卡。自检
+  // 发现模型证据型拒绝但启发式有合格候选时写入解锁标记（targetDate）；
+  // 本组件订阅它放行当次提议——卡片仍是预填+确认，用户裁决对错。
+  // 时效天然受控：标记只对 targetDate 匹配的那一晚有效，确认/改一下/忽略
+  // 即清除（markHandled），隔天 targetDate 对不上自然失效。
+  // ★ 必须订阅而非 useState 初始化读盘：自检发生在偏好页，而本组件常驻
+  // 滑动轨道（切换分区不卸载），初始化读到的永远是进 App 时的旧值；
+  // storage 事件同文档不触发，轮询被 e2e 假时钟 runFor 放大成风暴
+  // （10800 次同步 tick，测试超时）。订阅式写入即广播，读侧零轮询。
+  const [unlockedDate, setUnlockedDate] = useState<string | null>(() => {
+    initProposalUnlockFromStorage();
+    return getProposalUnlock();
+  });
+  useEffect(() => subscribeProposalUnlock(setUnlockedDate), []);
 
   useEffect(() => {
     if (!isNativePlatform()) return;
@@ -126,7 +141,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     }),
     [usageDays, records, sleepStartTime, handledDate, userProfile?.chronotype]
   );
-  const proposal = modelResult.phase === 'failed' ? heuristicProposal : modelResult.proposal;
+  const proposal = modelResult.phase === 'failed'
+    ? heuristicProposal
+    : modelResult.proposal
+      ?? (modelResult.phase === 'decided' && heuristicProposal && heuristicProposal.targetDate === unlockedDate
+        ? heuristicProposal   // 用户点自检解锁：模型拒绝但用户显式要卡 → 启发式候选上桌
+        : null);
 
   // 自动档权限检查：仅在真机 + 自动档时有意义；从系统设置返回后
   // 轮询 30s 捕捉"刚授予"的时机（用户在设置页停留时长不可控）
@@ -183,6 +203,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   const markHandled = () => {
     if (!visibleProposal) return;
     try { localStorage.setItem('somnacare_proposal_handled', visibleProposal.targetDate); } catch { /* ignore */ }
+    // 解锁标记一次性：处理完（确认/改一下/忽略）即清，防残留误放行
+    clearProposalUnlock();
     setHandledDate(visibleProposal.targetDate);
   };
 

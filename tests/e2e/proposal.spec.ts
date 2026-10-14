@@ -260,6 +260,94 @@ test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡�
   expect(diag).toContain('⑦ 结论：✓');
 });
 
+test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发式候选 → 睡眠页出卡（第 50 轮设计纠偏）', async ({ page }) => {
+  // 真机 10-14 16:54 截图场景：模型证据型拒绝（no-trustworthy-sleep）、
+  // 启发式有高置信候选（00:28→07:38）却"模型拒绝且不放行，不会显示"。
+  // 设计纠偏：点自检 = 用户显式要求出卡 → 解锁放行，由用户确认/改/忽略裁决。
+  // 凌晨 03:30 打开 = 自动链路必然拒绝（还在睡的保护不可破），启发式合法
+  const fixed = new Date();
+  fixed.setHours(3, 30, 0, 0);
+  const now = fixed.getTime();
+  // 14 夜事件（就寝 00:30 / 起床 07:30）——模型凌晨打开会拒绝，启发式 gate 全过
+  let s = 42;
+  const rnd = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const events: number[] = [];
+  const day0 = new Date(fixed);
+  day0.setHours(0, 0, 0, 0);
+  for (let d = 15; d >= 0; d--) {
+    const base = day0.getTime() - d * 86400000;
+    for (let t = base + 7 * 3600e3 + 30 * 60e3; t < base + 24 * 3600e3 + 30 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      events.push(Math.round(t));
+    }
+  }
+  events.sort((a, b) => a - b);
+
+  await page.addInitScript(([evs, ud, recs]) => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, {
+        get: (t, p) => t[p as string] ?? stub(),
+      }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      hasPermission: async () => ({ granted: true }),
+      openPermissionSettings: async () => ({}),
+      queryDailyUsage: async () => ({ days: ud }),
+      queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
+    };
+    localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
+    localStorage.setItem('somnacare_sleep_records', JSON.stringify(recs));
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  }, [events, [
+    { date: dstr(-2, fixed), lastActive: '00:39', firstActive: '09:08', nightPickups: 0 },
+    { date: dstr(-1, fixed), lastActive: '00:28', firstActive: '07:38', nightPickups: 1 },
+  ], [
+    { id: 'r-1', date: dstr(-1, fixed), bedtime: '00:39', wakeTime: '09:08',
+      durationMinutes: 509, deepSleepMinutes: 100, lightSleepMinutes: 320,
+      remSleepMinutes: 60, awakeMinutes: 29, sleepScore: 86, sleepEfficiency: 91,
+      latencyMinutes: 12, wakeCount: 1 },
+    { id: 'r-2', date: dstr(-2, fixed), bedtime: '23:30', wakeTime: '10:15',
+      durationMinutes: 645, deepSleepMinutes: 130, lightSleepMinutes: 420,
+      remSleepMinutes: 75, awakeMinutes: 20, sleepScore: 88, sleepEfficiency: 92,
+      latencyMinutes: 12, wakeCount: 1 },
+    { id: 'r-3', date: dstr(-3, fixed), bedtime: '00:00', wakeTime: '09:00',
+      durationMinutes: 540, deepSleepMinutes: 110, lightSleepMinutes: 350,
+      remSleepMinutes: 60, awakeMinutes: 20, sleepScore: 87, sleepEfficiency: 92,
+      latencyMinutes: 12, wakeCount: 1 },
+  ]] as any);
+
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 自动链路铁律：模型证据型拒绝 → 无卡（哪怕启发式有候选——没点自检就不放）
+  await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
+
+  // 偏好页点自检 = 用户显式要卡 → 面板报告"已解锁放行"
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /点此自检链路/ }).click();
+  const diag = await page.locator('pre').filter({ hasText: '⑦ 结论' }).innerText({ timeout: 15000 });
+  expect(diag).toContain('已按你的要求放行');
+  expect(diag).toContain('00:28');
+  expect(diag).toContain('07:38');
+
+  // 切回睡眠页：解锁的启发式候选作为卡片出现（预填+确认，用户裁决）
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '睡眠' }).click();
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  const cardText = await page.evaluate(() => document.body.innerText);
+  expect(cardText).toMatch(/00:28 放下/);
+  expect(cardText).toMatch(/07:38 拿起/);
+
+  // 处理卡（忽略）→ 解锁标记一次性清除 + handled 落锁，刷新不复活
+  await page.getByRole('button', { name: '忽略' }).click();
+  await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_unlocked'))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(0, fixed));
+});
+
 test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', async ({ page }) => {
   const fixed = new Date();
   fixed.setHours(8, 30, 0, 0);
