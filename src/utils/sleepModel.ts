@@ -340,11 +340,21 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   // 起床者约在 04:00 前生效）。更近的凌晨（04:00–06:30）仍可能产出"截至
   // 此刻"的提议——真早起与起夜后接着睡在屏幕数据上不可区分（信息论边界），
   // 由提议卡的"截至此刻"标注 + 用户自行判断兜底。
-  const targetOk = (a: Assign, winStartMs: number): boolean => {
+  const targetOk = (a: Assign, winStartMs: number, dayIdx: number): boolean => {
     const dur = a.ta - a.ts;
     if (dur < NIGHT_MIN_BINS || dur > NIGHT_MAX_BINS) return false;
     if (Math.abs(a.ts - medTs) > NIGHT_DEV_BINS) return false;      // 就寝侧紧（信号弱）
     const wakeEpoch = winStartMs + a.ta * BIN_MS;
+    // 拟合起床越过观测末端太多 = 该夜还没结束（wake 由先验编造）。
+    // 容差 45min：刚醒来几分钟内打开 App（最高频场景）时，拟合 wake
+    // 与观测末端的几十分钟偏差是泊松噪声的正常范围；真还在睡时
+    // 拟合 wake 会想钉在几小时之外，此门拦住。
+    if (wakeEpoch > observedUntil + 45 * 60_000) return false;
+    // "睡眠段"内的事件数 ≈ 该段真睡与否的硬证据：真睡段 ≈ 0（泊松
+    // 0.046/h × 0.25 桶 + 起夜），先验编造在清醒数据上 ≈ 清醒率期望。
+    // 预算 = 清醒率期望的 60%（4.6/h × dur × 0.25 × 0.6，下限 4 容起夜）
+    const day = days[dayIdx];
+    if (day.Kp[a.ta] - day.Kp[a.ts] > Math.max(4, dur * 0.69)) return false;
     const wakeConfirmed = now - wakeEpoch >= WAKE_CONFIRMED_MS;     // 该夜已完整结束的硬证据
     if (!wakeConfirmed && Math.abs(a.ta - medTa) > NIGHT_WAKE_DEV_BINS) return false; // 起床侧松（信号强+在场）
     return true;
@@ -354,21 +364,33 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   {
     const d0 = days[0];
     const a0Idx = activeIdx.indexOf(0);
-    if (a0Idx >= 0 && d0.totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a0Idx], windowStart0)) {
+    const a1Idx = activeIdx.indexOf(1);
+    if (a0Idx >= 0 && d0.totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a0Idx], windowStart0, 0)) {
       targetIdx = 0;   // 早晨主场景：昨晚就落在当前窗
     } else {
-      // 当前窗不构成完整夜：若还在"今晚就寝之前"（同一日历日且未到就寝时刻），
-      // 改用最近一个【完整】窗（傍晚打开，提议昨夜——与旧启发式行为对齐）；
-      // 深夜/凌晨打开（真还在睡）→ 拒绝，绝不把"前晚"当"昨晚"
-      const nowD = new Date(now);
-      const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
-      const wsD = new Date(windowStart0);
-      const sameCalDay = nowD.getFullYear() === wsD.getFullYear()
-        && nowD.getMonth() === wsD.getMonth() && nowD.getDate() === wsD.getDate();
-      const bedClockMin = (cb0 * 15 + wsMin) % 1440;
-      const a1Idx = activeIdx.indexOf(1);
-      if (sameCalDay && nowMin < bedClockMin && days[1].ob === BINS
-          && a1Idx >= 0 && days[1].totalK >= TARGET_MIN_EVENTS && targetOk(assigns[a1Idx], windowStart0 - 86400000)) {
+      // 当前窗无有效夜（通宵/窗口刚滚动/夜未结束）→ 用最近一个【完整】窗。
+      // 回退门 = "此刻醒着"：当前窗观测末 2h 的事件数（≥4 ≈ 清醒率下限）。
+      // 用户正拿着手机 = 醒着的硬证据；凌晨还在睡时尾部近零，不回退——
+      // 绝不把前晚当昨晚。旧条件（同一日历日且未到就寝时刻）有死区：
+      // 00:00–wsHour 之间 sameCalDay 恒 false，散布作息用户整个上午
+      // 拿不到提议（真机 10-14 12:33 实测）。起夜解锁的误放行由
+      // gate 4/6（已记录/已处理）兜底。
+      // 回退门（两条，替代旧的日历日条件——其死区让用户整个上午拿不到提议）：
+      //  a) 观测尾 2h ≥4 事件 = 此刻醒着的硬证据（凌晨还在睡时尾部近零）；
+      //  b) now 在窗内"睡眠带"（拟合就寝→起床圆周区间）外 = 白天/傍晚，
+      //     提"昨夜"语义清晰。通宵到凌晨时 now 落在睡眠带内（该睡了 /
+      //     还在熬），提"昨夜"会被读成"今晚"——拒绝。
+      const ob0 = Math.min(d0.ob, BINS);
+      let tailEvents = 0;
+      for (let b = Math.max(0, ob0 - 8); b < ob0; b++) tailEvents += d0.counts[b];
+      const nowBin = Math.floor(((now - windowStart0) % 86400000 + 86400000) % 86400000 / BIN_MS);
+      const inSleepBand = medTs < medTa
+        ? nowBin >= medTs && nowBin < medTa
+        : nowBin >= medTs || nowBin < medTa;   // 跨午夜回绕
+      if (tailEvents >= 4 && !inSleepBand
+          && days[1].ob === BINS && a1Idx >= 0
+          && days[1].totalK >= TARGET_MIN_EVENTS
+          && targetOk(assigns[a1Idx], windowStart0 - 86400000, 1)) {
         targetIdx = 1;
       }
     }

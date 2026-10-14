@@ -385,6 +385,84 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   check('D3 反向：凌晨 03:30 打开（真还在睡）→ 仍拒绝', lateNight.status === 'rejected', lateNight.status === 'rejected' ? (lateNight as any).reason : JSON.stringify(lateNight).slice(0, 60));
 }
 
+// ── E 组：proposal 层端到端（真实用户 10-14 场景回归）──
+// 用户作息散布（就寝 22:45–01:59、起床 08:53–10:31），"昨晚 00:28→07:38
+// 还没记录"。此前回退分支的 sameCalDay 死区（00:00–wsHour 间恒 false）
+// 让用户整个上午拿不到提议；修复后须：中午/傍晚都提议、凌晨还在睡拒绝。
+// 走 computeModelProposal 全链（含 gate 4/6/置信度），而非只测模型。
+{
+  function mul32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const NIGHTS: Array<{ date: string; bed: string; wake: string }> = [
+    { date: '2026-10-14', bed: '00:28', wake: '07:38' },  // 昨晚（未记录——tests 不入 records）
+    { date: '2026-10-13', bed: '00:39', wake: '09:08' },
+    { date: '2026-10-12', bed: '23:30', wake: '10:15' },
+    { date: '2026-10-11', bed: '00:00', wake: '09:00' },
+    { date: '2026-10-10', bed: '23:15', wake: '09:15' },
+    { date: '2026-10-09', bed: '22:45', wake: '09:00' },
+    { date: '2026-10-08', bed: '01:33', wake: '08:53' },
+    { date: '2026-10-07', bed: '01:59', wake: '10:31' },
+  ];
+  const recs = NIGHTS.slice(1).map((n, i) => ({
+    id: 'r' + i, date: n.date, bedtime: n.bed, wakeTime: n.wake,
+    durationMinutes: 480, deepSleepMinutes: 120, lightSleepMinutes: 300, remSleepMinutes: 40,
+    awakeMinutes: 10, sleepScore: 86, sleepEfficiency: 91, latencyMinutes: 12, wakeCount: 1,
+  }));
+  // usage 事件：每夜就寝前 90 分钟密集 + 睡中稀疏 + 醒后活跃 + 当天上午活跃
+  function genEvents(nowMs: number): number[] {
+    const rng = mul32(7);
+    const ev: number[] = [];
+    const dayMs = 86400000;
+    for (const n of NIGHTS) {
+      const wakeAbs = new Date(n.date + 'T00:00:00').getTime()
+        + Number(n.wake.slice(0, 2)) * 3600000 + Number(n.wake.slice(3)) * 60000;
+      const bedAbs = wakeAbs - dayMs
+        - (Number(n.wake.slice(0, 2)) * 3600000 + Number(n.wake.slice(3)) * 60000)
+        + Number(n.bed.slice(0, 2)) * 3600000 + Number(n.bed.slice(3)) * 60000;
+      for (let t = bedAbs - 90 * 60000; t < bedAbs; t += 7 * 60000) {
+        if (t > nowMs) break;
+        for (let k = 0; k < 3; k++) ev.push(t + Math.floor(rng() * 420000));
+      }
+      for (let t = bedAbs; t < wakeAbs; t += 45 * 60000) {
+        if (t > nowMs) break;
+        if (rng() < 0.25) ev.push(t);
+      }
+      const eveningEnd = Math.min(wakeAbs + 14 * 3600000, nowMs);
+      for (let t = wakeAbs; t < eveningEnd; t += 7 * 60000) {
+        for (let k = 0; k < 3; k++) ev.push(t + Math.floor(rng() * 420000));
+      }
+    }
+    const now = new Date(nowMs);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    for (let t = dayStart + 7 * 3600000; t < nowMs; t += 7 * 60000) {
+      for (let k = 0; k < 3; k++) ev.push(t + Math.floor(rng() * 420000));
+    }
+    return ev.filter((t) => t <= nowMs);
+  }
+  const day0 = new Date(2026, 9, 14, 0, 0, 0, 0).getTime();
+  const run = (h: number, m: number) => {
+    const now = day0 + h * 3600000 + m * 60000;
+    return computeModelProposal({
+      events: genEvents(now), observedUntil: now, records: recs as any,
+      userProfile: { chronotype: 'night' } as any,
+      now: new Date(now), sessionActive: false, handledDate: null,
+    } as any);
+  };
+  const noon = run(12, 33);
+  check('E1 真实场景：中午 12:33 打开（昨夜未记录）→ 提议昨晚',
+    !!noon.proposal && noon.proposal.targetDate === '2026-10-14',
+    noon.proposal ? `${noon.proposal.bedtime}→${noon.proposal.wakeTime}` : (noon.block ?? noon.fit.reason));
+  const evening = run(16, 52);
+  check('E2 真实场景：傍晚 16:52 打开 → 仍提议昨晚',
+    !!evening.proposal && evening.proposal.targetDate === '2026-10-14',
+    evening.proposal ? `${evening.proposal.bedtime}→${evening.proposal.wakeTime}` : (evening.block ?? evening.fit.reason));
+  const late = run(3, 30);
+  check('E3 反向：凌晨 03:30 打开（还在睡）→ 不提议',
+    !late.proposal, late.fit.reason ?? late.block ?? '拒绝');
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——SensibleSleep 模型与规格书口径不符`);
   process.exit(1);
