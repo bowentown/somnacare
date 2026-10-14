@@ -24,6 +24,8 @@ import { CustomAlarmSetting } from './types/sleep';
 import { sleepAudio } from './utils/audioSynth';
 import { applyEyeCare, eyeCareInAppStyles, isInEyeCareWindow } from './utils/eyeCare';
 import { consumePendingTab, syncPet } from './utils/petOverlay';
+import { queryScreenOnEvents } from './utils/usageSignal';
+import { forceRefreshUsage } from './utils/usageStore';
 import { LaunchSplash } from './components/LaunchSplash';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
@@ -323,6 +325,28 @@ export const App: React.FC = () => {
   useEffect(() => {
     void syncPet(records, userProfile);
   }, [records, userProfile]);
+
+  // 后台恢复即刷新使用信号（真机 10-14 实测的"每天早上必须去偏好页点自检
+  // 才出卡"的根因）：隔夜驻留后台后恢复前台，提议引擎的 effect 依赖
+  // （usageDays/records/handledDate…）一个都不会变——引擎跑在昨晚的旧
+  // 观测上（observedUntil 停在放下手机那一刻），起床信号永远进不来。
+  // 自检链路之所以"有效"，正是它 force 绕过了 30min 缓存并 kick 了引擎。
+  // 这里把同一步自动化：恢复可见即强制刷新（先事件后聚合——聚合 emit
+  // 驱动睡眠页引擎 effect 重跑，重跑时读到的是刚刷新的事件缓存）。
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    const chronotype = userProfile?.chronotype ?? 'night';
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (chronotype === 'irregular') return;   // 不规律作息：自动提议整体关闭，无需刷新
+      void (async () => {
+        await queryScreenOnEvents(14, true);
+        await forceRefreshUsage(2, chronotype);
+      })();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [userProfile?.chronotype]);
 
   // 作息目标到点提醒：目标就寝时刻起 15 分钟内、当日未提醒、且未在监测中 → 全屏提醒
   useEffect(() => {

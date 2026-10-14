@@ -369,7 +369,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
       targetIdx = 0;   // 早晨主场景：昨晚就落在当前窗
     } else {
       // 当前窗无有效夜（通宵/窗口刚滚动/夜未结束）→ 用最近一个【完整】窗。
-      // 回退门 = "此刻醒着"：当前窗观测末 2h 的事件数（≥4 ≈ 清醒率下限）。
+      // 回退门 = "此刻醒着"：观测末 2h 的事件数（≥4 ≈ 清醒率下限）。
       // 用户正拿着手机 = 醒着的硬证据；凌晨还在睡时尾部近零，不回退——
       // 绝不把前晚当昨晚。旧条件（同一日历日且未到就寝时刻）有死区：
       // 00:00–wsHour 之间 sameCalDay 恒 false，散布作息用户整个上午
@@ -380,9 +380,18 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
       //  b) now 在窗内"睡眠带"（拟合就寝→起床圆周区间）外 = 白天/傍晚，
       //     提"昨夜"语义清晰。通宵到凌晨时 now 落在睡眠带内（该睡了 /
       //     还在熬），提"昨夜"会被读成"今晚"——拒绝。
-      const ob0 = Math.min(d0.ob, BINS);
+      //  a) 的取数必须按【绝对时间的最近 2h】跨窗拼接：ws 滚动后几分钟，
+      //  当前窗只观测了十几分钟，结构上凑不齐 4 事件——真机 10-14 16:12
+      //  实测（习惯先验 ws=16:00，16:12 打开）整个"刚过滚动点"的下午
+      //  全是死区。缺的桶从上一窗（必已完整观测）的末尾补齐。
+      const ob0c = Math.min(d0.ob, BINS);
       let tailEvents = 0;
-      for (let b = Math.max(0, ob0 - 8); b < ob0; b++) tailEvents += d0.counts[b];
+      const take0 = Math.min(8, ob0c);
+      for (let b = ob0c - take0; b < ob0c; b++) tailEvents += d0.counts[b];
+      if (take0 < 8) {
+        const d1t = days[1];
+        for (let b = BINS - (8 - take0); b < BINS; b++) tailEvents += d1t.counts[b];
+      }
       const nowBin = Math.floor(((now - windowStart0) % 86400000 + 86400000) % 86400000 / BIN_MS);
       const inSleepBand = medTs < medTa
         ? nowBin >= medTs && nowBin < medTa

@@ -325,6 +325,96 @@ test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', as
 });
 
 
+test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡（真机 10-14 根因）', async ({ page }) => {
+  // 真机场景复现：App 昨晚 22:00 开过一次（引擎跑在 observedUntil=22:00 的
+  // 旧观测上，那夜尚未结束 → 无卡，属正确行为）；进程隔夜驻留后台，早上
+  // 恢复前台。修复前：引擎 effect 依赖（usageDays/records/handledDate…）
+  // 一个都不会变 → 不重跑，用户必须去偏好页点"自检链路"（force 绕缓存）
+  // 才能出卡。修复后：App 层 visibilitychange 即强制刷新 → 引擎重跑 → 出卡。
+  const fixed1 = new Date();
+  fixed1.setHours(22, 0, 0, 0);           // 昨晚 22:00：首次打开
+  const day1 = new Date(fixed1);
+  day1.setHours(0, 0, 0, 0);
+  const day1Ms = day1.getTime();
+  const day2Ms = day1Ms + 86400000;
+  const morning2 = new Date(day2Ms);
+  morning2.setHours(9, 0, 0, 0);          // 今早 09:00：恢复前台
+
+  // 15 夜事件（就寝 23:40 / 起床 07:05）+ 运行日白天 + 今早醒来后活跃；
+  // 模型按 observedUntil 截断（22:00 首开时看不到运行日夜——那还没发生）
+  let s = 42;
+  const rnd = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const events: number[] = [];
+  for (let d = 15; d >= 0; d--) {
+    const base = day1Ms - d * 86400000;
+    for (let t = base + 7 * 3600e3 + 5 * 60e3; t < base + 23 * 3600e3 + 40 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      events.push(Math.round(t));
+    }
+  }
+  for (let t = day2Ms + 7 * 3600e3 + 5 * 60e3; t <= morning2.getTime() - 10 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+    events.push(Math.round(t));
+  }
+  events.sort((a, b) => a - b);
+
+  await page.addInitScript(([evs, ud, recs]) => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, {
+        get: (t, p) => t[p as string] ?? stub(),
+      }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      hasPermission: async () => ({ granted: true }),
+      openPermissionSettings: async () => ({}),
+      queryDailyUsage: async () => ({ days: ud }),
+      queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
+    };
+    localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
+    localStorage.setItem('somnacare_sleep_records', JSON.stringify(recs));
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  }, [events, [{ date: dstr(-1, fixed1), lastActive: '23:40', firstActive: '07:05', nightPickups: 0 }], [
+    // 只放 3 晚更早的记录（≥3 让先验命中）——运行日夜（今早 07:05 醒）
+    // 保持【未记录】状态，今早恢复前台后必须作为提议出现
+    { id: 'r-1', date: dstr(-1, fixed1), bedtime: '23:45', wakeTime: '07:10',
+      durationMinutes: 445, deepSleepMinutes: 90, lightSleepMinutes: 300,
+      remSleepMinutes: 45, awakeMinutes: 10, sleepScore: 86, sleepEfficiency: 91,
+      latencyMinutes: 12, wakeCount: 1 },
+    { id: 'r-2', date: dstr(-2, fixed1), bedtime: '00:15', wakeTime: '07:30',
+      durationMinutes: 435, deepSleepMinutes: 90, lightSleepMinutes: 300,
+      remSleepMinutes: 45, awakeMinutes: 10, sleepScore: 85, sleepEfficiency: 91,
+      latencyMinutes: 12, wakeCount: 1 },
+    { id: 'r-3', date: dstr(-3, fixed1), bedtime: '23:50', wakeTime: '07:00',
+      durationMinutes: 430, deepSleepMinutes: 90, lightSleepMinutes: 300,
+      remSleepMinutes: 40, awakeMinutes: 10, sleepScore: 84, sleepEfficiency: 91,
+      latencyMinutes: 12, wakeCount: 1 },
+  ]]);
+
+  await page.clock.install({ time: fixed1 });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 昨晚 22:00 首开：观测截止 22:00，昨夜（已有记录）不再提议，今夜未开始
+  // → 无卡（正确行为，不是 bug）
+  await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
+
+  // ── 隔夜驻留后台 → 早上恢复前台 ──
+  // 时钟跳到今早 09:00（setFixedTime 不触发定时器风暴），然后发生
+  // visibilitychange（WebView 恢复可见的系统事件）
+  await page.clock.setFixedTime(morning2.getTime());
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  // 修复的关键断言：不点自检、不重开页面，卡片必须自己出现
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible({ timeout: 15000 });
+  const cardText = await page.evaluate(() => document.body.innerText);
+  expect(cardText).toMatch(/2[23]:[0-5]\d 放下/);
+  expect(cardText).toMatch(/0[67]:[0-2]\d 拿起/);
+});
+
 test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自检报"跑通" → 采纳', async ({ page }) => {
   const fixed = new Date();
   fixed.setHours(8, 30, 0, 0);

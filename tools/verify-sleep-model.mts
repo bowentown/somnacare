@@ -17,8 +17,9 @@ const store = new Map<string, string>();
 };
 (globalThis as any).window = globalThis;
 
-const { fitSleepModel } = await import(new URL('../src/utils/sleepModel.ts', import.meta.url).href);
+const { fitSleepModel, modelWindowStart } = await import(new URL('../src/utils/sleepModel.ts', import.meta.url).href);
 const { computeModelProposal } = await import(new URL('../src/utils/proposal.ts', import.meta.url).href);
+const { circularMedian, clockMinutes } = await import(new URL('../src/utils/clockMath.ts', import.meta.url).href);
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -383,6 +384,15 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
 
   const lateNight = fitSleepModel({ ...genD(day0 + 3 * 3600000 + 30 * 60000), chronotype: 'night', habitBedMin: hb, habitWakeMin: hw, now: day0 + 3 * 3600000 + 30 * 60000 });
   check('D3 反向：凌晨 03:30 打开（真还在睡）→ 仍拒绝', lateNight.status === 'rejected', lateNight.status === 'rejected' ? (lateNight as any).reason : JSON.stringify(lateNight).slice(0, 60));
+
+  // D4 窗口滚动死区回归（真机 10-14 16:12 实测，习惯先验 ws=15:00）：
+  // 15:00 窗口滚动后 12 分钟打开——当前窗只观测了 12 分钟，旧回退门只数
+  // "当前窗末 8 桶"结构上凑不齐 4 事件 → 整个刚过滚动点的下午无提议。
+  // 修复后回退门按绝对时间最近 2h 跨窗拼接（从上一窗末尾补齐）→ 必须提议
+  const justAfterRoll = fitSleepModel({ ...genD(day0 + 15 * 3600000 + 12 * 60000), chronotype: 'night', habitBedMin: hb, habitWakeMin: hw, now: day0 + 15 * 3600000 + 12 * 60000 });
+  check('D4 窗口刚滚动 12 分钟打开 → 仍提议昨夜',
+    (justAfterRoll as any).status === 'ok',
+    (justAfterRoll as any).status === 'ok' ? `${(justAfterRoll as any).bedtime}/${(justAfterRoll as any).wakeTime}` : (justAfterRoll as any).reason);
 }
 
 // ── E 组：proposal 层端到端（真实用户 10-14 场景回归）──
@@ -461,6 +471,29 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   const late = run(3, 30);
   check('E3 反向：凌晨 03:30 打开（还在睡）→ 不提议',
     !late.proposal, late.fit.reason ?? late.block ?? '拒绝');
+
+  // E4/E5 窗口滚动死区回归（真机 10-14 16:12 实测）：习惯先验由记录推出
+  // （就寝中位 ≈00:00 / 起床 ≈09:08 → ws=16:00）。16:00 窗口滚动后 12 分钟
+  // 打开：当前窗只观测了十几分钟，旧回退门"当前窗末 8 桶 ≥4 事件"结构性
+  // 不可能满足 → 模型拒绝且不回退 → 卡片整个刚过滚动点的下午不出现。
+  // 修复后按绝对时间最近 2h 跨窗拼接 → 必须提议昨晚（00:28→07:38）。
+  const hbE = circularMedian(recs.map((r) => clockMinutes(r.bedtime)));
+  const hwE = circularMedian(recs.map((r) => clockMinutes(r.wakeTime)));
+  const wsNoon = modelWindowStart(day0 + 12 * 3600000, 'night', hbE, hwE);
+  const rollAt = wsNoon + 86400000;   // 下一次窗口滚动点
+  const runAt = (nowMs: number) => computeModelProposal({
+    events: genEvents(nowMs), observedUntil: nowMs, records: recs as any,
+    userProfile: { chronotype: 'night' } as any,
+    now: new Date(nowMs), sessionActive: false, handledDate: null,
+  } as any);
+  const e4 = runAt(rollAt + 12 * 60000);
+  check('E4 窗口刚滚动 12 分钟打开（真机 16:12 死区）→ 仍提议昨晚',
+    !!e4.proposal && e4.proposal.targetDate === '2026-10-14',
+    e4.proposal ? `${e4.proposal.bedtime}→${e4.proposal.wakeTime}` : (e4.block ?? e4.fit.reason));
+  const e5 = runAt(rollAt + 3 * 60000);
+  check('E5 窗口刚滚动 3 分钟打开（极端边界）→ 仍提议昨晚',
+    !!e5.proposal && e5.proposal.targetDate === '2026-10-14',
+    e5.proposal ? `${e5.proposal.bedtime}→${e5.proposal.wakeTime}` : (e5.block ?? e5.fit.reason));
 }
 
 if (failures > 0) {
