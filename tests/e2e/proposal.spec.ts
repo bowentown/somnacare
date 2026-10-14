@@ -260,6 +260,71 @@ test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡�
   expect(diag).toContain('⑦ 结论：✓');
 });
 
+test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', async ({ page }) => {
+  const fixed = new Date();
+  fixed.setHours(8, 30, 0, 0);
+  const today = dstr(0, fixed);
+  const now = fixed.getTime();
+
+  // 与模型路径用例同款事件合成（14 夜，就寝 23:40 / 起床 07:05）
+  let s = 42;
+  const rnd = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const events: number[] = [];
+  const day0 = new Date(fixed);
+  day0.setHours(0, 0, 0, 0);
+  const day0Ms = day0.getTime();
+  for (let d = 15; d >= 1; d--) {
+    const base = day0Ms - d * 86400000;
+    for (let t = base + 7 * 3600e3 + 5 * 60e3; t < base + 23 * 3600e3 + 40 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+      events.push(Math.round(t));
+    }
+  }
+  for (let t = day0Ms + 7 * 3600e3 + 5 * 60e3; t <= now - 10 * 60e3; t += (8 + rnd() * 10) * 60e3) {
+    events.push(Math.round(t));
+  }
+  events.sort((a, b) => a - b);
+
+  // 卡住 17h 的监测会话（昨 15:30 开始）——gate 5 会永远压制提议
+  const stuckStart = fixed.getTime() - 17 * 3600e3;
+
+  await page.addInitScript(([evs, ud, stuck]) => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, {
+        get: (t, p) => t[p as string] ?? stub(),
+      }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      hasPermission: async () => ({ granted: true }),
+      openPermissionSettings: async () => ({}),
+      queryDailyUsage: async () => ({ days: ud }),
+      queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
+    };
+    localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+    localStorage.setItem('somnacare_bedtime_start', String(stuck));   // 遗留会话
+    localStorage.setItem('somnacare_sleep_records', JSON.stringify([
+      { id: 'r-old', date: '2026-10-10', bedtime: '23:00', wakeTime: '07:00',
+        durationMinutes: 480, deepSleepMinutes: 90, lightSleepMinutes: 300,
+        remSleepMinutes: 70, awakeMinutes: 10, sleepScore: 86, sleepEfficiency: 91,
+        latencyMinutes: 12, wakeCount: 1 },
+    ]));
+  }, [events, [{ date: dstr(-1, fixed), lastActive: '23:40', firstActive: '07:05', nightPickups: 0 }], stuckStart] as any);
+
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 遗留会话在挂载时被清理（>14h）→ gate 5 解除 → 提议卡照常出现
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  const cleared = await page.evaluate(() => localStorage.getItem('somnacare_bedtime_start'));
+  expect(cleared).toBeNull();   // 会话键已被清理
+});
+
+
 test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自检报"跑通" → 采纳', async ({ page }) => {
   const fixed = new Date();
   fixed.setHours(8, 30, 0, 0);

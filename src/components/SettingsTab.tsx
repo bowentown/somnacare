@@ -115,19 +115,29 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       const handledDate = (() => {
         try { return localStorage.getItem('somnacare_proposal_handled'); } catch { return null; }
       })();
+      // 监测会话与睡眠页组件同一数据源——此前硬编码 false，会话卡住时
+      // 面板虚报"能出提议"而睡眠页被 gate 5 压制（真机 10-14 实测）
+      const savedStart = (() => {
+        try { const v = localStorage.getItem('somnacare_bedtime_start'); return v ? Number(v) : null; } catch { return null; }
+      })();
+      const sessionActive = savedStart !== null;
+      const sessionLine = sessionActive
+        ? `⓪ 监测会话：进行中（自 ${new Date(savedStart).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 起，>14h 自动清理）——gate 5 压制提议，去睡眠页按"已醒来"结算`
+        : '⓪ 监测会话：无';
       const model = computeModelProposal({
         events: ev?.events ?? [],
         observedUntil: ev?.observedUntil ?? Date.now(),
         chronotype,   // ★ 用用户真实作息——此前硬编码 'night'，白天作息用户自检结果全错
         records,
-        sessionActive: false,
+        sessionActive,   // ★ 真实会话状态——硬编码 false 时 gate 5 的压制对面板不可见
         handledDate,
       });
       const heur = computeProposalTraced({
-        usageDays, records, sessionActive: false, handledDate, chronotype,
+        usageDays, records, sessionActive, handledDate, chronotype,
       });
       const last = usageDays.length > 0 ? usageDays[usageDays.length - 1] : null;
       const lines: string[] = [];
+      lines.push(sessionLine);
       lines.push('① 权限：✓ 使用情况访问已开启');
       const st = getLastUsageQueryState();
       lines.push(`② 原生查询：${st.error ? `✗ ${st.error}` : '✓ 正常'}`);
@@ -157,7 +167,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         : `被拦——${heur.block}`}`);
       const final = model.proposal ?? (model.fallbackAllowed ? heur.proposal : null);
       lines.push(final
-        ? `⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认没有进行中的监测会话、且距醒来不足 12 小时。`
+        ? `⑦ 结论：✓ 引擎此刻能出提议（${final.bedtime} → ${final.wakeTime}）。若睡眠页仍未显示，请确认 ⓪ 无进行中的会话、且距醒来不足 12 小时。`
         : `⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），按设计不回退。` : '原因见上面被拦记录。'}`);
       setChainDiag(lines.join('\n'));
     } finally {

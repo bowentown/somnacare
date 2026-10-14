@@ -33,7 +33,16 @@ interface OneTapSleepTrackerProps {
 export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile, onUpdateProfile }) => {
   const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
     const saved = localStorage.getItem('somnacare_bedtime_start');
-    return saved ? Number(saved) : null;
+    if (!saved) return null;
+    const start = Number(saved);
+    // 遗留会话清理：会话超过 14h（= 模型夜长上限 NIGHT_MAX）仍未结算，
+    // 只会永远压制自动提议（gate 5）而不产生任何价值——真睡眠记录由
+    // 提议链路负责。跨午夜会话（23:45→07:38 ≈ 8h）不受影响。
+    if (Number.isFinite(start) && Date.now() - start > 14 * 3600000) {
+      try { localStorage.removeItem('somnacare_bedtime_start'); } catch { /* ignore */ }
+      return null;
+    }
+    return start;
   });
 
   const [elapsedMinutes, setElapsedMinutes] = useState(0);
