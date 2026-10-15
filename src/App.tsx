@@ -28,12 +28,23 @@ import { consumePendingTab, syncPet } from './utils/petOverlay';
 import { queryScreenOnEvents } from './utils/usageSignal';
 import { forceRefreshUsage } from './utils/usageStore';
 import { LaunchSplash } from './components/LaunchSplash';
+import { PaneErrorBoundary } from './components/PaneErrorBoundary';
+import { closeTopModalIfAny } from './utils/modalA11y';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord } from './utils/recordFilter';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival } from './services/travelService';
+
+/** 分区错误边界展示名（PaneErrorBoundary 文案用）。 */
+const PANE_LABELS: Record<string, string> = {
+  today: '睡眠',
+  trends: '趋势',
+  coach: 'AI 顾问',
+  eyecare: '护眼',
+  settings: '偏好',
+};
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('today');
@@ -339,6 +350,34 @@ export const App: React.FC = () => {
   useEffect(() => {
     void syncPet(records, userProfile);
   }, [records, userProfile]);
+
+  // Android 返回键治理（第 52 轮）：有弹窗时先关弹窗（与 Escape 同通路），
+  // 无弹窗才退出。@capacitor/app 的 backButton 一旦监听即接管返回键，
+  // 不调 exitApp 就不会退出——默认行为必须显式补上。
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let cancelled = false;
+    let handle: { remove: () => void } | null = null;
+    // 动态 import（第 52 轮）：@capacitor/app 顶层 import 会让 @capacitor/core
+    // 的 web 运行时在页面加载时改写 window.Capacitor（isNativePlatform →
+    // false）——e2e mock 与 web 预览全被打回"网页预览环境"。只在真机守卫内
+    // 异步加载，web 端永不触碰。
+    void (async () => {
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const h = await CapApp.addListener('backButton', () => {
+          if (closeTopModalIfAny()) return;
+          void CapApp.exitApp();
+        });
+        if (cancelled) { try { h.remove(); } catch { /* ignore */ } return; }
+        handle = h;
+      } catch { /* 非 native / 桥异常静默 */ }
+    })();
+    return () => {
+      cancelled = true;
+      try { handle?.remove(); } catch { /* ignore */ }
+    };
+  }, []);
 
   // 后台恢复即刷新使用信号（真机 10-14 实测的"每天早上必须去偏好页点自检
   // 才出卡"的根因）：隔夜驻留后台后恢复前台，提议引擎的 effect 依赖
@@ -897,6 +936,7 @@ export const App: React.FC = () => {
                 style={{ width: `${100 / TAB_ORDER.length}%` }}
               >
                 <div className="p-4 space-y-4">
+                  <PaneErrorBoundary label={PANE_LABELS[id] ?? id}>
                   {id === 'today' && (
                     <TodayTab
                       records={records}
@@ -964,6 +1004,7 @@ export const App: React.FC = () => {
                       theme={currentTheme}
                     />
                   )}
+                  </PaneErrorBoundary>
                 </div>
               </div>
             ))}

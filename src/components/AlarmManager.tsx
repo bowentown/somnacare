@@ -260,6 +260,18 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
             <span className="text-[10px] text-amber-300/90 font-medium whitespace-nowrap">
               若息屏未响：请允许自启动、省电设为“无限制”、调高通知音量
             </span>
+            {isNativePlatform() && (
+              <button
+                type="button"
+                onClick={() => {
+                  tapTick();
+                  void (window as any).Capacitor?.Plugins?.GemmaLLM?.openBatteryOptimizationSettings?.();
+                }}
+                className="text-[10px] font-bold text-sky-300 underline underline-offset-2 cursor-pointer whitespace-nowrap"
+              >
+                把本应用加入电池白名单（国产 ROM 保活）→
+              </button>
+            )}
           </div>
         )}
         {permissionHint && (

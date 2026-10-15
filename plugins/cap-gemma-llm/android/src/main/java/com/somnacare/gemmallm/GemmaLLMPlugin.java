@@ -150,6 +150,33 @@ public class GemmaLLMPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** 电池优化白名单引导（第 52 轮）：MIUI/EMUI 的"后台广播砍杀"会让
+     *  深夜救援/精确闹钟在进程已死时失效——跳系统电池优化设置让用户把
+     *  本应用加白名单。用 ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+     *  （免 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 权限，商店政策友好）。 */
+    @PluginMethod
+    public void openBatteryOptimizationSettings(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            try {
+                // 极少数 ROM 无此页：回退应用详情页（手动进电池选项）
+                android.content.Intent fallback = new android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + getContext().getPackageName()));
+                fallback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+                call.resolve();
+            } catch (Exception ignored) {
+                call.reject("无法打开电池设置");
+            }
+        }
+    }
+
     /** 跳转系统"显示在其他应用上层"授权页（直接定位到本应用）。 */
     @PluginMethod
     public void eyeCareOpenPermission(PluginCall call) {

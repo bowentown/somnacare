@@ -169,6 +169,13 @@ test('授权即时生效：设置返回后引擎自动重跑出卡，无需重�
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       // 初始未授权；openPermissionSettings 模拟"用户在系统设置里完成授权"
       hasPermission: async () => ({ granted: granted() }),
@@ -233,6 +240,13 @@ test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡�
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),
@@ -293,6 +307,13 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),
@@ -386,6 +407,13 @@ test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', as
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),
@@ -455,6 +483,13 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),
@@ -539,6 +574,13 @@ test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自�
         get: (t, p) => t[p as string] ?? stub(),
       }),
     };
+    // @capacitor/core 的 web 运行时在 bundle 加载时把 window.Capacitor
+    // 与其全局定义合并（isNativePlatform → false）——mock 必须拦 setter
+    // 强制保留原生等价三件套，否则整条链路被打回"网页预览环境"。
+    // @capacitor/core 官方自定义平台通道：声明 name='android' 后 core 的
+    // isNativePlatform() 恒 true（core 加载时会原地改写 window.Capacitor 的
+    // 同名属性，defineProperty 拦截无效——CustomPlatform 是它自己认的口径）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),

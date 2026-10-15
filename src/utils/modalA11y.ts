@@ -17,7 +17,22 @@ import { useEffect, useRef } from 'react';
  */
 
 // 模块级弹窗栈：按打开顺序记录存活实例（symbol 每实例唯一）
-const modalStack: symbol[] = [];
+interface ModalStackEntry {
+  id: symbol;
+  /** Android 返回键用：关掉栈顶弹窗（与 Escape 同一通路，见 useModalA11y） */
+  close: () => void;
+}
+const modalStack: ModalStackEntry[] = [];
+
+/** 关闭栈顶弹窗；无弹窗时返回 false（调用方据此走默认退出行为）。
+ *  第 52 轮：@capacitor/app 的 backButton 在任何弹窗打开时直接退出应用
+ *  而不是先关弹窗——接入后返回键行为与系统惯例一致。 */
+export function closeTopModalIfAny(): boolean {
+  const top = modalStack[modalStack.length - 1];
+  if (!top) return false;
+  try { top.close(); } catch { /* ignore */ }
+  return true;
+}
 
 export function useModalA11y(
   open: boolean,
@@ -38,13 +53,14 @@ export function useModalA11y(
     const root = ref.current;
     if (!root) return;
     const id = idRef.current;
-    modalStack.push(id);
+    const entry = { id, close: () => onCloseRef.current() };
+    modalStack.push(entry);
     const prev = document.activeElement as HTMLElement | null;
     root.focus({ preventScroll: true });
 
     const onKey = (e: KeyboardEvent) => {
       // 非栈顶（被其它弹窗盖住）不响应任何键盘语义
-      if (modalStack[modalStack.length - 1] !== id) return;
+      if (modalStack[modalStack.length - 1]?.id !== id) return;
       if (closeOnEscape && e.key === 'Escape') {
         e.stopPropagation();
         onCloseRef.current();
@@ -69,7 +85,7 @@ export function useModalA11y(
     document.addEventListener('keydown', onKey, true);
     return () => {
       document.removeEventListener('keydown', onKey, true);
-      const i = modalStack.lastIndexOf(id);
+      const i = modalStack.findIndex((e) => e.id === id);
       if (i >= 0) modalStack.splice(i, 1);
       prev?.focus?.();
     };
