@@ -2,7 +2,7 @@
   "normal8h": {
     "record": {
       "id": "g-normal",
-      "date": "2026-10-02",
+      "date": "2026-10-01",
       "bedtime": "23:00",
       "wakeTime": "07:00",
       "durationMinutes": 463,
@@ -128,7 +128,7 @@
   "micro45m": {
     "record": {
       "id": "g-micro",
-      "date": "2026-10-02",
+      "date": "2026-10-01",
       "bedtime": "01:00",
       "wakeTime": "01:45",
       "durationMinutes": 43,
@@ -170,7 +170,7 @@
   "tiny12m": {
     "record": {
       "id": "g-tiny",
-      "date": "2026-10-02",
+      "date": "2026-10-01",
       "bedtime": "02:00",
       "wakeTime": "02:12",
       "durationMinutes": 10,
@@ -212,7 +212,7 @@
   "m14": {
     "record": {
       "id": "g-14m",
-      "date": "2026-10-02",
+      "date": "2026-10-01",
       "bedtime": "02:00",
       "wakeTime": "02:14",
       "durationMinutes": 12,
@@ -254,7 +254,7 @@
   "exact960m": {
     "record": {
       "id": "g-960",
-      "date": "2026-10-01",
+      "date": "2026-09-30",
       "bedtime": "00:00",
       "wakeTime": "16:00",
       "durationMinutes": 943,
@@ -440,7 +440,7 @@
   "m961": {
     "record": {
       "id": "g-961",
-      "date": "2026-10-01",
+      "date": "2026-09-30",
       "bedtime": "00:01",
       "wakeTime": "16:01",
       "durationMinutes": 943,
@@ -626,7 +626,7 @@
   "m3000": {
     "record": {
       "id": "g-3000",
-      "date": "2026-10-03",
+      "date": "2026-10-01",
       "bedtime": "10:00",
       "wakeTime": "02:00",
       "durationMinutes": 943,
@@ -812,7 +812,7 @@
   "crossMidnight": {
     "record": {
       "id": "g-xmid",
-      "date": "2026-10-02",
+      "date": "2026-10-01",
       "bedtime": "23:50",
       "wakeTime": "00:10",
       "durationMinutes": 18,

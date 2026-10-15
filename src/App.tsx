@@ -30,6 +30,7 @@ import { LaunchSplash } from './components/LaunchSplash';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord } from './utils/recordFilter';
+import { maybeMigrateRecordDates } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { processDailySleepScore, loadTravelState, clearPendingArrival } from './services/travelService';
 
@@ -119,7 +120,9 @@ export const App: React.FC = () => {
     if (loaded) {
       // 数据恢复正常后，上次启动留的"损坏备份"不再有价值（白占同源配额）
       try { localStorage.removeItem('somnacare_sleep_records_backup_corrupted'); } catch { /* ignore */ }
-      return loaded;
+      // 第 51 轮一次性口径迁移：醒来日 → 夜归属（标记保证幂等，备份导入
+      // 由 restoreFullBackup 预写标记跳过——见 recordDateMigration.ts）
+      return maybeMigrateRecordDates(loaded);
     }
     // 仅在 JSON 损坏/结构非法时落备份：挂载写回会覆盖原值，不备份就永远找不回；
     // 合法数据每次启动都镜像一份会白吃 ~MB 级 localStorage 配额

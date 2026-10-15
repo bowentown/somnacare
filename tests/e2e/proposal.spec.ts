@@ -81,19 +81,21 @@ test('启发式：跨午夜历史出卡 → 确认 → 落库 + 影子诊断记�
   await expect(page.getByText('08:56 拿起')).toBeVisible();
   await expect(page.getByText('睡眠中亮屏 1 次')).toBeVisible();
 
-  // 确认 → 完成小结 + 落库（date=醒来那天）+ handled 锁 + 影子诊断闭环
+  // 确认 → 完成小结 + 落库（date=夜归属）+ handled 锁 + 影子诊断闭环
   await page.getByRole('button', { name: /记为这次就寝/ }).click();
   await expect(page.getByText(/晨安！恭喜完成睡眠|记录完毕/)).toBeVisible();
   await page.getByRole('button', { name: '确定并查看详情' }).click();
 
+  // 第 51 轮夜归属：bed 00:33（凌晨放下）→ 该夜属于昨天
+  const nightKey = dstr(-1, fixed);
   const recs = await readStore(page, 'somnacare_sleep_records');
-  const landed = (recs as any[]).find((r) => r.date === today);
+  const landed = (recs as any[]).find((r) => r.date === nightKey);
   expect(landed?.bedtime).toBe('00:33');
   expect(landed?.wakeTime).toBe('08:56');
-  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(today);
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(nightKey);
 
   const shadow = await readStore(page, 'somnacare_model_shadow');
-  const entry = (shadow?.entries ?? []).find((e: any) => e.date === today);
+  const entry = (shadow?.entries ?? []).find((e: any) => e.date === nightKey);
   expect(entry?.heuristic?.bed).toBe('00:33');          // 引擎跑动已入档
   expect(entry?.outcome?.type).toBe('confirmed');       // 用户采纳已回填
 });
@@ -113,7 +115,7 @@ test('忽略：隐去 + 不落库 + 刷新后仍隐去（handled 持久化）', 
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
   const recs = await readStore(page, 'somnacare_sleep_records');
   expect((recs as any[]).length).toBe(midnightRecords.length);   // 没有静默写库
-  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(0, fixed));
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));   // 夜归属：bed 00:33 凌晨放下 → 昨天
 
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
@@ -345,7 +347,7 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
   await page.getByRole('button', { name: '忽略' }).click();
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_unlocked'))).toBeNull();
-  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(0, fixed));
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));   // 夜归属：bed 00:28 凌晨放下 → 昨天
 });
 
 test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', async ({ page }) => {
@@ -577,12 +579,14 @@ test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自�
   await page.getByRole('button', { name: /记为这次就寝/ }).click();
   await expect(page.getByText(/晨安！恭喜完成睡眠|记录完毕/)).toBeVisible();
 
+  // 第 51 轮夜归属：bed 23:40（昨晚放下）→ 该夜属于昨天
+  const nightKey = dstr(-1, fixed);
   const recs = await readStore(page, 'somnacare_sleep_records');
-  const landed = (recs as any[]).find((r) => r.date === today);
+  const landed = (recs as any[]).find((r) => r.date === nightKey);
   expect(landed?.bedtime).toMatch(/^2[23]:/);
   expect(landed?.recordSource).toBe('usage');
   const shadowAfter = await readStore(page, 'somnacare_model_shadow');
-  const entry = (shadowAfter?.entries ?? []).find((e: any) => e.date === today);
+  const entry = (shadowAfter?.entries ?? []).find((e: any) => e.date === nightKey);
   expect(entry?.model?.bed).toBeTruthy();
   expect(entry?.outcome?.type).toBe('confirmed');
 });

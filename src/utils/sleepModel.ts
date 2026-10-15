@@ -156,6 +156,14 @@ function dateStr(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** 夜归属日历日（第 51 轮口径统一，§dateUtils）：夜作息就寝 <12:00 归前一天，
+ *  白天作息自然日分桶——与原生聚合同源 */
+function nightKey(bedtimeMs: number, chronotype: 'night' | 'day'): string {
+  const d = new Date(bedtimeMs);
+  const shift = chronotype === 'day' ? 0 : d.getHours() < 12 ? 1 : 0;
+  return dateStr(d.getTime() - shift * 86400000);
+}
+
 function median3(a: number[]): number {
   const s = [...a].sort((x, y) => x - y);
   return s[Math.floor(s.length / 2)];
@@ -421,7 +429,7 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
     bedtimeMs,
     wakeMs,
     windowStartMs: windowStart0,
-    targetDate: dateStr(wakeMs),
+    targetDate: nightKey(bedtimeMs, chronotype),   // 夜归属（就寝那晚的日历日）
     delta: Math.round(delta),
     lambdaAwake,
     lambdaSleep,

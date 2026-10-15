@@ -58,12 +58,16 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const [bedtime, setBedtime] = useState('23:30');
   const [wakeTime, setWakeTime] = useState('07:30');
   // 打开时应用预填（无预填则回默认值）——组件常挂，useState 初始值只跑一次，
-  // 且顺带修掉"上次打开的表单残留"漏到下一次的问题
+  // 且顺带修掉"上次打开的表单残留"漏到下一次的问题。
+  // ★ 无预填时的默认值 = "昨晚"（夜归属=今天−1）而不是今天：晨起补录
+  //   昨夜的觉是唯一常见场景，默认今天会让用户补出"今晚还没睡的觉"
+  //   （date 语义 = 哪一晚，第 51 轮口径统一）
   useEffect(() => {
     if (!isOpen) return;
     if (initialDate) { setDate(initialDate); }
     else {
       const d = new Date();
+      d.setDate(d.getDate() - 1);
       setDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
     }
     setBedtime(initialBedtime ?? '23:30');
@@ -195,7 +199,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
         <div className="py-4 space-y-4">
           {/* Date Selector */}
           <div>
-            <label htmlFor="ml-date" className="block text-xs font-bold text-white mb-1.5">记录日期（醒来那天）</label>
+            <label htmlFor="ml-date" className="block text-xs font-bold text-white mb-1.5">记录哪一晚</label>
             <input
               id="ml-date"
               type="date"

@@ -1,6 +1,7 @@
 import { SleepRecord } from '../types/sleep';
 import { calculateSleepScore, generateSleepStages } from './sleepScore';
 import { deriveKind } from './recordFilter';
+import { nightKeyOfBed } from './dateUtils';
 
 /**
  * 记录构建器：把"就寝/醒来时刻窗"转成一条 SleepRecord。
@@ -15,7 +16,8 @@ import { deriveKind } from './recordFilter';
  *  - 微睡眠分支（<90 分钟重算分期）
  *  - 分期与评分用同一个启发式潜伏期
  *  - durationMinutes = 纯睡眠（窗 − 觉醒）
- *  - recordDate = 醒来那天的本地日历日（不用 toISOString，UTC 会落前一天）
+ *  - recordDate = 夜归属（就寝那晚的本地日历日；凌晨放下归前一天，
+ *    第 51 轮从"醒来那天"整体切换——真机 10-15 实证夜猫子分数错挂当天）
  */
 export interface BuildInput {
   sleepStartMs: number;
@@ -104,8 +106,9 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
         ]
       : generated.stages;
 
-  // recordDate = 醒来那天的本地日历日
-  const recordDate = `${wakeDate.getFullYear()}-${String(wakeDate.getMonth() + 1).padStart(2, '0')}-${String(wakeDate.getDate()).padStart(2, '0')}`;
+  // recordDate = 夜归属（第 51 轮口径统一）：属于"放下手机那晚"——
+  // 凌晨放下的夜猫子，昨晚的觉归昨晚，不挂到醒来那天
+  const recordDate = nightKeyOfBed(effectiveStart.getTime(), input.chronotype === 'day' ? 'day' : 'night');
 
   const record: SleepRecord = {
     id: input.id,

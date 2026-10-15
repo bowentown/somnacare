@@ -3,29 +3,33 @@
  * 独立纯模块：petOverlay 组装 payload 消费它，护栏对它做逻辑级数值测试
  * （复审 R4——此前内联在 petOverlay 里只能用字符串断言钉形状）。
  *
- * 字段口径（复审 N3 改名后）：记录日期 = 醒来日——昨晚的记录日期就是今天。
+ * 字段口径（第 51 轮夜归属统一后）：记录日期 = 放下手机那晚——
+ * "昨晚的记录"就是 date=昨天（凌晨放下更归昨天）的最近一条夜睡。
  */
 import { SleepRecord } from '../types/sleep';
+import { toLocalDateString } from './dateUtils';
 
 export interface PetContext {
   /** 昨晚评分（-1=无记录） */
   lastScore: number;
   /** 连续未记录夜数（含最近一夜，封顶 14） */
   missedDays: number;
-  /** 昨晚是否已入账（复审 N3 改名：原 hasTonight 名不副实） */
+  /** 昨晚是否已入账 */
   lastNightRecorded: boolean;
 }
 
 export function petContext(records: SleepRecord[], now: Date): PetContext {
   const night = (r: SleepRecord): boolean => r.kind !== 'nap';
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const lastNight = records.find((r) => night(r) && r.date === today);
-  // 从最近一夜（=今天）起往前数——复审 N2：原 i=1 漏掉最近一夜，
-  // "连续未记录 ≥3 晚"实际要连漏 4 晚才触发
+  // "昨晚已入账"= 存在 date=昨天（昨晚的夜归属键）的夜睡记录——
+  // 用最近夜睡的 date 匹配会让"停在前天"的记录被误判成已入账
+  const yKey = toLocalDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const lastNight = records.find((r) => night(r) && r.date === yKey);
+  // 从昨晚的夜归属键（=昨天）起往前数：夜睡的 date 都是"就寝那晚"，
+  // 今天白天不存在"今天的夜"——昨晚没记，missedDays 从 1 起算
   let missedDays = 0;
-  for (let i = 0; i < 14; i++) {
+  for (let i = 1; i <= 14; i++) {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const key = toLocalDateString(d);
     if (records.some((r) => night(r) && r.date === key)) break;
     missedDays++;
   }

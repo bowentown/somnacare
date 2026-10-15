@@ -144,10 +144,9 @@ export function buildSleepFacts(
 ): string[] {
   const facts: string[] = [];
   const bedtime = profile?.targetBedtime ?? '23:30';
-  const today = todayStr(now);
-  // "昨晚"只看夜睡：同日既有夜睡又有小睡时，find 会先命中前插的小睡，
-  // 把午睡的时长/评分/潜伏期讲成"昨晚"（第 23 轮）
-  const lastNight = nightsOnly(records as SleepRecord[]).find((r) => r.date === today);
+  // "昨晚"= 最近的夜睡记录（第 51 轮夜归属口径：昨夜的觉 date=昨天，
+  // 不再是旧的"醒来那天=今天"）——夜睡列表按 date 降序，[0] 即最近一晚
+  const lastNight = nightsOnly(records as SleepRecord[])[0];
   const week = nightsOnly(records as SleepRecord[]).slice(0, 7);
 
   facts.push(`就寝目标 ${bedtime}`);
@@ -436,8 +435,7 @@ export async function ensureTodayMoment(
   force = false,
 ): Promise<{ moments: Moment[]; generated: boolean }> {
   const list = loadMoments();
-  const date = todayStr(now);
-  const today = date;   // 供 lastNight 查找用（同一值）
+  const date = todayStr(now);   // 每日动态的日期键（今天）
   // 找【每日动态】本身：明信片动态同日期且前插，find 不加限定会命中它，
   // 把它的点赞/评论错搬到每日动态上
   const existing = list.find((m) => m.date === date && !m.postcardId);
@@ -447,8 +445,9 @@ export async function ensureTodayMoment(
   const facts = buildSleepFacts(records, profile, now);
   const cfg = profile?.aiConfig;
   // 本地兜底模板需要原始数值字段（骂人段按实测潜伏期判断，见 localMoment）
-  // 与 buildSleepFacts 同口径：只看夜睡，别把午睡数值塞进骂人模板
-  const lastNight = nightsOnly(records as SleepRecord[]).find((r) => r.date === today);
+  // 与 buildSleepFacts 同口径：只看夜睡，别把午睡数值塞进骂人模板；
+  // "昨晚"= 最近的夜睡记录（夜归属口径，第 51 轮）
+  const lastNight = nightsOnly(records as SleepRecord[])[0];
   let text: string | null = null;
   let comments: MomentComment[] = [];
   let cards: MomentCard[] = [];

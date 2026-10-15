@@ -4,19 +4,22 @@
  * 铁律（第 20 轮方案 §决策 1）：只预填，不自动写入——lastActive 是行为性
  * 信号（放下手机 ≠ 入睡），误判写库会污染评分/规律度/图鉴能量。
  *
- * 日期口径（方案 §3.3，最大的坑）：targetDate = 醒来那天的日历日，
- * 由 firstActive 时刻直接取——绝不能用 UsageDay.date（那是"夜归属"键，
- * 恒差一天；用它会把新记录落到前一晚，保存时删掉真正属于那晚的记录）。
- * 本实现通过 epoch 重建（§3.2 gate 链之后由 verify-proposal 反向注入验证）。
+ * 日期口径（第 51 轮口径统一）：targetDate = 夜归属（放下手机那晚的
+ * 日历日，nightKeyOfBed 由 bedtime epoch 直接取）。历史包袱说明：
+ *  - UsageDay.date 本来就是夜归属键（原生聚合按 −12h 分桶）——此前的
+ *    "必须差一天"警告只属于旧口径（醒来那天），旧实现因怕落错晚而从
+ *    wakeMs 重建；口径统一后这个坑整个消失，启发式与原生终于同键
+ *  - 凌晨放下的夜（00:36→08:31）归 00:36 那天（前一晚），与用户直觉一致
  */
 import { SleepRecord } from '../types/sleep';
 import { circularMedian, shortArc, clockMinutes } from './clockMath';
 import { nightsOnly } from './recordFilter';
 import { fitSleepModel, modelWindowStart } from './sleepModel';
+import { nightKeyOfBed } from './dateUtils';
 import type { UsageDay } from './usageSignal';
 
 export interface Proposal {
-  targetDate: string;        // 醒来那天的日历日（YYYY-MM-DD）
+  targetDate: string;        // 夜归属：放下手机那晚的日历日（YYYY-MM-DD）
   bedtime: string;           // 'HH:MM' 放下手机
   wakeTime: string;          // 'HH:MM' 第一次拿起
   bedtimeMs: number;         // epoch（构建记录用）
@@ -85,15 +88,16 @@ export function computeProposalTraced(input: ProposalInput): { proposal: Proposa
   const windowMinutes = Math.round((wakeMs - bedtimeMs) / 60000);
   if (windowMinutes < 240 || windowMinutes > 960) return { proposal: null, block: `窗口 ${Math.floor(windowMinutes / 60)}h${windowMinutes % 60}m 不在 4h–16h 内` };
 
-  // ★ targetDate = 醒来那天的日历日（由 wakeMs 取，绝不用 day.date——差一天）
-  const w = new Date(wakeMs);
-  const targetDate = `${w.getFullYear()}-${pad(w.getMonth() + 1)}-${pad(w.getDate())}`;
+  // ★ targetDate = 夜归属（第 51 轮口径统一）：属于"放下手机那晚"。
+  //   此前是醒来那天——凌晨放下的夜猫子每天会把昨晚的分数挂到今天
+  //   （真机 10-15 实证）。由 bedtimeMs 的夜归属直接取。
+  const targetDate = nightKeyOfBed(bedtimeMs, isDay ? 'day' : 'night');
 
   // 陈旧防御（第 37 轮）：usage 缓存长期未刷新时（久不开 App/查询失败回退
   // 旧缓存），提议可能指向好几天前的那晚——"补发旧账"没有确认价值。
   // 超过 3 天的目标夜直接不提议（模型路径的窗口本身锚定 now，无此问题）
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const target0 = new Date(w.getFullYear(), w.getMonth(), w.getDate()).getTime();
+  const target0 = new Date(targetDate + 'T00:00:00').getTime();   // 夜归属锚
   if ((today0 - target0) / 86400000 > 3) return { proposal: null, block: `目标夜 ${targetDate} 已超过 3 天（陈旧缓存），不补发旧账` };
 
   // gate 4：已有夜睡记录 → 不提议。必须只看夜睡——小睡与夜睡共存是合法状态

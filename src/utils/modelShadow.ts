@@ -26,7 +26,7 @@ export interface EngineTimes {
 }
 
 export interface ShadowEntry {
-  date: string;                     // 目标夜 = 醒来那天的日历日
+  date: string;                     // 目标夜 = 夜归属（放下手机那晚，第 51 轮口径统一）
   model?: EngineTimes;              // SensibleSleep 输出
   heuristic?: EngineTimes;          // 旧启发式输出（回退路径）
   outcome?: {

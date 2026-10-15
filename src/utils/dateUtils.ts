@@ -13,3 +13,26 @@ export function localDateOffset(days: number, from: Date = new Date()): string {
   d.setDate(d.getDate() + days);
   return toLocalDateString(d);
 }
+
+/**
+ * 夜归属日期（第 51 轮口径统一）：一晚睡眠属于"放下手机那晚"——
+ * 凌晨 00:36 放下睡到早上 08:31，是"前一晚"的觉，不是醒来那天新开的一晚。
+ * 规则与原生聚合（UsageSignalPlugin）完全同源：
+ *  - 夜间作息：就寝时钟 <12:00 → 归前一天（−12h 分桶）；否则归当天
+ *  - 白天作息：自然日分桶，归当天（原生对 day 不平移）
+ * 此前全链路用"醒来那天"（凌晨放下的夜猫子每天都会把昨晚的分数挂到
+ * 今天），与用户直觉相反，已在第 51 轮整体切换。
+ */
+export function nightKeyOfBed(bedtimeMs: number, chronotype: 'night' | 'day' = 'night'): string {
+  const d = new Date(bedtimeMs);
+  const shift = chronotype === 'day' ? 0 : d.getHours() < 12 ? 1 : 0;
+  return toLocalDateString(new Date(d.getFullYear(), d.getMonth(), d.getDate() - shift));
+}
+
+/** HH:MM 版本（手动补录/影子诊断只有时钟串时用）：锚定日由调用方给。 */
+export function nightKeyOfClock(hhmm: string, anchorDate: string, chronotype: 'night' | 'day' = 'night'): string {
+  const [y, mo, da] = anchorDate.split('-').map(Number);
+  const [h] = hhmm.split(':').map(Number);
+  const shift = chronotype === 'day' ? 0 : h < 12 ? 1 : 0;
+  return toLocalDateString(new Date(y, mo - 1, da - shift));
+}

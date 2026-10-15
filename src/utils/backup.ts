@@ -14,6 +14,9 @@ export interface FullBackup {
   app: 'somnacare';
   schema: number;
   exportedAt: string;
+  /** 第 51 轮夜归属口径标记：导出时 records 已迁移则带 'night-v1'，
+   *  导入端预写本地迁移标记跳过重复迁移（旧备份无此字段 → 照常迁移） */
+  dateSchema?: string;
   records: unknown[];
   profile: Record<string, unknown> | null;
   travel: Record<string, unknown> | null;
@@ -57,6 +60,8 @@ const AI_CONFIG_FIELDS = [
   'customApiKey', 'customModelName', 'systemPersona', 'localModelVariant',
 ] as const;
 
+import { recordDateMigrationDone, markRecordDateMigrationDone } from './recordDateMigration';
+
 function readJson(key: string): unknown {
   try {
     const raw = localStorage.getItem(key);
@@ -95,6 +100,7 @@ export function buildFullBackup(): FullBackup {
     app: 'somnacare',
     schema: BACKUP_SCHEMA,
     exportedAt: new Date().toISOString(),
+    dateSchema: recordDateMigrationDone() ? 'night-v1' : undefined,
     records: Array.isArray(records) ? records : [],
     profile: profile as Record<string, unknown> | null,
     travel: travel as Record<string, unknown> | null,
@@ -168,8 +174,13 @@ export function restoreFullBackup(data: FullBackup): {
 function restoreFullBackupInner(data: FullBackup): {
   records: number; moments: number; chat: number; travel: boolean; profile: boolean;
 } {
-  // records：保留原始数组，读取端 App.tsx 已有逐条 sanitize + 过滤
+  // records：保留原始数组，读取端 App.tsx 已有逐条 sanitize + 过滤。
+  // 夜归属迁移标记（第 51 轮）：新备份的数据已是夜归属 → 预写标记防止
+  // reload 后 App 加载再迁一次（date 又被 −1）；旧备份照常迁移
   localStorage.setItem(KEYS.records, JSON.stringify(Array.isArray(data.records) ? data.records : []));
+  if (data.dateSchema === 'night-v1') {
+    markRecordDateMigrationDone();
+  }
 
   // profile：合并回填（凭据字段不在备份里，保留导入设备上已有的值）。
   // 复审 V13 残留：浅合并本身无原型污染（对象展开是 CreateDataProperty），

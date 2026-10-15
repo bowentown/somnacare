@@ -405,15 +405,16 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
     let a = seed >>> 0;
     return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
+  // date = 夜归属（第 51 轮口径统一：放下手机那晚；bed 全在凌晨 → date = bed 日 −1）
   const NIGHTS: Array<{ date: string; bed: string; wake: string }> = [
-    { date: '2026-10-14', bed: '00:28', wake: '07:38' },  // 昨晚（未记录——tests 不入 records）
-    { date: '2026-10-13', bed: '00:39', wake: '09:08' },
-    { date: '2026-10-12', bed: '23:30', wake: '10:15' },
-    { date: '2026-10-11', bed: '00:00', wake: '09:00' },
-    { date: '2026-10-10', bed: '23:15', wake: '09:15' },
-    { date: '2026-10-09', bed: '22:45', wake: '09:00' },
-    { date: '2026-10-08', bed: '01:33', wake: '08:53' },
-    { date: '2026-10-07', bed: '01:59', wake: '10:31' },
+    { date: '2026-10-13', bed: '00:28', wake: '07:38' },  // 昨晚（10-13 夜：10-14 凌晨 00:28 放下；未记录——tests 不入 records）
+    { date: '2026-10-12', bed: '00:39', wake: '09:08' },
+    { date: '2026-10-11', bed: '23:30', wake: '10:15' },
+    { date: '2026-10-10', bed: '00:00', wake: '09:00' },
+    { date: '2026-10-09', bed: '23:15', wake: '09:15' },
+    { date: '2026-10-08', bed: '22:45', wake: '09:00' },
+    { date: '2026-10-07', bed: '01:33', wake: '08:53' },
+    { date: '2026-10-06', bed: '01:59', wake: '10:31' },
   ];
   const recs = NIGHTS.slice(1).map((n, i) => ({
     id: 'r' + i, date: n.date, bedtime: n.bed, wakeTime: n.wake,
@@ -462,11 +463,11 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   };
   const noon = run(12, 33);
   check('E1 真实场景：中午 12:33 打开（昨夜未记录）→ 提议昨晚',
-    !!noon.proposal && noon.proposal.targetDate === '2026-10-14',
+    !!noon.proposal && noon.proposal.targetDate === '2026-10-13',
     noon.proposal ? `${noon.proposal.bedtime}→${noon.proposal.wakeTime}` : (noon.block ?? noon.fit.reason));
   const evening = run(16, 52);
   check('E2 真实场景：傍晚 16:52 打开 → 仍提议昨晚',
-    !!evening.proposal && evening.proposal.targetDate === '2026-10-14',
+    !!evening.proposal && evening.proposal.targetDate === '2026-10-13',
     evening.proposal ? `${evening.proposal.bedtime}→${evening.proposal.wakeTime}` : (evening.block ?? evening.fit.reason));
   const late = run(3, 30);
   check('E3 反向：凌晨 03:30 打开（还在睡）→ 不提议',
@@ -488,11 +489,11 @@ const ok = (r: ReturnType<typeof fitSleepModel>) => r.status === 'ok' ? r : null
   } as any);
   const e4 = runAt(rollAt + 12 * 60000);
   check('E4 窗口刚滚动 12 分钟打开（真机 16:12 死区）→ 仍提议昨晚',
-    !!e4.proposal && e4.proposal.targetDate === '2026-10-14',
+    !!e4.proposal && e4.proposal.targetDate === '2026-10-13',
     e4.proposal ? `${e4.proposal.bedtime}→${e4.proposal.wakeTime}` : (e4.block ?? e4.fit.reason));
   const e5 = runAt(rollAt + 3 * 60000);
   check('E5 窗口刚滚动 3 分钟打开（极端边界）→ 仍提议昨晚',
-    !!e5.proposal && e5.proposal.targetDate === '2026-10-14',
+    !!e5.proposal && e5.proposal.targetDate === '2026-10-13',
     e5.proposal ? `${e5.proposal.bedtime}→${e5.proposal.wakeTime}` : (e5.block ?? e5.fit.reason));
 }
 

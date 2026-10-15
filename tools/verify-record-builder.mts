@@ -9,7 +9,7 @@
  *  - 16 小时截断（961 分钟触发，960 不触发）
  *  - 微睡眠分支（<90 分钟分期重算）
  *  - 分期总和 = durationMinutes + awakeMinutes
- *  - recordDate = 醒来那天的本地日历日（跨午夜归醒来日）
+ *  - recordDate = 夜归属（就寝那晚的本地日历日，第 51 轮口径统一）
  *
  * 方法论约束：护栏必须能反向验证——构造一个字段被篡改的输出必须报红。
  */
@@ -74,7 +74,7 @@ for (const [key, input] of Object.entries(inputs)) {
   const stageSum = built.record.stages.reduce((a: number, s: { durationMinutes: number }) => a + s.durationMinutes, 0);
   check(`边界 ${key}：分期总和 = duration + awake`, stageSum === built.record.durationMinutes + built.record.awakeMinutes,
     `${stageSum} vs ${built.record.durationMinutes + built.record.awakeMinutes}`);
-  check(`边界 ${key}：date = 醒来日`, built.record.date === g.date);
+  check(`边界 ${key}：date = 夜归属（就寝那晚）`, built.record.date === g.date);
 }
 
 // 反向自检：篡改输出（时长 +1）必须被逐字段断言抓出

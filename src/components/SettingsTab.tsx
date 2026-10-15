@@ -512,7 +512,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               </p>
               {st.droppedOutcomes > 0 && (
                 <p className="text-[9px] text-amber-400/90 leading-relaxed">
-                  另有 {st.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录日期"请选醒来那天。
+                  另有 {st.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录哪一晚"请选就寝那晚。
                 </p>
               )}
               {st.withOutcome === 0 && (

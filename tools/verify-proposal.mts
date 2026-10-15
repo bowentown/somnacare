@@ -2,8 +2,8 @@
  * 护栏：提议引擎（P3 的数据正确性防线）。
  *
  * 覆盖（方案 §八 + 第 42 轮）：
- *  - 日期口径：targetDate 必须等于"醒来那天的日历日"——
- *    反向注入（用 UsageDay.date 当 targetDate 的错误口径）必须与正确值不同
+ *  - 日期口径（第 51 轮统一）：targetDate = 夜归属（放下手机那晚）——
+ *    反向注入（用旧口径"醒来那天"）必须与正确值不同
  *  - 窗口边界：4h 接受 / 不足 4h 拒绝 / 16h 接受 / 超过 16h 拒绝
  *  - 置信度：偏离历史就寝中位数 >180 分钟 → 不预填（低置信静默跳过）
  *  - 跨午夜就寝历史（23:5x / 00:3x 混合）：必须用【圆周】中位——
@@ -49,9 +49,11 @@ const dstr = (offsetDays: number): string => {
 const rec = (date: string, bedtime: string): any =>
   ({ id: 'r' + date + bedtime, date, bedtime, wakeTime: '07:30', durationMinutes: 480, sleepScore: 80 });
 
-// 基准夜：00:20 放下 → 07:35 拿起。夜归属键 = 昨天；醒来日 = 今天（targetDate）
+// 基准夜：00:20 放下（今天凌晨）→ 07:35 拿起。夜归属键 = 昨天 = targetDate
+// （第 51 轮后启发式与原生 UsageDay.date 终于同键；反向锚 = 旧口径"醒来日"）
 const baseDay = { date: dstr(-1), lastActive: '00:20', firstActive: '07:35', nightPickups: 2 };
-const TARGET = dstr(0);   // 醒来那天 = 今天
+const TARGET = dstr(-1);   // 夜归属 = 昨天
+const STALE_WAKE_DAY = dstr(0);   // 旧口径（醒来那天）——反向锚
 const baseRecords = [
   rec(dstr(-2), '23:10'),
   rec(dstr(-3), '23:05'),
@@ -61,8 +63,8 @@ const baseRecords = [
 {
   const p = computeProposal({ usageDays: [baseDay], records: baseRecords, sessionActive: false });
   check('基准：产出提议', p !== null);
-  check('日期口径：targetDate = 醒来那天(今天)', p?.targetDate === TARGET, p?.targetDate);
-  check('日期口径：≠ UsageDay.date(昨天)——反向注入的错口径可区分', p?.targetDate !== baseDay.date);
+  check('日期口径：targetDate = 夜归属(昨天=放下那晚)', p?.targetDate === TARGET, p?.targetDate);
+  check('日期口径：≠ 旧口径醒来日(今天)——反向注入的错口径可区分', p?.targetDate !== STALE_WAKE_DAY);
   check('时刻与 UsageDay 一致', p?.bedtime === '00:20' && p?.wakeTime === '07:35');
   check('窗口 = 435 分钟', p !== null && p.windowMinutes === 435, `w=${p?.windowMinutes}`);
   check('置信度：偏差 70 分钟 → high', p?.confidence === 'high', p?.confidence);
@@ -105,7 +107,7 @@ const baseRecords = [
   const midnightDay = { date: dstr(-1), lastActive: '00:33', firstActive: '08:56', nightPickups: 1 };
   const p = computeProposal({ usageDays: [midnightDay], records: midnightHistory, sessionActive: false });
   check('跨午夜历史（23:5x/00:3x 混合）→ 仍产出提议（圆周中位）', p !== null && p?.confidence !== 'low', p?.confidence);
-  check('跨午夜：targetDate = 醒来那天(今天)', p?.targetDate === TARGET, p?.targetDate);
+  check('跨午夜：targetDate = 夜归属(昨天)', p?.targetDate === TARGET, p?.targetDate);
   check('跨午夜：窗口 503 分钟（8h23m）', p?.windowMinutes === 503, `w=${p?.windowMinutes}`);
   // 反向锚定：线性中位数实现在同一输入上必须失败——
   // 坏实现与正确实现可区分（护栏方法论约束）
@@ -169,7 +171,7 @@ const baseRecords = [
   const dayHistory = [rec(dstr(-1), '08:40'), rec(dstr(-2), '08:35'), rec(dstr(-3), '08:30')];
   const pd = computeProposal({ usageDays: dayUsage, records: dayHistory, sessionActive: false, chronotype: 'day' });
   check('day 作息：产出提议（此前链路整段是死的）', pd !== null);
-  check('day 作息：targetDate = 当天，不平移', pd?.targetDate === dstr(0), pd?.targetDate);
+  check('day 作息：targetDate = 当天（自然日分桶，与原生同）', pd?.targetDate === dstr(0), pd?.targetDate);
   check('day 作息：窗口 = 480 分钟', pd !== null && pd.windowMinutes === 480, `w=${pd?.windowMinutes}`);
   // 反向：同样的白昼数据在 night 口径（缺省）下必须被防御门拒绝
   const pn = computeProposal({ usageDays: dayUsage, records: baseRecords, sessionActive: false });
@@ -219,7 +221,7 @@ const baseRecords = [
   });
   check('模型：理想 14 夜 → decided 提议（不回退）', full.proposal !== null && full.fallbackAllowed === false, full.fit ? `${full.fit.status} ${full.fit.reason}` : '');
   check('模型：fit 诊断字段在位（ok + Δ 原因）', full.fit?.status === 'ok' && full.fit.reason.includes('Δ='), full.fit?.reason);
-  check('模型：目标夜 = 醒来那天(今天)', full.proposal?.targetDate === dstr(0), full.proposal?.targetDate);
+  check('模型：目标夜 = 夜归属(昨晚 23:40 放下那晚)', full.proposal?.targetDate === dstr(-1), full.proposal?.targetDate);
   check('模型：置信度由 Δ 映射（≥300 不为 null）', full.proposal?.confidence === 'high' || full.proposal?.confidence === 'medium', full.proposal?.confidence);
 
   // 反向 1：数据不足（仅 2 活跃窗）→ insufficient + 允许回退启发式
@@ -230,7 +232,7 @@ const baseRecords = [
 
   // 反向 2：gate 4——目标夜已有夜睡记录 → 拒且不回退，block 可读
   const taken = computeModelProposal({
-    events, observedUntil: now, chronotype: 'night', records: [rec(dstr(0), '22:00')], sessionActive: false, handledDate: null, now: fixed,
+    events, observedUntil: now, chronotype: 'night', records: [rec(dstr(-1), '22:00')], sessionActive: false, handledDate: null, now: fixed,
   });
   check('模型：目标夜已有记录 → 拒且不回退（block 可读）', taken.proposal === null && taken.fallbackAllowed === false && (taken.block ?? '').includes('已有夜睡记录'), taken.block);
 

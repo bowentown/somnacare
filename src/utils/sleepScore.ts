@@ -264,7 +264,7 @@ export function formatDurationChinese(minutes: number): string {
  */
 const DEMO_SPEC: Array<{
   id: string;
-  /** 相对今天的偏移天数（0=今天）；写死日期会随时间推移变成"一周前的过期演示" */
+  /** 相对今天偏移的天数（夜归属：1=昨晚）；写死日期会随时间推移变成"过期演示" */
   daysAgo: number;
   bedtime: string;
   wakeTime: string;
@@ -275,7 +275,7 @@ const DEMO_SPEC: Array<{
 }> = [
   {
     id: 'log-7',
-    daysAgo: 0, // Last night
+    daysAgo: 1, // 昨晚（夜归属：date=昨天；23:15 放下睡到 07:10）
     bedtime: '23:15',
     wakeTime: '07:10',
     latencyMinutes: 14,
@@ -283,12 +283,12 @@ const DEMO_SPEC: Array<{
     preSleepHabits: ['reading', 'hot_bath', 'meditation'],
     dreamNotes: '梦见在海边森林散步，微风徐徐，很舒服。',
   },
-  { id: 'log-6', daysAgo: 1, bedtime: '23:45', wakeTime: '07:00', latencyMinutes: 22, wakingMood: 'neutral', preSleepHabits: ['screen_time'] },
-  { id: 'log-5', daysAgo: 2, bedtime: '00:20', wakeTime: '07:30', latencyMinutes: 28, wakingMood: 'tired', preSleepHabits: ['screen_time', 'caffeine'], dreamNotes: '赶公交车迟到的紧张梦境。' },
-  { id: 'log-4', daysAgo: 3, bedtime: '23:30', wakeTime: '08:00', latencyMinutes: 12, wakingMood: 'refreshed', preSleepHabits: ['meditation', 'reading'] },
-  { id: 'log-3', daysAgo: 4, bedtime: '23:10', wakeTime: '06:55', latencyMinutes: 16, wakingMood: 'neutral', preSleepHabits: ['hot_bath'] },
-  { id: 'log-2', daysAgo: 5, bedtime: '01:05', wakeTime: '07:15', latencyMinutes: 35, wakingMood: 'groggy', preSleepHabits: ['screen_time', 'alcohol'] },
-  { id: 'log-1', daysAgo: 6, bedtime: '23:00', wakeTime: '07:05', latencyMinutes: 15, wakingMood: 'refreshed', preSleepHabits: ['meditation'] },
+  { id: 'log-6', daysAgo: 2, bedtime: '23:45', wakeTime: '07:00', latencyMinutes: 22, wakingMood: 'neutral', preSleepHabits: ['screen_time'] },
+  { id: 'log-5', daysAgo: 3, bedtime: '00:20', wakeTime: '07:30', latencyMinutes: 28, wakingMood: 'tired', preSleepHabits: ['screen_time', 'caffeine'], dreamNotes: '赶公交车迟到的紧张梦境。' },
+  { id: 'log-4', daysAgo: 4, bedtime: '23:30', wakeTime: '08:00', latencyMinutes: 12, wakingMood: 'refreshed', preSleepHabits: ['meditation', 'reading'] },
+  { id: 'log-3', daysAgo: 5, bedtime: '23:10', wakeTime: '06:55', latencyMinutes: 16, wakingMood: 'neutral', preSleepHabits: ['hot_bath'] },
+  { id: 'log-2', daysAgo: 6, bedtime: '01:05', wakeTime: '07:15', latencyMinutes: 35, wakingMood: 'groggy', preSleepHabits: ['screen_time', 'alcohol'] },
+  { id: 'log-1', daysAgo: 7, bedtime: '23:00', wakeTime: '07:05', latencyMinutes: 15, wakingMood: 'refreshed', preSleepHabits: ['meditation'] },
 ];
 
 export function getInitialSleepLogs(): SleepRecord[] {
