@@ -30,7 +30,7 @@ import { LaunchSplash } from './components/LaunchSplash';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord } from './utils/recordFilter';
-import { maybeMigrateRecordDates } from './utils/recordDateMigration';
+import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { processDailySleepScore, loadTravelState, clearPendingArrival } from './services/travelService';
 
@@ -86,6 +86,7 @@ export const App: React.FC = () => {
   const [sleepStartSignal, setSleepStartSignal] = useState(0);
   const TAB_ORDER: NavTab[] = ['today', 'trends', 'coach', 'eyecare', 'settings'];
   const trackRef = useRef<HTMLDivElement>(null);
+  const listenerCleanupRef = useRef<(() => void) | null>(null);
   // 最近一次划动抬手的时刻：swallowClick 的时间窗判定用。
   // 初值必须取 -Infinity——0 会与 performance.now() 的加载后前 350ms 撞车，
   // 那段窗口里所有点击（含底栏切换）都会被当成"刚划完"而吞掉
@@ -120,9 +121,16 @@ export const App: React.FC = () => {
     if (loaded) {
       // 数据恢复正常后，上次启动留的"损坏备份"不再有价值（白占同源配额）
       try { localStorage.removeItem('somnacare_sleep_records_backup_corrupted'); } catch { /* ignore */ }
-      // 第 51 轮一次性口径迁移：醒来日 → 夜归属（标记保证幂等，备份导入
-      // 由 restoreFullBackup 预写标记跳过——见 recordDateMigration.ts）
-      return maybeMigrateRecordDates(loaded);
+      // 第 51 轮一次性口径迁移：醒来日 → 夜归属（标记保证幂等）。作息类型
+      // 决定 day 作息豁免（其自然日口径两侧一致）——profile 此时尚未初始化，
+      // 同步读盘；备份导入路径的迁移见 backup.ts / handleImportRecords
+      let chronotype: 'night' | 'day' | 'irregular' = 'night';
+      try {
+        const p = localStorage.getItem('somnacare_user_profile');
+        const c = p ? (JSON.parse(p) as any)?.chronotype : null;
+        if (c === 'day' || c === 'irregular') chronotype = c;
+      } catch { /* ignore */ }
+      return maybeMigrateRecordDates(loaded, chronotype);
     }
     // 仅在 JSON 损坏/结构非法时落备份：挂载写回会覆盖原值，不备份就永远找不回；
     // 合法数据每次启动都镜像一份会白吃 ~MB 级 localStorage 配额
@@ -246,7 +254,9 @@ export const App: React.FC = () => {
     try {
       localStorage.setItem('somnacare_user_profile', JSON.stringify(userProfile));
     } catch (e) {
+      // 配额满：profile 只在内存，重启即丢——按 records 的惯例给出可见反馈
       console.warn('[storage] 用户档案写入失败', e);
+      showToast('⚠️ 本机存储空间不足，设置修改重启后会丢失');
     }
   }, [userProfile]);
 
@@ -408,18 +418,23 @@ export const App: React.FC = () => {
       cap.Plugins?.GemmaLLM?.bedtimeAutoStartConsume?.().then((res: any) => {
         if (res?.consume) runGoodPath();
       });
-      // addListener 返回句柄，卸载/依赖变化时必须移除（否则每次改目标都叠加一个监听器）
+      // addListener 返回句柄，卸载/依赖变化时必须移除（否则每次改目标都叠加
+      // 一个监听器）。句柄经 Promise 异步到达：cleanup 先到时置 cancelled，
+      // resolve 回调里补移除——否则旧监听器永久泄漏，一次"好的"触发多次
+      let cancelled = false;
       Promise.resolve(cap.Plugins?.GemmaLLM?.addListener?.('bedtimeGood', () => runGoodPath()))
-        .then((h: any) => { listenerHandle = h; })
+        .then((h: any) => {
+          if (cancelled) { try { h?.remove?.(); } catch { /* ignore */ } return; }
+          listenerHandle = h;
+        })
         .catch(() => {});
+      listenerCleanupRef.current = () => { cancelled = true; try { listenerHandle?.remove?.(); } catch { /* ignore */ } };
     } catch {
       // ignore
     }
-    return () => {
-      try { listenerHandle?.remove?.(); } catch { /* ignore */ }
-    };
+    return () => { listenerCleanupRef.current?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile.targetBedtime, userProfile.bedtimeReminderEnabled]);
+  }, [userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.bedtimeReminderEnabled, userProfile.nightRescueEnabled]);
 
   // 护眼滤镜：打开 App 时按配置/定时窗口自动启停，之后每 30 秒轮询一次
   const eyeCareCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;
@@ -714,9 +729,11 @@ export const App: React.FC = () => {
   };
 
   const handleResetDemoData = () => {
+    // 破坏性操作与删除单条记录同防护级：演示数据会覆盖全部真实记录
+    if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
     setRecords(initial);
-    showToast('已重置恢复 7 天真实睡眠示例数据');
+    showToast('已载入 7 天演示数据（原记录已被替换）');
   };
 
   const handleDeleteRecord = (id: string) => {
@@ -826,7 +843,7 @@ export const App: React.FC = () => {
         document.body,
       )}
       {toastMessage && (
-        <div className={`fixed top-5 left-0 right-0 mx-auto w-fit z-[350] px-5 py-3 rounded-2xl ${currentTheme.accentBg.split(' ')[0]} ${currentTheme.accentFg} text-xs font-black shadow-2xl flex items-center gap-2.5 animate-bounce border border-white/10`}>
+        <div role="status" aria-live="polite" className={`fixed top-5 left-0 right-0 mx-auto w-fit z-[350] px-5 py-3 rounded-2xl ${currentTheme.accentBg.split(' ')[0]} ${currentTheme.accentFg} text-xs font-black shadow-2xl flex items-center gap-2.5 animate-bounce border border-white/10`}>
           <CheckCircle2 className="w-5 h-5 opacity-90" />
           <span>{toastMessage}</span>
         </div>
@@ -915,7 +932,10 @@ export const App: React.FC = () => {
                       onImportRecords={(imported) => {
             // 与"最近一晚 = records[0]"的契约对齐：导入升序备份此前会让首页/
             // AI/趋势全部指向最老一条，且按下标裁剪时丢的恰好是最近的记录
-            const sorted = [...imported].sort(
+            // records-only 备份只可能出自旧版导出（醒来日口径）→ 就地夜归属
+            // 迁移（第 51 轮审计：本机标记已置位时 reload 不会再迁，必须在此补）
+            const migratedImport = migrateRecordDatesToNightKey(imported, userProfile.chronotype ?? 'night').records;
+            const sorted = [...migratedImport].sort(
               (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
             );
             if (!window.confirm(`导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条），继续？`)) {

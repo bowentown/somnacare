@@ -329,7 +329,12 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
           <span className={`text-xs font-medium ${theme.textSecondary}`}>极光睡眠监测中</span>
         </div>
         <button
-          onClick={onClose}
+          onClick={() => {
+            // 会话进行中（>2 分钟）的关闭 = 丢弃未保存的整晚记录——破坏性
+            // 操作与"取消记录"同防护级，必须确认（第 51 轮审计）
+            if (elapsedSeconds > 120 && !window.confirm(`已记录 ${Math.floor(elapsedSeconds / 60)} 分钟，关闭将丢弃本次未保存的整夜记录，确定？`)) return;
+            onClose();
+          }}
           aria-label="关闭整夜记录"
           className={`p-2 rounded-full ${theme.cardInnerBg} ${theme.textMuted} hover:opacity-80 transition-opacity`}
         >

@@ -102,11 +102,16 @@ public class NightRescueService extends Service {
         String typeKey = (deep ? "rescue_deep_" : "rescue_wind_") + nightId;
         if (sp.getInt(typeKey, 0) >= 1) return null;
 
-        // 近 7 夜 ≥3 晚触发过深夜规则 → 免罪式（也不念叨风幕）
+        // 近 7 夜 ≥3 晚触发过深夜规则 → 免罪式（也不念叨风幕）。
+        // rescue_deep_days 存 nightId（nYYYYMMDD，字典序=时间序）——此前直接数
+        // 条数且只截最近 7 条不剪枝：3 次跨月触发即永久免罪，规则失真
+        String windowFloor = nightIdOf(now - 7 * 24 * 3600_000L);
         int deepRecent = 0;
         try {
             JSONArray days = new JSONArray(sp.getString("rescue_deep_days", "[]"));
-            for (int i = 0; i < days.length(); i++) deepRecent++;
+            for (int i = 0; i < days.length(); i++) {
+                if (days.getString(i).compareTo(windowFloor) >= 0) deepRecent++;
+            }
         } catch (Exception ignored) {
         }
         Situation s = deep ? (deepRecent >= 3 ? Situation.DEEP_RULE_SOFT : Situation.DEEP_RULE)
@@ -128,7 +133,7 @@ public class NightRescueService extends Service {
             while (days.length() > 7) days.remove(0);
             e.putString("rescue_deep_days", days.toString());
         }
-        cleanupOldKeys(sp, e, nightId);
+        cleanupOldKeys(sp, e, nightId, now);
         e.apply();
         return s;
     }
@@ -170,17 +175,15 @@ public class NightRescueService extends Service {
         }
     }
 
-    /** 清理 8 天前的旧计数键（前缀 rescue_*_nYYYYMMDD）。 */
-    private static void cleanupOldKeys(SharedPreferences sp, SharedPreferences.Editor e, String keepNightId) {
+    /** 清理 8 天前的旧计数键（前缀 rescue_*_nYYYYMMDD；nightId 字典序比较，
+     *  旧实现的日期数字差在跨月时会失真误删/误留）。 */
+    private static void cleanupOldKeys(SharedPreferences sp, SharedPreferences.Editor e, String keepNightId, long now) {
+        String floor = nightIdOf(now - 8 * 24 * 3600_000L);
         for (String key : sp.getAll().keySet()) {
             if (!key.startsWith("rescue_") || !key.contains("_n")) continue;
             if (key.endsWith(keepNightId)) continue;
             String suffix = key.substring(key.indexOf("_n") + 2); // 跳过 "_n" 前缀取纯数字
-            try {
-                long diff = Long.parseLong(keepNightId.substring(1)) - Long.parseLong(suffix);
-                if (diff > 8) e.remove(key);
-            } catch (NumberFormatException ignored) {
-            }
+            if (suffix.compareTo(floor.substring(1)) < 0) e.remove(key);
         }
     }
 

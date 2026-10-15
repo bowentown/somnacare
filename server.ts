@@ -543,18 +543,18 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
     });
 
     if (geminiResponse && geminiResponse.chronotype) {
-      res.json(geminiResponse);
+      res.json({ ...geminiResponse, engine: 'gemini' });
       return;
     }
 
     // High quality clinical rule-based fallback
     const fallbackResult = generateClinicalSleepAnalysis(recentLogs, userProfile);
-    res.json(fallbackResult);
+    res.json({ ...fallbackResult, engine: 'rules' });
   } catch (error: any) {
     console.error('Sleep analysis error:', error);
     // Graceful fallback even on unexpected error
     const fallback = generateClinicalSleepAnalysis(req.body?.recentLogs, req.body?.userProfile);
-    res.json(fallback);
+    res.json({ ...fallback, engine: 'rules' });
   }
 });
 

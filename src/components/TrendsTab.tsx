@@ -174,6 +174,17 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
           </div>
         </div>
 
+        {/* 空态（第 51 轮审计）：无任何夜睡记录时三种视图都只剩参考线空壳，
+            视觉如坏图——统一以空态文案替代三视图 */}
+        {nightsOnly(records).length === 0 && (
+          <div className="relative h-40 rounded-2xl border border-dashed border-slate-600 bg-black/20 flex flex-col items-center justify-center gap-1.5 animate-tab-fade-in">
+            <span className="text-sm font-black text-slate-300">暂无睡眠数据</span>
+            <span className="text-[10px] text-slate-500 leading-relaxed text-center px-6">
+              回睡眠页记录第一晚，或从偏好页导入备份——曲线会在积累 1 晚后出现
+            </span>
+          </div>
+        )}
+        {nightsOnly(records).length > 0 && (<>
         {/* View Mode 1: Quality Score Trend */}
         {viewMode === 'quality' && (
           <div className="space-y-2 animate-tab-fade-in">
@@ -423,6 +434,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             </div>
           </div>
         )}
+        </>)}
       </div>
 
       {/* 3. Collapsible Historical Records List with Delete Capability */}

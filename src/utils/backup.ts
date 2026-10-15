@@ -60,7 +60,9 @@ const AI_CONFIG_FIELDS = [
   'customApiKey', 'customModelName', 'systemPersona', 'localModelVariant',
 ] as const;
 
-import { recordDateMigrationDone, markRecordDateMigrationDone } from './recordDateMigration';
+import { recordDateMigrationDone, markRecordDateMigrationDone, migrateRecordDatesToNightKey, MIGRATION_KEY } from './recordDateMigration';
+import { sanitizeRecord } from './recordSanitize';
+import type { SleepRecord } from '../types/sleep';
 
 function readJson(key: string): unknown {
   try {
@@ -156,7 +158,9 @@ export function parseBackup(raw: string): ParsedBackup {
 export function restoreFullBackup(data: FullBackup): {
   records: number; moments: number; chat: number; travel: boolean; profile: boolean;
 } {
-  const snapshotKeys = [KEYS.records, KEYS.profile, KEYS.travel, KEYS.moments, KEYS.chat, KEYS.skin, KEYS.bubble, KEYS.petEnabled];
+  // 迁移标记与 records 强耦合：纳入快照（回滚时标记同步回滚，否则
+  // "records 回滚为旧口径 + 标记已置"会让旧数据永不迁移）
+  const snapshotKeys = [KEYS.records, KEYS.profile, KEYS.travel, KEYS.moments, KEYS.chat, KEYS.skin, KEYS.bubble, KEYS.petEnabled, MIGRATION_KEY];
   const snapshot = snapshotKeys.map((k) => [k, localStorage.getItem(k)] as const);
   try {
     return restoreFullBackupInner(data);
@@ -174,11 +178,25 @@ export function restoreFullBackup(data: FullBackup): {
 function restoreFullBackupInner(data: FullBackup): {
   records: number; moments: number; chat: number; travel: boolean; profile: boolean;
 } {
-  // records：保留原始数组，读取端 App.tsx 已有逐条 sanitize + 过滤。
-  // 夜归属迁移标记（第 51 轮）：新备份的数据已是夜归属 → 预写标记防止
-  // reload 后 App 加载再迁一次（date 又被 −1）；旧备份照常迁移
-  localStorage.setItem(KEYS.records, JSON.stringify(Array.isArray(data.records) ? data.records : []));
-  if (data.dateSchema === 'night-v1') {
+  // 夜归属口径迁移（第 51 轮）：三种进料三种处理——
+  //  a) dateSchema='night-v1'（新备份）：数据已是夜归属 → 预写标记防 reload 二次迁移
+  //  b) 无 dateSchema（旧备份）落在已迁移设备：标记已置会让 reload 跳过迁移 →
+  //     必须就地迁移后再写盘，否则旧口径数据永久错一天（审计第 51 轮 P1）
+  //  c) 无 dateSchema 落在未迁移设备：原样写盘，reload 后 App 加载照常迁移
+  const incoming = Array.isArray(data.records) ? data.records : [];
+  const alreadyNight = data.dateSchema === 'night-v1' || recordDateMigrationDone();
+  let outRecords: unknown[] = incoming;
+  if (data.dateSchema !== 'night-v1' && recordDateMigrationDone()) {
+    let chronotype: 'night' | 'day' | 'irregular' = 'night';
+    const c = (data.profile as any)?.chronotype;
+    if (c === 'day' || c === 'irregular') chronotype = c;
+    outRecords = migrateRecordDatesToNightKey(
+      incoming.map((r) => sanitizeRecord(r)).filter((r): r is SleepRecord => r !== null),
+      chronotype,
+    ).records;
+  }
+  localStorage.setItem(KEYS.records, JSON.stringify(outRecords));
+  if (alreadyNight) {
     markRecordDateMigrationDone();
   }
 

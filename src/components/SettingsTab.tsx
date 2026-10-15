@@ -185,6 +185,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         lines.push(`⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），且没有可放行的候选记录。如确有睡眠，请用睡眠页"手动补录"。` : '原因见上面被拦记录。'}`);
       }
       setChainDiag(lines.join('\n'));
+    } catch (err) {
+      // 异步链路任何一环抛错（坏记录/桥异常）都给出可见反馈——
+      // 无 catch 时表现为"点了没反应"
+      setChainDiag(`✗ 自检中断：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDiagBusy(false);
     }
@@ -703,11 +707,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 当前运行：
                 <span className={`${theme.accentText} font-bold ml-1`}>
                   {userProfile.aiConfig?.provider === 'deepseek'
-                    ? `DeepSeek (${userProfile.aiConfig.deepseekModel || 'deepseek-flash'})`
+                    ? (userProfile.aiConfig.deepseekApiKey
+                      ? `DeepSeek (${userProfile.aiConfig.deepseekModel || 'deepseek-flash'})`
+                      : '本地医学规则引擎（未填 DeepSeek 密钥）')
                     : userProfile.aiConfig?.provider === 'local_llm'
                     ? `端侧小模型 (${getActiveModelLabel()})`
                     : userProfile.aiConfig?.provider === 'custom_openai'
-                    ? '自建 API'
+                    ? (userProfile.aiConfig.customApiKey
+                      ? '自建 API'
+                      : '本地医学规则引擎（未填自建密钥）')
                     : '本地医学规则引擎'}
                 </span>
               </p>

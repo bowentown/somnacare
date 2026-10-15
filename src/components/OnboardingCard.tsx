@@ -97,7 +97,7 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ theme, allowAuto
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-white">先把屏幕调暖</p>
                   <p className={`text-[10px] ${theme.textMuted} leading-relaxed mt-0.5`}>
-                    护眼滤镜立刻生效，不需要任何设置。
+                    到护眼分区打开开关即可生效（部分机型需授予悬浮窗权限）。
                   </p>
                 </div>
               </div>

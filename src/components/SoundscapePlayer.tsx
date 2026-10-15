@@ -44,7 +44,7 @@ const TRACKS: SoundscapeTrack[] = [
     id: 'bowl',
     name: '灵修颂钵',
     category: 'meditation',
-    description: '432Hz共鸣基频与Theta双耳脑波，深层放松',
+    description: '432Hz 低频钵音，舒缓背景音帮助放松',
     soundType: 'bowl',
     accentColor: 'from-amber-950/60 to-orange-950/40',
   },

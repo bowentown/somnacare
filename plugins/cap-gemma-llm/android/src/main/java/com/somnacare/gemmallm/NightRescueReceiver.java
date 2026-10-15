@@ -30,6 +30,8 @@ public class NightRescueReceiver extends BroadcastReceiver {
             if (!sp.getBoolean("night_rescue_enabled", true)) return;
             if (System.currentTimeMillis() < sp.getLong("night_rescue_muted_until", 0L)) return;
             if (!GemmaLLMPlugin.hasUsageAccess(context)) return;
+            // 无悬浮窗权限必然展示失败，却已消耗当晚频控配额——先挡住
+            if (!android.provider.Settings.canDrawOverlays(context)) return;
             if (BedtimeOverlayService.isShowing()) return;
             if (AlarmRingService.ringing) return;
             if (!NightRescueService.inNightWindow(sp)) return;

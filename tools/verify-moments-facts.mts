@@ -37,12 +37,14 @@ for (const m of overlaySrc.matchAll(/f\.match\((\/.+?\/[a-z]*)\)/g)) {
 check('消费端正则提取：至少 2 条（周口径 ×2 + 旧格式回退）', consumerRegexes.length >= 3,
   `提取到 ${consumerRegexes.length} 条`);
 
-// ── 2) 固定输入：2026-10-04（周日）→ 本周已过 7 夜（09-28 周一起）──
+// ── 2) 固定输入：2026-10-04（周日）── 第 51 轮夜归属口径：周日起算的
+// "已度过夜数" = 周一..周六（6 夜）——今晚（date=10-04 的夜）尚未发生，
+// 不能计入"未记录"；date=10-04 的记录（若有）属今晚，被窗口自然排除。
 const mk = (date: string, score: number) =>
   ({ id: 'r-' + date, date, bedtime: '23:10', wakeTime: '07:10', durationMinutes: 470, deepSleepMinutes: 95, lightSleepMinutes: 300, remSleepMinutes: 75, awakeMinutes: 10, sleepScore: score, sleepEfficiency: 92, latencyMinutes: 10, wakeCount: 1, wakingMood: 'refreshed', preSleepHabits: [] });
 const fixtureRecords = [
-  mk('2026-10-04', 60),    // 本周，不达标
-  mk('2026-10-03', 100),   // 本周，达标
+  mk('2026-10-04', 60),    // 今晚的觉（尚未发生）→ 被窗口排除
+  mk('2026-10-03', 100),   // 昨晚（10-03 夜），达标
   mk('2026-09-25', 90),    // 上周 → 必须被周窗排除
 ] as any[];
 const now = new Date(2026, 9, 4, 15, 8);   // 2026-10-04 周日
@@ -52,8 +54,8 @@ const weekElapsed = facts.find((f: string) => f.includes('本周已过'));
 const weekRec = facts.find((f: string) => f.includes('本周有记录'));
 check('生产者：产出两条本周 fact', !!weekElapsed && !!weekRec,
   JSON.stringify([weekElapsed, weekRec]));
-check('事实数值正确：已过 7 天、达标 1 天、有记录 2 天、未记录 5 天（上周记录被排除）',
-  weekElapsed === '本周已过 7 天，达标 1 天' && weekRec === '本周有记录 2 天，未记录 5 天',
+check('事实数值正确：已过 6 天、达标 1 天、有记录 1 天、未记录 5 天（今晚与上周记录被排除）',
+  weekElapsed === '本周已过 6 天，达标 1 天' && weekRec === '本周有记录 1 天，未记录 5 天',
   JSON.stringify([weekElapsed, weekRec]));
 
 // ── 3) 消费端正则必须能解析出正确数字 ──
@@ -67,7 +69,7 @@ for (const re of consumerRegexes) {
   if (m2 && m2.length >= 3) { parsedRec = m2[1]; parsedMissed = m2[2]; }
 }
 check('消费端：达标数解析 = 1', parsedGood === '1', String(parsedGood));
-check('消费端：有记录数解析 = 2', parsedRec === '2', String(parsedRec));
+check('消费端：有记录数解析 = 1', parsedRec === '1', String(parsedRec));
 check('消费端：未记录数解析 = 5', parsedMissed === '5', String(parsedMissed));
 
 // ── 4) 反向：文案漂移一字 → 所有消费端正则必须失配（护栏要能抓住） ──

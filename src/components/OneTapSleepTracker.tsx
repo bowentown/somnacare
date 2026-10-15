@@ -105,6 +105,9 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       setModelResult({ phase: 'failed', proposal: null });
       return;
     }
+    // 重跑即先归位 pending：handledDate/records 变化触发的重跑若不同步隐去
+    // 旧提议卡，"交互即刻隐去"的注释承诺落空（旧卡在异步返回前仍可点）
+    setModelResult({ phase: 'pending', proposal: null });
     let cancelled = false;
     void (async () => {
       const ev = await queryScreenOnEvents(14);

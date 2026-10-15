@@ -90,7 +90,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       case 'custom_openai':
         return '自建 API';
       default:
-        return 'DeepSeek';
+        // 未填密钥的 DeepSeek 档实际走服务端规则兜底——标签必须实相（
+        // 否则用户把规则引擎输出当成 DeepSeek 的回答）
+        return userProfile.aiConfig?.deepseekApiKey ? 'DeepSeek' : '本地临床规则引擎';
     }
   });
 
@@ -357,6 +359,13 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
 
       const data = response.data;
       setAnalysis(data);
+      // 来源标签跟着服务端实际引擎走（第 51 轮审计）：无上游 key 时服务端
+      // 返回规则兜底，不能让用户误以为在读 DeepSeek/Gemini
+      const engine = (data as { engine?: string }).engine;
+      if (engine === 'rules') setActiveProviderName('本地临床规则引擎');
+      else if (engine === 'gemini') setActiveProviderName('Gemini');
+      else if (engine === 'deepseek') setActiveProviderName('DeepSeek');
+      else if (engine === 'custom') setActiveProviderName('自建 API');
       // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
       try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
     } catch (_err: any) {

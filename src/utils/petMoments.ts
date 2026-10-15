@@ -164,14 +164,12 @@ export function buildSleepFacts(
     const avg = Math.round(week.reduce((a, r) => a + r.sleepScore, 0) / week.length);
     facts.push(`近 ${week.length} 晚平均 ${avg} 分`);
   }
-  // 本周达标战报（第 29 轮，用户口径）：
-  //   周 = 周一起算；夜按"醒来那天"归属本周（周日晚→周一早 = 本周第 1 夜）。
-  //   已度过 = 本周已过去的夜数（周一=1 … 周日=7）；x = 有记录的夜数；
-  //   n = 达标（≥80 分）夜数；m = 已度过 − x = 未记录的夜数。
-  // 旧口径 week=nightsOnly().slice(0,7) 只数有记录的夜，未记录的夜凭空消失
-  //（用 2 天却显示 1/1——没记的那晚像不存在一样）。
+  // 本周达标战报（第 29 轮；第 51 轮适配夜归属）：
+  //   周 = 周一起算；夜按"放下手机那晚"归属本周（夜归属 date=周一晚 = 本周第 1 夜）。
+  //   已度过 = 今天之前本周已过的夜数（周一=0 … 今天不计——今晚尚未发生，
+  //   白天查看不能把今晚报成"未记录"）；x = 有记录的夜数；m = 未记录的夜数。
   const dowIdx = (now.getDay() + 6) % 7;            // 周一=0 … 周日=6
-  const elapsedSlots = dowIdx + 1;                   // 本周已过去的夜数
+  const elapsedSlots = dowIdx;                       // 已度过的夜数（昨晚=最后一块拼图）
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
   const weekDates = new Set<string>();
   for (let i = 0; i < elapsedSlots; i++) {
@@ -254,7 +252,7 @@ function llmEndpoint(cfg: any): string {
 
 function llmModel(cfg: any): string {
   if (cfg.provider === 'custom_openai') return cfg.customModelName || 'deepseek-chat';
-  return cfg.deepseekModel === 'deepseek-pro' ? 'deepseek-reasoner' : 'deepseek-chat';
+  return cfg.deepseekModel === 'deepseek-pro' ? 'deepseek-v4-pro' : 'deepseek-flash';
 }
 
 function parseJsonLoose(text: string): any | null {

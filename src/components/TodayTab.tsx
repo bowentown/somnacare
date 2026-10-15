@@ -243,7 +243,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               })()}
               {latestRecord.sleepScore < 75 && (
                 <div className="pt-1 text-[11px] text-amber-300/90 font-medium">
-                  💡 提示：睡眠评分自然波动属正常现象，身体今夜会自动通过增加深睡代偿，无需担忧。
+                  💡 提示：单晚评分波动很常见，规律作息比某一晚的数字更重要。
                 </div>
               )}
             </div>

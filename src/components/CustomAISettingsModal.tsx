@@ -388,7 +388,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
               {isNativeLlmAvailable() && (
                 <div className={`p-3 rounded-xl bg-[#0a0f1d] border border-slate-700 space-y-2`}>
                   <span className="text-[11px] font-bold text-white block">HuggingFace 访问令牌（首次下载需要）</span>
-                  <span className="text-[9px] text-slate-400 block">仅存本机浏览器存储、不经过任何服务器；建议在 HF 上创建只读（read）权限的令牌。备份导出不包含它。</span>
+                  <span className="text-[9px] text-slate-400 block">只保存在本机、不进备份文件；下载时它会作为只读凭据发送给你选择的模型下载源（默认含第三方镜像 hf-mirror.com）。建议在 HF 上创建只读（read）权限的令牌。</span>
                   <input
                     type="password"
                     value={hfTokenVal}
