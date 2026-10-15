@@ -13,7 +13,14 @@ import android.content.Intent;
 public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
+        // RTC_WAKEUP 是绝对时刻：用户改系统时间/跨时区后已排闹钟按旧时刻
+        // 触发（往东飞→下午响、往西→提前响）。TIME_SET / TIMEZONE_CHANGED
+        // 一并重排（第 51 轮审计 P1）
+        String action = intent.getAction();
+        boolean isBoot = Intent.ACTION_BOOT_COMPLETED.equals(action);
+        boolean isTimeShift = "android.intent.action.TIME_SET".equals(action)
+                || "android.intent.action.TIMEZONE_CHANGED".equals(action);
+        if (!isBoot && !isTimeShift) return;
         try {
             android.content.SharedPreferences sp =
                     context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);

@@ -9,6 +9,7 @@ import { SleepRecord, WakingMood } from '../types/sleep';
 import { HABIT_OPTIONS } from '../utils/habitCatalog';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
+import { tapTick } from '../utils/haptics';
 
 interface ActiveSleepModalProps {
   isOpen: boolean;
@@ -193,8 +194,17 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
       const freq = new Uint8Array(analyser.frequencyBinCount);
       const time = new Float32Array(analyser.fftSize);
 
+      let lastPoll = 0;
       const pollAudio = () => {
         if (!audioContextRef.current) return;
+        // 4fps 节流（第 51 轮审计 P1）：整夜常亮的弹窗以 rAF 满帧 setState
+        // 会持续重渲染耗电发热——环境音展示 250ms 一帧足够顺滑
+        const t = performance.now();
+        if (t - lastPoll < 250) {
+          rafRef.current = requestAnimationFrame(pollAudio);
+          return;
+        }
+        lastPoll = t;
         // RMS → dBFS → 估算 SPL。手机麦克风灵敏度未校准，估算误差可达 ±10 dB，仅作环境参考。
         // 全零样本（数字静音）按测量下限 25 dB 处理。
         analyser.getFloatTimeDomainData(time);
@@ -262,6 +272,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
   };
 
   const handleFinishSleep = () => {
+    tapTick();
     sleepAudio.stop();
     setIsAudioPlaying(false);
 

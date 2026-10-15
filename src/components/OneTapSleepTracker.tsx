@@ -266,7 +266,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
   }, [startSignal]);
 
+  const startGuardRef = useRef(0);
   const handleStartSleep = () => {
+    // 双击防抖（第 51 轮审计 P1）：第二击落在重渲染后的新控件上会"秒开
+    // 秒关"并落一条 1 分钟垃圾记录——300ms 内的重复点击一律忽略
+    if (Date.now() - startGuardRef.current < 300) return;
+    startGuardRef.current = Date.now();
     tapTick();
     const now = Date.now();
     setSleepStartTime(now);
@@ -275,6 +280,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
 
   const handleWakeUp = () => {
     if (!sleepStartTime) return;
+    tapTick();
 
     // 记录构建已抽取为共享 recordBuilder（一键就寝与手机使用提议共用，
     // 黄金样本护栏保证行为一致）；wake=now 与原实现相同

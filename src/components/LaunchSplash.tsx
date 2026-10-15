@@ -238,7 +238,7 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
 
 /**
  * 品牌开屏（冷启动一次，sessionStorage 门控）：
- * 包装 SplashScene(splash)，3.5s 后淡出卸载。
+ * 包装 SplashScene(splash)，1.9s 后淡出卸载；点按可跳过。
  */
 export const LaunchSplash: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
   const [visible, setVisible] = useState(() => {
@@ -250,17 +250,21 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
   });
   const [fading, setFading] = useState(false);
 
+  const dismiss = () => {
+    try {
+      sessionStorage.setItem(KEY, '1');
+    } catch {
+      // ignore
+    }
+    setVisible(false);
+  };
+
   useEffect(() => {
     if (!visible) return;
-    const t1 = setTimeout(() => setFading(true), 2950);
-    const t2 = setTimeout(() => {
-      try {
-        sessionStorage.setItem(KEY, '1');
-      } catch {
-        // ignore
-      }
-      setVisible(false);
-    }, 3500);
+    // 1.9s（第 51 轮审计：3.5s × 每次冷启动干等太久——APK 冷启动每次新
+    // 进程都会重播）；点按任意处可跳过
+    const t1 = setTimeout(() => setFading(true), 1400);
+    const t2 = setTimeout(dismiss, 1900);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -271,6 +275,8 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
 
   return (
     <div
+      role="presentation"
+      onPointerDown={dismiss}
       className={`fixed inset-0 z-[200] overflow-hidden transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
     >
       <SplashScene theme={theme} variant="splash" />

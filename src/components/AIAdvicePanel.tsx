@@ -369,7 +369,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
       try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
     } catch (_err: any) {
-      const localResult = generateLocalClinicalAnalysis(records, userProfile);
+      // 与云端路径同口径：只喂近 7 晚夜睡（旧实现喂全量含小睡，云/本地两份评估口径不一致）
+      const localResult = generateLocalClinicalAnalysis(nightsOnly(records).slice(0, 7), userProfile);
       setAnalysis(localResult);
       // 标签名实相符（第 40 轮）：报告由 generateLocalClinicalAnalysis（规则+模板）
       // 生成，没有端侧 LLM 参与——"端侧离线引擎"会让人误以为有本机模型在输出
@@ -929,8 +930,11 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             onFocus={() => onChatFocusChange?.(true)}
             onBlur={() => onChatFocusChange?.(false)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSendMessage();
+              // 中文输入法组合期按回车是"确认候选词"不是发送（第 51 轮审计：
+              // 未上屏的拼音会被整句发出去）
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSendMessage();
             }}
+            enterKeyHint="send"
             placeholder="输入睡眠疑问..."
             className={`flex-1 ${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-400 focus:outline-none ${theme.focusRing} font-medium`}
           />

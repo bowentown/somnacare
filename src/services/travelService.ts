@@ -22,6 +22,24 @@ export function getInitialTravelState(): UserTravelState {
   };
 }
 
+/** counted 键：夜睡=date，小睡=date|nap（分离账本，互不顶替）。 */
+function napKey(date: string, nap?: boolean): string {
+  return nap ? `${date}|nap` : date;
+}
+
+/** 记录删除后的能量回退（第 51 轮审计 P1）：该夜已计入的分差全额扣除，
+ *  键移除——"记录是唯一真值源"，删除的夜不能再驱动图鉴进度。 */
+export function processRecordRemoval(date: string, nap?: boolean): UserTravelState {
+  const state = loadTravelState();
+  const key = napKey(date, nap);
+  const counted = state.countedScores[key];
+  if (counted === undefined) return state;
+  state.currentEnergy = Math.max(0, state.currentEnergy - counted);
+  delete state.countedScores[key];
+  saveTravelState(state);
+  return state;
+}
+
 /** 清洗 {cardId: 星级} / {date: 已计分} 形态的映射：只保留有限数值（防坏值串型累加） */
 function sanitizeScoreMap(v: unknown): Record<string, number> {
   const out: Record<string, number> = {};
@@ -88,7 +106,7 @@ export function rollNextPostcard(
  * @param date 记录日期（YYYY-MM-DD）：同一晚重复保存/补录时按"取更高分"去重，
  *             此前每次保存都全额充能——重跑一次睡眠追踪能量就翻倍
  */
-export function processDailySleepScore(sleepScore: number, date?: string): {
+export function processDailySleepScore(sleepScore: number, date?: string, nap?: boolean): {
   state: UserTravelState;
   triggeredTrip: boolean;
   newCard?: TravelPostcard;
@@ -97,11 +115,16 @@ export function processDailySleepScore(sleepScore: number, date?: string): {
   const safeScore = Math.max(0, Math.min(100, Math.round(sleepScore)));
   let energy = state.currentEnergy;
   if (date) {
-    const counted = state.countedScores[date] || 0;
+    // counted 键按记录种类分离：夜睡用 date，小睡用 date|nap——此前同日
+    // 先记夜睡再记小睡会共用一个键互相顶替 counted 值（能量账本错乱）
+    const key = napKey(date, nap);
+    const counted = state.countedScores[key] || 0;
     const delta = safeScore - counted;
-    if (delta > 0) {
-      energy += delta;
-      state.countedScores[date] = safeScore;
+    if (delta !== 0) {
+      // 正差充能、负差扣回（向下修正/删除后重录低分不再永久虚高——
+      // "记录是唯一真值源"，审计第 51 轮 P1：旧实现只有 delta>0 分支）
+      energy = Math.max(0, energy + delta);
+      state.countedScores[key] = safeScore;
     }
   } else {
     energy += safeScore;   // 无日期（理论不达）：维持旧的逐次累加语义

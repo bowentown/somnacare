@@ -20,9 +20,18 @@ class SleepAudioSynthesizer {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtx();
+      // 播放中被打断后的自动恢复（第 51 轮审计 P1）：睡眠 App 的核心场景
+      // 就是锁屏/来电/后台——此前 resume 只在用户再点一次播放时发生，
+      // 回前台后 UI 显示"播放中"却永远静音。statechange 挂在 context 上，
+      // 仅 isPlaying 时 resume；resume 本身可能被自动播放策略拒绝，须 catch
+      this.ctx.addEventListener('statechange', () => {
+        if (this.ctx && this.ctx.state === 'suspended' && this.isPlaying) {
+          this.ctx.resume().catch(() => { /* 保持静默，下次交互再试 */ });
+        }
+      });
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => { /* ignore */ });
     }
   }
 

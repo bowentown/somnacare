@@ -53,16 +53,31 @@ export function deriveKind(bedtimeLocalHour: number, chronotype: Chronotype = 'n
  */
 export function reclassifyForChronotype(records: SleepRecord[], chronotype: Chronotype): SleepRecord[] {
   if (chronotype === 'irregular') return records;
+  // date 键随口径重写（第 51 轮审计 P1）：夜归属（bed<12 → 前一天）与
+  // 自然日（day 作息）差 1 天——只改 kind 不改 date 会让同一物理夜在
+  // gate 4 失配后重复出卡、落两条夜睡。小睡键（当天）两侧一致，不动。
+  const shiftDate = (date: string, days: number): string => {
+    const [y, mo, da] = date.split('-').map(Number);
+    if (![y, mo, da].every(Number.isFinite)) return date;
+    const d = new Date(y, mo - 1, da + days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
   return records.map((r) => {
+    const bH = parseInt(r.bedtime.split(':')[0], 10);
     if (chronotype === 'day') {
-      if (r.kind !== 'nap') return r;
+      if (r.kind !== 'nap') {
+        // night→day：夜归属键改自然日键（bed<12 的凌晨夜 +1 天）
+        return { ...r, kind: undefined, date: bH < 12 ? shiftDate(r.date, 1) : r.date };
+      }
       // 只恢复"该日唯一的睡"——它大概率是被误标的主睡；
       // 同日有多条小睡的保持小睡（转成夜睡会产生同日多条夜睡的怪数据）
       const isOnlySleepOnDate = !records.some((x) => x.date === r.date && x.id !== r.id);
       return isOnlySleepOnDate ? { ...r, kind: undefined } : r;
     }
     // night：按钟点重判
-    const h = parseInt(r.bedtime.split(':')[0], 10);
-    return deriveKind(h, 'night') === 'nap' ? r : { ...r, kind: undefined };
+    if (deriveKind(bH, 'night') === 'nap') return r;
+    // day→night：自然日键改夜归属键（恒 −1：bed≥12 的白天觉 bed 日=旧−1，
+    // bed<12 的晨觉 bed 日=旧、夜归属=bed−1）
+    return { ...r, kind: undefined, date: shiftDate(r.date, -1) };
   });
 }

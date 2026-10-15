@@ -1,11 +1,10 @@
 import React, { useEffect, useState  } from 'react';
 import { X, Moon, Clock, Sparkles, Check, Smartphone, Coffee, Bath, Flower2, BookOpen, Dumbbell, Wine, Utensils } from 'lucide-react';
 import { HABIT_OPTIONS as HABIT_CATALOG_LIST } from '../utils/habitCatalog';
-import { deriveKind } from '../utils/recordFilter';
+import { buildRecordFromWindow } from '../utils/recordBuilder';
 
 const habitCatalogById: Record<string, { id: string; label: string }> = Object.fromEntries(HABIT_CATALOG_LIST.map((h) => [h.id, h]));
 import { SleepRecord, WakingMood } from '../types/sleep';
-import { calculateSleepScore, generateSleepStages } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
 import { tapTick } from '../utils/haptics';
@@ -110,54 +109,37 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
       setError('就寝与起床时间不能相同');
       return;
     }
-    const stagesData = generateSleepStages(bedtime, wakeTime, latencyMinutes, wakeCount);
+    // 统一走共享 recordBuilder（第 51 轮审计 P0）：此前手写 record 对象缺
+    // 16h 截断+就寝回推（>16h 时分期总和 ≈1380 ≠ 截后 960，自相矛盾）、
+    // 缺 latencyEstimated、短窗（<90min）不重建分期——三个入口两条规则。
+    // 窗口 epoch 按"所选哪一晚 + 夜归属"构造：bed ≥12:00 → 当晚；bed <12:00
+    // → 次日凌晨（date=bed 那晚的夜归属键，与 builder 的 date 推导对齐）。
+    const [y, mo, da] = date.split('-').map(Number);
     const [bH, bM] = bedtime.split(':').map(Number);
     const [wH, wM] = wakeTime.split(':').map(Number);
+    const anchor = new Date(y, mo - 1, da);
+    const bedAhead = bH >= 12 ? 0 : 1;                    // 凌晨放下 = date 的次一日历日
+    let startMs = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + bedAhead, bH, bM, 0, 0).getTime();
+    let endMs = new Date(startMs);
+    const endMsNum = new Date(endMs.getFullYear(), endMs.getMonth(), endMs.getDate(), wH, wM, 0, 0).getTime();
+    if (endMsNum <= startMs) endMs = new Date(endMsNum + 24 * 60 * 60 * 1000);
+    else endMs = new Date(endMsNum);
+    const wakeMs = endMs.getTime();   // 跨午夜醒来
 
-    let startMs = new Date().setHours(bH, bM, 0, 0);
-    let endMs = new Date().setHours(wH, wM, 0, 0);
-    if (endMs <= startMs) {
-      endMs += 24 * 60 * 60 * 1000;
-    }
-    // 下限与其他入口一致（recordBuilder 的 Math.max(1,…)）：20 分钟的真实小睡
-    // 不能被抬成 60 分钟——"按实际时长如实记录"是全应用口径。
-    // 上限 16h 同样对齐 recordBuilder：醒早于睡会被当作"跨到次日"，
-    // "07:00 睡到 06:00"曾产出 1360 分钟的记录毒化全部统计均值
-    const rawDurationMinutes = Math.max(1, Math.round((endMs - startMs) / 60000) - stagesData.awakeMinutes);
-    const totalDurationMinutes = Math.min(960, rawDurationMinutes);
-
-    const { score, efficiency } = calculateSleepScore(
-      totalDurationMinutes,
-      stagesData.deepMinutes,
-      stagesData.remMinutes,
-      stagesData.awakeMinutes,
-      wakeCount,
-      latencyMinutes,
-      Math.round((targetDurationHours || 8) * 60)
-    );
-
-    const record: SleepRecord = {
+    const built = buildRecordFromWindow({
+      sleepStartMs: startMs,
+      wakeMs,
+      targetDurationHours,
       id: `manual-${Date.now()}`,
-      recordSource: 'manual' as const,
-      // 日间就寝（本地 10–19 时）归类为小睡（kind），去重与分析层据此区分
-      kind: deriveKind(parseInt(bedtime.split(':')[0], 10), chronotype) === 'nap' ? 'nap' as const : undefined,
-      date,
-      bedtime,
-      wakeTime,
-      durationMinutes: totalDurationMinutes,
-      deepSleepMinutes: stagesData.deepMinutes,
-      lightSleepMinutes: stagesData.lightMinutes,
-      remSleepMinutes: stagesData.remMinutes,
-      awakeMinutes: stagesData.awakeMinutes,
-      sleepScore: score,
-      sleepEfficiency: efficiency,
-      latencyMinutes,
-      wakeCount,
-      wakingMood: selectedMood,
-      preSleepHabits: selectedHabits,
-      dreamNotes: dreamNotes.trim() || undefined,
-      stages: stagesData.stages,
-    };
+      recordSource: 'manual',
+      chronotype,
+      userLatencyMinutes: latencyMinutes,
+      userWakeCount: wakeCount,
+      userWakingMood: selectedMood,
+      userPreSleepHabits: selectedHabits,
+      userDreamNotes: dreamNotes.trim() || undefined,
+    });
+    const record: SleepRecord = { ...built.record, date };   // date = 用户所选"哪一晚"（夜归属语义下与 builder 推导一致，显式保留选择权）
 
     tapTick();
     onSaveRecord(record);

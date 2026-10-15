@@ -12,6 +12,7 @@ import { TrendsTab } from './components/TrendsTab';
 import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
+import { tapTick } from './utils/haptics';
 import { recordOutcome } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
@@ -32,7 +33,7 @@ import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord } from './utils/recordFilter';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
-import { processDailySleepScore, loadTravelState, clearPendingArrival } from './services/travelService';
+import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival } from './services/travelService';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('today');
@@ -624,6 +625,8 @@ export const App: React.FC = () => {
         ) {
           lastFiredKeyRef.current = fireKey;
           setRingingAlarm(alarm);
+              // 铃声不能被自己的助眠音景掩蔽（第 51 轮审计 P1）：响铃即停音景
+              sleepAudio.stop();
           // native：响铃由 AlarmRingService 循环负责（WebView 计时器息屏会被冻结）
           if (!isNativePlatform()) sleepAudio.playAlarm(alarm.tone);
           // "仅一次"：无重复日的闹钟响过即停用（原生侧同为单次调度）
@@ -655,6 +658,8 @@ export const App: React.FC = () => {
             if (!st) return;
             if (st.ringing) {
               if (Date.now() - justStoppedRef.current < 3000) return;
+              // 原生响铃首次弹横幅同样停音景（铃声不能被助眠音景掩蔽）
+              if (!ringingAlarm) sleepAudio.stop();
               setRingingAlarm((cur) => cur ?? {
                 id: 'native-ring',
                 time: st.time || '',
@@ -678,6 +683,7 @@ export const App: React.FC = () => {
   }, [userProfile.alarms, ringingAlarm]);
 
   const handleStopRinging = () => {
+    tapTick();
     justStoppedRef.current = Date.now();
     sleepAudio.stop();
     try {
@@ -737,6 +743,11 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteRecord = (id: string) => {
+    const victim = records.find((r) => r.id === id);
+    if (victim) {
+      // 删除的夜/小睡不再驱动旅行能量（第 51 轮审计：账本须随真值回退）
+      processRecordRemoval(victim.date, victim.kind === 'nap');
+    }
     setRecords((prev) => prev.filter((r) => r.id !== id));
     showToast('已删除该条睡眠数据');
   };

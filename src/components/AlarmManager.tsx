@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { tapTick } from '../utils/haptics';
 import {
   ChevronDown,
   ChevronUp,
@@ -117,6 +118,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
   };
 
   const handleToggleAlarm = async (id: string) => {
+    tapTick();
     const target = alarms.find((a) => a.id === id);
     if (target && !target.enabled) {
       const ok = await ensureAlarmPermissions();
@@ -150,6 +152,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
   };
 
   const handleSaveNewAlarm = async () => {
+    tapTick();
     // <input type="time"> 被清空后保存会把坏时间入库：原生通知整批调度被拒
     // （ Capacitor 校验不过 → 全部闹钟的横幅通知一起消失），且界面无任何提示
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(newTime)) {

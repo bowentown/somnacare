@@ -514,7 +514,17 @@ public class GemmaLLMPlugin extends Plugin {
         if (am == null) return;
         android.content.SharedPreferences sp =
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        // 先取消旧表（存下的请求码集合），避免已删除的闹钟残留继续响
+        if (alarmsJson == null || alarmsJson.isEmpty()) return;
+        org.json.JSONArray arr;
+        try {
+            arr = new org.json.JSONArray(alarmsJson);
+        } catch (Exception e) {
+            // prefs 损坏：解析必须发生在取消旧闹钟【之前】——否则旧码已取消、
+            // 新表排不出来 = 全部闹钟静默消失（第 51 轮审计 P1）
+            android.util.Log.w("AlarmRing", "闹钟表解析失败，保留现有闹钟", e);
+            return;
+        }
+        // 表解析成功后再取消旧表（存下的请求码集合），避免已删除的闹钟残留继续响
         try {
             org.json.JSONArray oldCodes = new org.json.JSONArray(sp.getString("alarm_ring_codes", "[]"));
             for (int i = 0; i < oldCodes.length(); i++) {
@@ -525,9 +535,7 @@ public class GemmaLLMPlugin extends Plugin {
         } catch (Exception ignored) {
         }
         sp.edit().remove("alarm_ring_codes").apply();
-        if (alarmsJson == null || alarmsJson.isEmpty()) return;
         try {
-            org.json.JSONArray arr = new org.json.JSONArray(alarmsJson);
             if (firedId != null) {
                 // 剔除已消费的一次性条目：到点这条（旧版持久化广播无 id 时按时刻兜底），
                 // 以及所有时刻已过的一次性条目（错过即消费，不应改排到明天）

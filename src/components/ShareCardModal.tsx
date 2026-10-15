@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { tapTick } from '../utils/haptics';
 import { createPortal } from 'react-dom';
 import { X, Share2, Download, Loader2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
@@ -58,6 +59,7 @@ export const ShareCardModal: React.FC<Props> = ({ open, onClose, records, theme 
   }, []);
 
   const handleShare = async () => {
+    tapTick();
     setBusy(true);
     try {
       const pageBgHex = theme.pageBg.match(/#([0-9a-fA-F]{6})/)?.[0] ?? '#0B1026';

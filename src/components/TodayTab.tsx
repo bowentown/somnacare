@@ -443,12 +443,15 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               <input
                 type="time"
                 value={userProfile.targetBedtime}
-                onChange={(e) =>
+                onChange={(e) => {
+                  // 清空的 <input type="time"> 会产出 "" → NaN 持久化成
+                  // "NaN:NaN" 并流入原生 nightRescueSet（第 51 轮审计 P1）
+                  if (!e.target.value) return;
                   onUpdateProfile({
                     targetBedtime: e.target.value,
                     targetWakeTime: toClock(toMin(e.target.value) + Math.round(userProfile.targetDurationHours * 60)),
-                  })
-                }
+                  });
+                }}
                 className={`w-full bg-transparent text-2xl font-black text-white font-mono focus:outline-none ${theme?.focusRing} cursor-pointer`}
               />
             </div>
@@ -458,7 +461,9 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                 type="time"
                 value={userProfile.targetWakeTime}
                 onChange={(e) => {
+                  if (!e.target.value) return;   // 清空不落库（NaN 防护）
                   const durH = Math.min(12, Math.max(4, Math.round(((toMin(e.target.value) - toMin(userProfile.targetBedtime) + 1440) % 1440) / 30) * 0.5));
+                  if (!Number.isFinite(durH)) return;
                   onUpdateProfile({ targetWakeTime: e.target.value, targetDurationHours: durH });
                 }}
                 className={`w-full bg-transparent text-2xl font-black text-white font-mono focus:outline-none ${theme?.focusRing} cursor-pointer`}

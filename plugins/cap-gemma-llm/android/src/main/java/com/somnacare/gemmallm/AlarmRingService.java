@@ -150,12 +150,28 @@ public class AlarmRingService extends Service {
                 android.util.Log.w("AlarmRing", "铃声资源缺失: raw/" + toneRes);
             }
             player.setLooping(true);
+            // 音频焦点（第 51 轮审计 P1）：无焦点时铃声与整夜助眠音景直接混叠、
+            // 被白噪音掩蔽——睡眠 App 最坏场景。拿 transient-loss 凭据，焦点
+            // 系统至少给其他规范播放器一个让路的信号
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (am != null && audioFocusListener == null) {
+                    audioFocusListener = new android.media.AudioManager.OnAudioFocusChangeListener() {
+                        @Override public void onAudioFocusChange(int focusChange) { /* 铃声优先，不做让路 */ }
+                    };
+                }
+                if (am != null) am.requestAudioFocus(audioFocusListener,
+                        android.media.AudioAttributes.CONTENT_TYPE_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+            } catch (Exception ignored) {
+            }
             player.prepare();
             player.start();
         } catch (Exception e) {
             player = null;
         }
     }
+
+    private android.media.AudioManager.OnAudioFocusChangeListener audioFocusListener;
 
     private void startVibrate() {
         try {
@@ -201,6 +217,13 @@ public class AlarmRingService extends Service {
 
     /** 释放响铃资源（stopRing 与二次投递共用）。 */
     private void releaseRingResources() {
+        if (audioFocusListener != null) {
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) am.abandonAudioFocus(audioFocusListener);
+            } catch (Exception ignored) {
+            }
+        }
         if (player != null) {
             try { player.stop(); player.release(); } catch (Exception ignored) { }
             player = null;
