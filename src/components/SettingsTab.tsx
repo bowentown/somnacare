@@ -26,6 +26,7 @@ import {
 } from '../utils/usageSignal';
 import { forceRefreshUsage } from '../utils/usageStore';
 import { unlockProposal } from '../utils/proposalUnlock';
+import { getLastResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
@@ -184,6 +185,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       } else {
         lines.push(`⑦ 结论：✗ 此刻不会出提议——${modelRejected && !model.fallbackAllowed ? `模型拒绝（${model.fit?.reason}），且没有可放行的候选记录。如确有睡眠，请用睡眠页"手动补录"。` : '原因见上面被拦记录。'}`);
       }
+      // ⑧ 前台恢复触发留痕（第 53 轮）：早上"还不弹"时，从这里直接判断
+      // 是恢复信号没来、桥接查询失败、还是引擎跑了但没出卡
+      const resume = getLastResume();
+      lines.push(resume
+        ? `⑧ 前台恢复触发：${new Date(resume.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}（${resume.source === 'appstate' ? '原生生命周期' : 'WebView 可见性'}）→ ${resume.outcome ?? '引擎尚未回填（睡眠页未挂载或仍在计算）'}`
+        : '⑧ 前台恢复触发：本次冷启动后尚未发生（从后台切回时才会记录）');
       setChainDiag(lines.join('\n'));
     } catch (err) {
       // 异步链路任何一环抛错（坏记录/桥异常）都给出可见反馈——

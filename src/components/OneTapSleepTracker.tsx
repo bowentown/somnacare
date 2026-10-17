@@ -10,6 +10,7 @@ import { recordEngineRun, recordOutcome } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
 import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
 import { clearProposalUnlock, getProposalUnlock, initProposalUnlockFromStorage, subscribeProposalUnlock } from '../utils/proposalUnlock';
+import { recordResumeOutcome, subscribeAppResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
@@ -100,6 +101,15 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     proposal: null,
   });
 
+  // 前台恢复的独立触发（第 53 轮）：不依赖 usageDays 聚合查询 emit——
+  // 恢复信号一到就强制绕缓存重查事件并重跑引擎（双通道见 App.tsx）
+  const [resumeTick, setResumeTick] = useState(0);
+  const forceNextQueryRef = useRef(false);
+  useEffect(() => subscribeAppResume(() => {
+    forceNextQueryRef.current = true;
+    setResumeTick((t) => t + 1);
+  }), []);
+
   useEffect(() => {
     if (!isNativePlatform() || chronotype === 'irregular') {
       setModelResult({ phase: 'failed', proposal: null });
@@ -109,11 +119,21 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     // 旧提议卡，"交互即刻隐去"的注释承诺落空（旧卡在异步返回前仍可点）
     setModelResult({ phase: 'pending', proposal: null });
     let cancelled = false;
+    const forced = forceNextQueryRef.current;
+    forceNextQueryRef.current = false;
     void (async () => {
-      const ev = await queryScreenOnEvents(14);
+      // 恢复触发的查询强制绕 30min TTL：起床信号可能就在缓存写入之后
+      let ev = await queryScreenOnEvents(14, forced);
+      // 恢复瞬间桥接可能尚未就绪（返回 null 或抛错）——1.5s 后重试一次
+      if (!ev && forced && !cancelled) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelled) return;
+        ev = await queryScreenOnEvents(14, true);
+      }
       if (cancelled) return;
       if (!ev) {
         setModelResult({ phase: 'failed', proposal: null });   // 查询失败：回退态
+        if (forced) recordResumeOutcome('事件查询失败（桥接未就绪/权限被回收）');
         return;
       }
       const res = computeModelProposal({
@@ -128,11 +148,19 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
         setModelResult(res.fallbackAllowed
           ? { phase: 'failed', proposal: null }
           : { phase: 'decided', proposal: res.proposal });
+        if (forced) {
+          recordResumeOutcome(
+            res.proposal
+              ? `出卡 ${res.proposal.bedtime}→${res.proposal.wakeTime}（事件 ${ev.events.length} 条）`
+              : `未出卡：${res.fit?.reason ?? res.block ?? '模型拒绝'}（事件 ${ev.events.length} 条）`,
+          );
+        }
       }
     })();
     return () => { cancelled = true; };
     // usagePerm 入依赖：授权返回后无需重开页面，引擎立即重跑（第 42 轮）
-  }, [usageDays, records, handledDate, chronotype, sessionActive, usagePerm]);
+    // resumeTick 入依赖（第 53 轮）：恢复前台的强制重跑通道
+  }, [usageDays, records, handledDate, chronotype, sessionActive, usagePerm, resumeTick]);
 
   const heuristicProposal = useMemo(
     () => computeProposal({

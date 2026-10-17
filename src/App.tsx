@@ -30,6 +30,7 @@ import { forceRefreshUsage } from './utils/usageStore';
 import { LaunchSplash } from './components/LaunchSplash';
 import { PaneErrorBoundary } from './components/PaneErrorBoundary';
 import { closeTopModalIfAny } from './utils/modalA11y';
+import { notifyAppResume } from './utils/appResume';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord } from './utils/recordFilter';
@@ -389,16 +390,44 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!isNativePlatform()) return;
     const chronotype = userProfile?.chronotype ?? 'night';
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
+    let lastRun = 0;
+    const refresh = (source: 'visibility' | 'appstate') => {
       if (chronotype === 'irregular') return;   // 不规律作息：自动提议整体关闭，无需刷新
+      // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次
+      const now = Date.now();
+      if (now - lastRun < 1500) return;
+      lastRun = now;
+      // 广播给睡眠页引擎：即使下面的聚合查询失败/返回空，引擎也会被强制
+      // 重跑一次（不依赖 usageStore emit 的间接链路）
+      notifyAppResume(source);
       void (async () => {
         await queryScreenOnEvents(14, true);
         await forceRefreshUsage(2, chronotype);
       })();
     };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh('visibility');
+    };
+    // 双通道（第 53 轮）：部分 ROM/WebView 息屏恢复不派发 visibilitychange，
+    // Capacitor 的 appStateChange 是原生 Activity 生命周期的权威信号
+    let appStateHandle: { remove: () => void } | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const h = await CapApp.addListener('appStateChange', ({ isActive }) => {
+          if (isActive) refresh('appstate');
+        });
+        if (cancelled) { try { h.remove(); } catch { /* ignore */ } return; }
+        appStateHandle = h;
+      } catch { /* 桥异常时仅保留 visibility 通道 */ }
+    })();
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      try { appStateHandle?.remove(); } catch { /* ignore */ }
+    };
   }, [userProfile?.chronotype]);
 
   // 作息目标到点提醒：目标就寝时刻起 15 分钟内、当日未提醒、且未在监测中 → 全屏提醒

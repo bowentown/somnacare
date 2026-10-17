@@ -355,7 +355,9 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             <div className={`h-40 ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} flex flex-col justify-between`}>
               <div className="flex items-end justify-between gap-2 h-28 px-1">
                 {last7Records.map((r) => {
-                  const total = Math.max(1, r.durationMinutes);
+                  // 四段堆叠的分母必须是卧床总长（duration 纯睡眠 + awake）：
+                  // 旧实现拿纯睡眠当分母，四段和 >100%，awake 段被 overflow 裁掉
+                  const total = Math.max(1, r.durationMinutes + r.awakeMinutes);
                   const deepPct = (r.deepSleepMinutes / total) * 100;
                   const remPct = (r.remSleepMinutes / total) * 100;
                   const lightPct = (r.lightSleepMinutes / total) * 100;

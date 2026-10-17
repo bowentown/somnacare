@@ -179,7 +179,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               <div className="flex items-baseline justify-between">
                 <span className="text-slate-300 font-bold">深睡阶段</span>
                 <span className="font-mono text-emerald-400 font-black">
-                  {latestRecord.deepSleepMinutes}分 · {Math.round((latestRecord.deepSleepMinutes / Math.max(1, latestRecord.durationMinutes)) * 100)}%
+                  {latestRecord.deepSleepMinutes}分 · {Math.round((latestRecord.deepSleepMinutes / Math.max(1, latestRecord.durationMinutes + latestRecord.awakeMinutes)) * 100)}%
                 </span>
               </div>
               {userProfile.targetBedtime && (() => {
