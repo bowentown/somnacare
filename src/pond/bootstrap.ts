@@ -114,9 +114,13 @@ export function createPond(
     }
   };
 
+  let disposed = false;
   const handle: PondHandle = {
     dispose(): void {
+      disposed = true;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(staticRaf1);
+      cancelAnimationFrame(staticRaf2);
       unsubscribeWeather();
       disconnectEffects();
       renderer.dispose();
@@ -134,10 +138,16 @@ export function createPond(
   };
 
   const staticSteps = opts.staticSteps ?? 0;
+  let staticRaf1 = 0;
+  let staticRaf2 = 0;
   if (staticSteps > 0) {
     // settings 的部分效果延迟到 rAF 刷新（settings/effects.ts flushLight），
-    // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再模拟绘制
-    requestAnimationFrame(() => requestAnimationFrame(() => simulateOnce(staticSteps)));
+    // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再模拟绘制。
+    // 句柄必须保存（第 54 轮）：两帧内 dispose 时旧实现会继续在已释放的
+    // renderer 上绘制（WebGL use-after-dispose）
+    staticRaf1 = requestAnimationFrame(() => {
+      staticRaf2 = requestAnimationFrame(() => { if (!disposed) simulateOnce(staticSteps); });
+    });
   } else {
     raf = requestAnimationFrame(animate);
   }

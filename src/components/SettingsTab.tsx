@@ -26,6 +26,7 @@ import {
 } from '../utils/usageSignal';
 import { forceRefreshUsage } from '../utils/usageStore';
 import { unlockProposal } from '../utils/proposalUnlock';
+import { petSayFingerprint } from '../utils/petMoments';
 import { getLastResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 
@@ -206,6 +207,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [petOn, setPetOn] = useState(() => isPetEnabled());
   const [petGranted, setPetGranted] = useState(true);
   const [petBusy, setPetBusy] = useState(false);
+  const [petHint, setPetHint] = useState<string | null>(null);
   const [petEvery, setPetEvery] = useState(() => getBubbleEvery());
   const [petSkin, setPetSkinState] = useState(() => getPetSkin());
 
@@ -216,7 +218,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   // 大肥鱼的傲娇播报词：优先展示云端刷的语录（与桌宠实际念的一致），
   // 未刷到时回退本地模板
-  const petSay = getCachedLlmSay(userProfile.aiConfig) ?? buildPetSayLines(records, userProfile);
+  const petSay = getCachedLlmSay(userProfile.aiConfig, petSayFingerprint(records)) ?? buildPetSayLines(records, userProfile);
 
   // 换装（樱花版 = 樱花装目录）
   const handlePetSkinChange = (skin: string) => {
@@ -245,10 +247,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           return;
         }
         setPetOn(res.ok);
-        if (res.ok) setPetGranted(true);
+        if (res.ok) { setPetGranted(true); setPetHint(null); }
+        else if (!res.needPermission) setPetHint('桌宠启动失败，请重试或检查系统设置');
       } else {
         await stopPet();
         setPetOn(false);
+        setPetHint(null);
       }
     } finally {
       setPetBusy(false);
@@ -611,6 +615,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             </label>
           )}
         </div>
+
+        {petHint && (
+          <p role="status" className="text-[10px] text-amber-300/90 leading-relaxed">{petHint}</p>
+        )}
 
         {/* 播报词预览：折叠 */}
         <details className="rounded-2xl bg-slate-900/60 border border-slate-700/60 p-3.5">

@@ -13,7 +13,7 @@ import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { tapTick } from './utils/haptics';
-import { recordOutcome } from './utils/modelShadow';
+import { recordOutcome, dropShadowEntry, pruneShadowEntries } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
@@ -33,7 +33,7 @@ import { closeTopModalIfAny } from './utils/modalA11y';
 import { notifyAppResume } from './utils/appResume';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
-import { mergeRecord } from './utils/recordFilter';
+import { mergeRecord, nightsOnly } from './utils/recordFilter';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival } from './services/travelService';
@@ -91,6 +91,8 @@ export const App: React.FC = () => {
   // 10s 检测 + 全局横幅，任何分区可见可停；声音 native 走 AlarmRingService
   // （循环），web 走 Web Audio（5 分钟上限）
   const [ringingAlarm, setRingingAlarm] = useState<CustomAlarmSetting | null>(null);
+  // 横幅最近一次设置时刻：丢弃在设置之前发出的陈旧状态查询（第 54 轮）
+  const ringingBannerSetAtRef = useRef(0);
   const lastFiredKeyRef = useRef<string>('');
   // 手动停止的时刻：原生 ACTION_STOP 异步收场，随后几秒内状态查询仍报 ringing，
   // 据此窗口内不回弹横幅
@@ -396,12 +398,14 @@ export const App: React.FC = () => {
       // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次
       const now = Date.now();
       if (now - lastRun < 1500) return;
-      lastRun = now;
       // 广播给睡眠页引擎：即使下面的聚合查询失败/返回空，引擎也会被强制
       // 重跑一次（不依赖 usageStore emit 的间接链路）
       notifyAppResume(source);
       void (async () => {
-        await queryScreenOnEvents(14, true);
+        const ok = !!(await queryScreenOnEvents(14, true));
+        // 只有事件查询成功才记账去抖：失败时允许另一通道（以及引擎自己的
+        // 重试）立刻补位，而不是被 1.5s 窗口吞掉（第 54 轮修正）
+        if (ok) lastRun = Date.now();
         await forceRefreshUsage(2, chronotype);
       })();
     };
@@ -692,6 +696,7 @@ export const App: React.FC = () => {
           !ringingAlarm
         ) {
           lastFiredKeyRef.current = fireKey;
+          ringingBannerSetAtRef.current = Date.now();
           setRingingAlarm(alarm);
               // 铃声不能被自己的助眠音景掩蔽（第 51 轮审计 P1）：响铃即停音景
               sleepAudio.stop();
@@ -722,12 +727,14 @@ export const App: React.FC = () => {
         void (async () => {
           try {
             const cap = (window as any).Capacitor;
+            const queryStartedAt = Date.now();
             const st = await cap?.Plugins?.GemmaLLM?.alarmRingStatus?.();
             if (!st) return;
             if (st.ringing) {
               if (Date.now() - justStoppedRef.current < 3000) return;
               // 原生响铃首次弹横幅同样停音景（铃声不能被助眠音景掩蔽）
               if (!ringingAlarm) sleepAudio.stop();
+              ringingBannerSetAtRef.current = Date.now();
               setRingingAlarm((cur) => cur ?? {
                 id: 'native-ring',
                 time: st.time || '',
@@ -740,6 +747,10 @@ export const App: React.FC = () => {
                 smartWakeWindowMinutes: 20,
               });
             } else {
+              // 乱序防护（第 54 轮）：本次查询在横幅设置之前发出 → 它看到的
+              // 未响铃是旧状态，不能清掉刚设置的横幅（否则应用内停止按钮
+              // 会消失最多 10s）
+              if (queryStartedAt < ringingBannerSetAtRef.current) return;
               setRingingAlarm((cur) => (cur ? null : cur));
             }
           } catch { /* 状态查询失败不打扰 */ }
@@ -807,6 +818,7 @@ export const App: React.FC = () => {
     if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
     setRecords(initial);
+    pruneShadowEntries(new Set(nightsOnly(initial).map((r) => r.date)));
     showToast('已载入 7 天演示数据（原记录已被替换）');
   };
 
@@ -815,6 +827,8 @@ export const App: React.FC = () => {
     if (victim) {
       // 删除的夜/小睡不再驱动旅行能量（第 51 轮审计：账本须随真值回退）
       processRecordRemoval(victim.date, victim.kind === 'nap');
+      // 夜睡删除后同步清影子诊断条目（小睡不占条目键，不动）
+      if (victim.kind !== 'nap') dropShadowEntry(victim.date);
     }
     setRecords((prev) => prev.filter((r) => r.id !== id));
     showToast('已删除该条睡眠数据');
@@ -1022,6 +1036,8 @@ export const App: React.FC = () => {
               return;
             }
                         setRecords(sorted);
+                        // 批量替换后清理已不存在的夜的诊断条目（第 54 轮）
+                        pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
                         showToast(`已成功导入 ${imported.length} 条睡眠记录`);
                       }}
                       onReplaceRecords={(next) => {

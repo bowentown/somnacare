@@ -93,6 +93,23 @@ export function recordEngineRun(run: { date: string; model?: EngineTimes; heuris
   persistShadow(store);
 }
 
+/** 删除记录后清理该夜的诊断条目（第 54 轮）：删除/替换后旧 outcome
+ *  不再代表真值，残留会让偏好页命中率统计把已删除的夜当真值。 */
+export function dropShadowEntry(date: string): void {
+  const store = loadShadowStore();
+  const before = store.entries.length;
+  store.entries = store.entries.filter((e) => e.date !== date);
+  if (store.entries.length !== before) persistShadow(store);
+}
+
+/** 批量替换记录后清理：只保留仍存在的夜睡日期（导入/重置/重归类用）。 */
+export function pruneShadowEntries(validDates: Set<string>): void {
+  const store = loadShadowStore();
+  const before = store.entries.length;
+  store.entries = store.entries.filter((e) => validDates.has(e.date));
+  if (store.entries.length !== before) persistShadow(store);
+}
+
 /**
  * 回填结果真值。返回 false = 该夜没有引擎记录（日期不匹配或引擎未运行），
  * 调用方不必处理，但丢弃会被计数——静默丢弃最关键的标注必须可见。

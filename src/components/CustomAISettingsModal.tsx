@@ -200,8 +200,19 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
     }
   };
 
+  const [saveError, setSaveError] = useState<string | null>(null);
   const handleSave = () => {
+    setSaveError(null);
     if (!ensureHttpsEndpoint()) return;
+    // 空 Key 保存会静默回退本地规则引擎，用户却看到"已保存"（第 54 轮）
+    if (provider === 'deepseek' && !deepseekApiKey.trim()) {
+      setSaveError('请填写 DeepSeek API Key；留空将始终使用本地规则引擎');
+      return;
+    }
+    if (provider === 'custom_openai' && !customApiKey.trim()) {
+      setSaveError('请填写自建服务 API Key（若端点无鉴权可填任意占位符）');
+      return;
+    }
     setHfToken(hfTokenVal.trim());
     onSaveConfig({
       provider,
@@ -639,7 +650,10 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
         {/* Action Buttons */}
         <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
           <div className="text-xs">
-            {saveSuccess && (
+            {saveError && (
+            <p role="alert" className="text-[10px] text-rose-300 leading-relaxed px-1">{saveError}</p>
+          )}
+          {saveSuccess && (
               <span className="text-emerald-400 flex items-center gap-1 font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>已保存！</span>

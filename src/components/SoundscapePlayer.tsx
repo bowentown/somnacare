@@ -272,7 +272,7 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
                       step={0.05}
                       value={layerVol}
                       onChange={(e) => setLayerVol(t.soundType, Number(e.target.value))}
-                      className="w-20 accent-white h-1.5 bg-white/10 rounded-lg cursor-pointer"
+                      className="w-20 h-6 accent-white bg-transparent cursor-pointer [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-runnable-track]:bg-white/10 [&::-webkit-slider-runnable-track]:rounded-lg [&::-webkit-slider-thumb]:-mt-1"
                       aria-label={`${t.name}音量`}
                     />
                     <span className="text-[10px] font-mono text-slate-300 w-8 text-right tabular-nums">

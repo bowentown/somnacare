@@ -912,96 +912,163 @@ public class GemmaLLMPlugin extends Plugin {
             long existing = tempFile.exists() ? tempFile.length() : 0L;
 
             try {
-                // 安全审计 A4：起点即 HTTPS + 白名单校验
-                HttpURLConnection conn = openAllowedConnection(url);
-                // 安全审计 V15 + A4：禁自动跟随重定向，但 HF resolve→CDN 的 302
-                // 必须支持——改为手动逐跳跟随，每一跳都重新过白名单校验，
-                // Bearer 只会发往白名单内的域。跳数封顶防重定向循环
-                String currentUrl = url;
-                int redirects = 0;
-                int code;
-                while (true) {
-                    if (fToken != null) conn.setRequestProperty("Authorization", "Bearer " + fToken);
-                    if (existing > 0) conn.setRequestProperty("Range", "bytes=" + existing + "-");
-                    code = conn.getResponseCode();
-                    if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
-                        String loc = conn.getHeaderField("Location");
+                for (int attempt = 0; ; attempt++) {
+                    // 安全审计 A4：起点即 HTTPS + 白名单校验
+                    HttpURLConnection conn = openAllowedConnection(url);
+                    // 完整性锚点（第 54 轮修正）：真实 sha256 在 HF resolve 的
+                    // 302 响应头 X-Linked-Etag 上；最终 CDN 的裸 ETag 可能是
+                    // Xet 内容 ID（同为 64 位 hex）——绝不能当 sha256 用，
+                    // 否则每次下载都会被误判"篡改"并删除。逐跳捕获、
+                    // 只认 X-Linked-Etag。
+                    String expectedHash = null;
+                    // 安全审计 V15 + A4：禁自动跟随重定向，但 HF resolve→CDN 的 302
+                    // 必须支持——改为手动逐跳跟随，每一跳都重新过白名单校验，
+                    // Bearer 只会发往白名单内的域。跳数封顶防重定向循环
+                    String currentUrl = url;
+                    int redirects = 0;
+                    int code;
+                    while (true) {
+                        if (fToken != null) conn.setRequestProperty("Authorization", "Bearer " + fToken);
+                        if (existing > 0) conn.setRequestProperty("Range", "bytes=" + existing + "-");
+                        code = conn.getResponseCode();
+                        if (expectedHash == null) {
+                            expectedHash = parseSha256Header(
+                                    conn.getHeaderField("X-Linked-Etag"),
+                                    conn.getHeaderField("X-Linked-ETag"));
+                        }
+                        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                            String loc = conn.getHeaderField("Location");
+                            conn.disconnect();
+                            if (loc == null || loc.isEmpty()) throw new IOException("重定向缺少 Location");
+                            if (++redirects > 3) throw new IOException("重定向次数过多");
+                            currentUrl = new URL(new URL(currentUrl), loc).toString();
+                            conn = openAllowedConnection(currentUrl);
+                            continue;
+                        }
+                        break;
+                    }
+                    if (code == 416) {
                         conn.disconnect();
-                        if (loc == null || loc.isEmpty()) throw new IOException("重定向缺少 Location");
-                        if (++redirects > 3) throw new IOException("重定向次数过多");
-                        currentUrl = new URL(new URL(currentUrl), loc).toString();
-                        conn = openAllowedConnection(currentUrl);
+                        // 残留 .part 与远端不一致（或已下完但缺哈希锚点）：
+                        // 丢弃残留完整重下一次；只允许重试一次防死循环
+                        tempFile.delete();
+                        existing = 0;
+                        if (attempt >= 1) throw new IOException("断点续传状态异常，请重试");
                         continue;
                     }
-                    break;
-                }
-                if (code == 416) { // 断点续传越界 = 文件已下完
-                    if (!tempFile.renameTo(finalFile)) {
-                        throw new IOException("重命名临时文件失败");
-                    }
-                    resolveDownloaded(call, finalFile);
-                    return;
-                }
-                if (code < 200 || code >= 300) {
-                    conn.disconnect();
-                    call.reject("下载源响应异常 (HTTP " + code + ")");
-                    return;
-                }
-
-                long total = conn.getContentLengthLong();
-                boolean resume = code == 206 && existing > 0;
-                long base = resume ? existing : 0;
-                if (!resume && tempFile.exists()) tempFile.delete();
-
-                InputStream in = conn.getInputStream();
-                FileOutputStream out = new FileOutputStream(tempFile, resume);
-                byte[] buf = new byte[64 * 1024];
-                long loaded = base;
-                int lastPercent = -1;
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    if (downloadCancelled) {
-                        in.close();
-                        out.close();
+                    if (code < 200 || code >= 300) {
                         conn.disconnect();
+                        call.reject("下载源响应异常 (HTTP " + code + ")");
+                        return;
+                    }
+
+                    long contentLen = conn.getContentLengthLong();
+                    boolean resume = code == 206 && existing > 0;
+                    long base = resume ? existing : 0;
+                    // 206 的 Content-Length 只是剩余字节：进度分母必须加回已有部分
+                    long total = contentLen > 0 ? base + contentLen : contentLen;
+                    if (!resume && tempFile.exists()) tempFile.delete();
+
+                    InputStream in = conn.getInputStream();
+                    FileOutputStream out = new FileOutputStream(tempFile, resume);
+                    byte[] buf = new byte[64 * 1024];
+                    long loaded = base;
+                    int lastPercent = -1;
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        if (downloadCancelled) {
+                            in.close();
+                            out.close();
+                            conn.disconnect();
+                            tempFile.delete();
+                            call.reject("下载已取消");
+                            return;
+                        }
+                        loaded += n;
+                        out.write(buf, 0, n);
+                        if (total > 0) {
+                            int percent = (int) Math.min(99, ((loaded * 100) / total));
+                            if (percent != lastPercent) {
+                                lastPercent = percent;
+                                JSObject p = new JSObject();
+                                p.put("loaded", loaded);
+                                p.put("total", total);
+                                p.put("percent", percent);
+                                notifyListeners("downloadProgress", p);
+                            }
+                        }
+                    }
+                    out.flush();
+                    out.close();
+                    in.close();
+                    conn.disconnect();
+
+                    if (downloadCancelled) {
                         tempFile.delete();
                         call.reject("下载已取消");
                         return;
                     }
-                    loaded += n;
-                    out.write(buf, 0, n);
-                    if (total > 0) {
-                        int percent = (int) Math.min(99, ((loaded * 100) / total));
-                        if (percent != lastPercent) {
-                            lastPercent = percent;
-                            JSObject p = new JSObject();
-                            p.put("loaded", loaded);
-                            p.put("total", total);
-                            p.put("percent", percent);
-                            notifyListeners("downloadProgress", p);
-                        }
+                    // 先校验临时文件、通过后再替换正式文件——校验失败不会
+                    // 毁掉上一份可用的模型（旧实现先删再验）
+                    verifyFileIntegrity(tempFile, expectedHash);
+
+                    if (finalFile.exists()) finalFile.delete();
+                    if (!tempFile.renameTo(finalFile)) {
+                        throw new IOException("下载完成后重命名失败");
                     }
-                }
-                out.flush();
-                out.close();
-                in.close();
-                conn.disconnect();
 
-                if (finalFile.exists()) finalFile.delete();
-                if (!tempFile.renameTo(finalFile)) {
-                    throw new IOException("下载完成后重命名失败");
+                    JSObject p = new JSObject();
+                    p.put("percent", 100);
+                    p.put("path", finalFile.getAbsolutePath());
+                    notifyListeners("downloadProgress", p);
+                    resolveDownloaded(call, finalFile);
+                    return;
                 }
-
-                JSObject p = new JSObject();
-                p.put("percent", 100);
-                p.put("path", finalFile.getAbsolutePath());
-                notifyListeners("downloadProgress", p);
-                resolveDownloaded(call, finalFile);
             } catch (Exception e) {
                 if (!downloadCancelled) tempFile.delete();
                 call.reject("下载失败: " + e.getMessage());
             }
         });
+    }
+
+    /** 从 ETag 类响应头解析 64 位十六进制 SHA-256（容忍 W/ 弱校验前缀与引号）。 */
+    private static String parseSha256Header(String... headers) {
+        for (String h : headers) {
+            if (h == null) continue;
+            String s = h.trim();
+            if (s.startsWith("W/")) s = s.substring(2);
+            s = s.replace("\"", "");
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(?i)([a-f0-9]{64})").matcher(s);
+            if (m.find()) return m.group(1).toLowerCase();
+        }
+        return null;
+    }
+
+    /** 对下载完成的文件重算 SHA-256 并与源端哈希比对；不一致删除文件并拒绝。 */
+    private static void verifyFileIntegrity(File f, String expected) throws IOException {
+        if (expected == null) {
+            // 源站未提供哈希（部分镜像裁剪了 ETag 头）：无法比对，留痕但不误杀
+            android.util.Log.w("GemmaLLM", "下载源未提供 SHA-256，跳过完整性比对: " + f.getName());
+            return;
+        }
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) != -1) md.update(buf, 0, n);
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            String actual = sb.toString();
+            if (!expected.equals(actual)) {
+                f.delete();
+                throw new IOException("完整性校验失败：文件哈希与源不一致（镜像可能被篡改或下载损坏），已删除，请重试或更换下载源");
+            }
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException("本机不支持 SHA-256 校验，已停止安装");
+        }
     }
 
     private void resolveDownloaded(PluginCall call, File f) {

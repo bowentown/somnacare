@@ -13,8 +13,9 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 let cache: UsageDay[] | null = null;
 let cacheKey = '';
 let cacheAt = 0;
-let loading: Promise<UsageDay[]> | null = null;
-let loadingKey = '';
+// 在途查询按 key 分开登记（第 54 轮）：单槽 loading 会被 2 天/7 天两个
+// 并发请求互相顶掉——A resolve 时清掉 B 的登记，重复查询且短暂旧数据
+const loadingByKey = new Map<string, Promise<UsageDay[]>>();
 const subscribers = new Set<(days: UsageDay[]) => void>();
 
 function keyOf(days: number, chronotype: 'night' | 'day' | 'irregular'): string {
@@ -29,11 +30,11 @@ function load(days: number, chronotype: 'night' | 'day' | 'irregular'): Promise<
   const key = keyOf(days, chronotype);
   // 在途查询按参数去重：首页 2 天与趋势页 7 天是两个不同的请求，
   // 不能互相复用对方的 promise（否则趋势卡会拿到 2 天的数据）
-  if (loading && loadingKey === key) return loading;
-  loadingKey = key;
-  loading = refreshUsageDays(days, chronotype)
+  const inflight = loadingByKey.get(key);
+  if (inflight) return inflight;
+  const p = refreshUsageDays(days, chronotype)
     .then((list) => {
-      loading = null;
+      loadingByKey.delete(key);
       // 空结果不入缓存（第 42 轮授权流 e2e 实证）：授权前的查询被原生拒绝时
       // refreshUsageDays 静默回退空数组——把它连同 30min TTL 一起缓存，会让
       // 授权后的重跑继续拿到空数据，卡片直到 TTL 过期或重启才可能出现。
@@ -47,10 +48,11 @@ function load(days: number, chronotype: 'night' | 'day' | 'irregular'): Promise<
       return list;
     })
     .catch(() => {
-      loading = null;
+      loadingByKey.delete(key);
       return cachedUsageDays();
     });
-  return loading;
+  loadingByKey.set(key, p);
+  return p;
 }
 
 /** 幂等加载：同参数且未过期直接复用；仅 native 且未加载才真的查。 */

@@ -493,9 +493,12 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
     (window as any).Capacitor.Plugins.UsageSignal = {
       hasPermission: async () => ({ granted: true }),
       openPermissionSettings: async () => ({}),
-      queryDailyUsage: async () => ({ days: ud }),
+      // 恢复后聚合查询返回空：usageStore 不会 emit → 旧间接链路失效。
+      // 卡片仍出现 = 新的 resumeTick 直连通道生效（第 54 轮 e2e 隔离）
+      queryDailyUsage: async () => ((window as any).__dailyEmpty ? { days: [] } : { days: ud }),
       queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
     };
+    (window as any).__dailyEmpty = false;
     localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
     localStorage.setItem('somnacare_sleep_records', JSON.stringify(recs));
     localStorage.setItem('somnacare_onboarded_v1', '1');
@@ -530,6 +533,7 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
   // visibilitychange（WebView 恢复可见的系统事件）
   await page.clock.setFixedTime(morning2.getTime());
   await page.evaluate(() => {
+    (window as any).__dailyEmpty = true;   // 聚合查询空 → 只剩直连通道
     document.dispatchEvent(new Event('visibilitychange'));
   });
 
@@ -538,6 +542,13 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
   const cardText = await page.evaluate(() => document.body.innerText);
   expect(cardText).toMatch(/2[23]:[0-5]\d 放下/);
   expect(cardText).toMatch(/0[67]:[0-2]\d 拿起/);
+
+  // 面板 ⑧：恢复触发与引擎结果留痕（下次真机"还不弹"时的定位入口）
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /点此自检链路/ }).click();
+  const diag = await page.locator('pre').filter({ hasText: '⑧ 前台恢复触发' }).innerText({ timeout: 15000 });
+  expect(diag).toContain('前台恢复触发');
+  expect(diag).toMatch(/出卡|未出卡/);
 });
 
 test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自检报"跑通" → 采纳', async ({ page }) => {

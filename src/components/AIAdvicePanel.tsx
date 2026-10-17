@@ -132,7 +132,19 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   // 原"切 Tab 即卸载"的说法不成立）
   const chatRef = useRef(chat);
   chatRef.current = chat;
-  useEffect(() => () => persistChatState(chatRef.current), []);
+  useEffect(() => {
+    // 硬杀进程/后台回收时 React 卸载兜底不会执行——pagehide 与
+    // 页面隐藏时强制把防抖窗口内的最后几条消息落盘（第 54 轮）
+    const flush = () => persistChatState(chatRef.current);
+    const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVis);
+      flush();
+    };
+  }, []);
   const [inputText, setInputText] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [showAssessment, setShowAssessment] = useState(false);
@@ -286,6 +298,17 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
     return String(h);
   }, [records, userProfile.age, userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.targetDurationHours, userProfile.chronotype, userProfile.aiConfig?.provider, userProfile.aiConfig?.deepseekModel, userProfile.aiConfig?.customModelName]);
+  // 指纹一变（新记录/改目标/换模型）→ 已展示的旧报告立即失效：
+  // 此前旧报告会一直挂到用户手动点"刷新评估"，内容与当前数据不再对应
+  const lastAnalysisFpRef = useRef(analysisFingerprint);
+  const analysisFingerprintRef = useRef(analysisFingerprint);
+  analysisFingerprintRef.current = analysisFingerprint;
+  useEffect(() => {
+    if (lastAnalysisFpRef.current === analysisFingerprint) return;
+    lastAnalysisFpRef.current = analysisFingerprint;
+    setAnalysis(null);
+  }, [analysisFingerprint]);
+
   const readAnalysisCache = (): SleepAnalysisResult | null => {
     try {
       const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);
@@ -340,6 +363,9 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       }
     }
 
+    // 请求发出时的数据指纹：等待期间用户新增记录/改目标 → 结果作废，
+    // 不能把旧数据算出的报告挂到新数据上（第 54 轮）
+    const requestFp = analysisFingerprint;
     try {
       // fetchJsonWithTimeout：body 读取也在超时保护内（此前只保护到响应头，
       // 移动网络中途卡住时 json() 永不 settle → 转圈永不停止）
@@ -358,6 +384,10 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       }
 
       const data = response.data;
+      if (requestFp !== analysisFingerprintRef.current) {
+        // 数据已变化：本次结果作废（也不写缓存）
+        return;
+      }
       setAnalysis(data);
       // 来源标签跟着服务端实际引擎走（第 51 轮审计）：无上游 key 时服务端
       // 返回规则兜底，不能让用户误以为在读 DeepSeek/Gemini
@@ -369,6 +399,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
       // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
       try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
     } catch (_err: any) {
+      if (requestFp !== analysisFingerprintRef.current) return;
       // 与云端路径同口径：只喂近 7 晚夜睡（旧实现喂全量含小睡，云/本地两份评估口径不一致）
       const localResult = generateLocalClinicalAnalysis(nightsOnly(records).slice(0, 7), userProfile);
       setAnalysis(localResult);
@@ -943,7 +974,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             aria-label="发送睡眠疑问"
             onClick={() => handleSendMessage()}
             disabled={!inputText.trim() || isSendingChat}
-            className={`p-2.5 rounded-xl ${theme.accentBg} disabled:opacity-40 ${theme.accentFg} transition-all cursor-pointer`}
+            className={`min-w-11 min-h-11 p-0 flex items-center justify-center rounded-xl ${theme.accentBg} disabled:opacity-40 ${theme.accentFg} transition-all cursor-pointer`}
           >
             <Send className="w-4 h-4" />
           </button>

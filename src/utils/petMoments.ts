@@ -601,14 +601,23 @@ const SAY_FAIL_KEY = 'somnacare_pet_say_fail';   // 负缓存：失败后 30 分
 const SAY_FAIL_TTL_MS = 30 * 60 * 1000;
 const SAY_CACHE_TTL_MS = 20 * 60 * 60 * 1000;   // 20 小时：一天一刷
 
-export function getCachedLlmSay(cfg?: any): string[] | null {
+/** 语录数据指纹（第 54 轮）：语录里会引用昨晚分数/时长——新记录写入后
+ *  20h 缓存必须立即失效，不能继续播旧数字。与朋友圈事实同一数据源。 */
+export function petSayFingerprint(records: SleepRecord[]): string {
+  const nights = nightsOnly(records).slice(0, 7);
+  return nights.map((r) => `${r.date}:${r.sleepScore}:${r.durationMinutes}`).join('|');
+}
+
+export function getCachedLlmSay(cfg?: any, fp?: string): string[] | null {
   try {
     if (cfg && !hasLlm(cfg)) return null;   // 撤掉 Key 后不再吃 20h 云端缓存
     const raw = localStorage.getItem(SAY_CACHE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { at: number; lines: string[] };
+    const parsed = JSON.parse(raw) as { at: number; lines: string[]; fp?: string };
     if (!Array.isArray(parsed.lines) || parsed.lines.length === 0) return null;
     if (Date.now() - parsed.at > SAY_CACHE_TTL_MS) return null;
+    // 指纹不符（新记录/改记录）= 旧语录里的数字已过期，视为未命中
+    if (fp !== undefined && parsed.fp !== undefined && parsed.fp !== fp) return null;   // 旧缓存无 fp 时放行，20h 内自然淘汰
     // 用户实测：LLM 台词可能写死具体钟点（"23:30 到了"），缓存 20h 内会在
     // 错误时刻播出——时间性台词由本地模板在准确时刻说，这里把含钟点的行
     // 过滤掉（对已缓存的旧语料立即生效，不必等 TTL 过期）
@@ -620,9 +629,9 @@ export function getCachedLlmSay(cfg?: any): string[] | null {
   }
 }
 
-function cacheLlmSay(lines: string[]): void {
+function cacheLlmSay(lines: string[], fp?: string): void {
   try {
-    localStorage.setItem(SAY_CACHE_KEY, JSON.stringify({ at: Date.now(), lines }));
+    localStorage.setItem(SAY_CACHE_KEY, JSON.stringify({ at: Date.now(), lines, fp }));
   } catch { /* ignore */ }
 }
 
@@ -677,7 +686,7 @@ ${facts.map((f) => '- ' + f).join('\n')}
     try { localStorage.setItem(SAY_FAIL_KEY, String(Date.now())); } catch { /* ignore */ }
     return null;
   }
-  cacheLlmSay(lines);
+  cacheLlmSay(lines, petSayFingerprint(records));
   return lines;
 }
 

@@ -18,14 +18,13 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
-  retries: number;
 }
 
 export class PaneErrorBoundary extends Component<Props, State> {
-  public state: State = { hasError: false, error: null, retries: 0 };
+  public state: State = { hasError: false, error: null };
 
   public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error, retries: 0 };
+    return { hasError: true, error };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -33,8 +32,8 @@ export class PaneErrorBoundary extends Component<Props, State> {
   }
 
   private handleRetry = () => {
-    // 重试 = 重新挂载分区内容（key 递增强制子树重建）
-    this.setState((s) => ({ hasError: false, error: null, retries: s.retries + 1 }));
+    // 重试 = 错误 UI 期间 children 已被卸载，setState 复位后自然重新挂载
+    this.setState({ hasError: false, error: null });
   };
 
   public render() {
@@ -60,7 +59,6 @@ export class PaneErrorBoundary extends Component<Props, State> {
         </div>
       );
     }
-    // key 递增：重试时强制重建子树（彻底重置内部状态，而非复用出错前的树）
-    return <React.Fragment key={this.state.retries}>{this.props.children}</React.Fragment>;
+    return <>{this.props.children}</>;
   }
 }

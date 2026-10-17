@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { tapTick } from '../utils/haptics';
 import {
   ChevronDown,
@@ -129,6 +129,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
   };
 
   const handleDeleteAlarm = (id: string) => {
+    if (!window.confirm('删除这个闹钟？')) return;
     onUpdateAlarms(alarms.filter((a) => a.id !== id));
   };
 
@@ -151,7 +152,13 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
     }
   };
 
+  const savingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
   const handleSaveNewAlarm = async () => {
+    if (savingRef.current) return;   // 权限弹窗期间连点会落两条同时刻闹钟
+    savingRef.current = true;
+    setIsSaving(true);
+    try {
     tapTick();
     // <input type="time"> 被清空后保存会把坏时间入库：原生通知整批调度被拒
     // （ Capacitor 校验不过 → 全部闹钟的横幅通知一起消失），且界面无任何提示
@@ -174,6 +181,10 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
     };
     onUpdateAlarms([...alarms, created]);
     setIsAdding(false);
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -428,9 +439,10 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
           <button
             type="button"
             onClick={handleSaveNewAlarm}
-            className={`w-full py-3 rounded-xl ${accentBg} ${accentFg} text-xs font-black shadow-lg transition-all active:scale-98 cursor-pointer`}
+            disabled={isSaving}
+            className={`w-full py-3 rounded-xl ${accentBg} ${accentFg} text-xs font-black shadow-lg transition-all active:scale-98 cursor-pointer disabled:opacity-60`}
           >
-            保存并启动此闹钟
+            {isSaving ? '正在启动…' : '保存并启动此闹钟'}
           </button>
         </div>
       )}
@@ -497,7 +509,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                             title="减小唤醒窗口"
                             aria-label="减小唤醒窗口"
                             onClick={() => handleAdjustWindow(alarm.id, -1)}
-                            className="px-1 hover:text-white cursor-pointer"
+                            className="px-2 py-1 -my-1 min-w-6 min-h-6 hover:text-white cursor-pointer"
                           >
                             −
                           </button>
@@ -507,7 +519,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                             title="增大唤醒窗口"
                             aria-label="增大唤醒窗口"
                             onClick={() => handleAdjustWindow(alarm.id, +1)}
-                            className="px-1 hover:text-white cursor-pointer"
+                            className="px-2 py-1 -my-1 min-w-6 min-h-6 hover:text-white cursor-pointer"
                           >
                             +
                           </button>

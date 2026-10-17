@@ -89,6 +89,15 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const accentFg = theme?.accentFg || 'text-white';
 
   const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, '手动补录睡眠记录');
+  // 文案随所选日期走（第 54 轮）：补录更早的夜时"昨晚"自相矛盾
+  const nightWord = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const y = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (date === y) return '昨晚';
+    const [yy, mm, dd] = date.split('-').map(Number);
+    return Number.isFinite(yy) ? `${mm}月${dd}日那晚` : '这一晚';
+  })();
   if (!isOpen) return null;
 
   const toggleHabit = (id: string) => {
@@ -287,7 +296,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
 
           {/* Pre-sleep Habits tags */}
           <div>
-            <label className="block text-xs font-bold text-white mb-1.5">昨晚睡前行为习惯</label>
+            <label className="block text-xs font-bold text-white mb-1.5">{nightWord}睡前行为习惯</label>
             <div className="flex flex-wrap gap-2">
               {HABIT_OPTIONS.map((h) => {
                 const active = selectedHabits.includes(h.id);
@@ -316,7 +325,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
             <textarea
               value={dreamNotes}
               onChange={(e) => setDreamNotes(e.target.value)}
-              placeholder="记录昨晚梦境场景、心情或特别的细节..."
+              placeholder={`记录${nightWord}梦境场景、心情或特别的细节...`}
               rows={2}
               className={`w-full ${innerBg} border ${innerBorder} rounded-xl p-3 text-xs text-white placeholder-slate-400 focus:outline-none ${theme?.focusRing} shadow-inner font-medium`}
             />

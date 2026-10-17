@@ -6,8 +6,8 @@
  *  - 只看夜睡（nightsOnly），date=夜归属（放下手机那晚）
  *  - "已度过夜数"= 本周周一..昨天（今晚尚未发生，不算未记录）
  *  - 达标 = sleepScore ≥ 80（与旅行能量阈值同源）
- *  - 连胜：从昨晚往回数连续达标夜；漏记 1 晚给宽限（streak 保持不增），
- *    连漏 2 晚断签——激励设计而非惩罚设计
+ *  - 连胜：从昨晚往回数连续达标夜；整段至多容忍 1 个缺卡夜（连续缺卡
+ *    或隔开后再次缺卡都会断签）——激励设计而非惩罚设计
  */
 import { SleepRecord } from '../types/sleep';
 import { nightsOnly } from './recordFilter';
@@ -54,7 +54,15 @@ export function computeWeekReport(records: SleepRecord[], now: Date = new Date()
   for (let i = 0; i < elapsedNights; i++) {
     weekKeys.add(toLocalDateString(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)));
   }
-  const goodNights = nights.filter((r) => weekKeys.has(r.date) && r.sleepScore >= GOOD_NIGHT_THRESHOLD).length;
+  // 按夜去重：导入数据同一天可能有多条夜睡（导入路径只排序不去重），
+  // 不去重会出现"本周达标 2/1"（第 54 轮）
+  const weekSeen = new Set<string>();
+  let goodNights = 0;
+  for (const r of nights) {
+    if (!weekKeys.has(r.date) || weekSeen.has(r.date)) continue;
+    weekSeen.add(r.date);
+    if (r.sleepScore >= GOOD_NIGHT_THRESHOLD) goodNights++;
+  }
 
   // 连续达标：昨晚起回数；无记录 1 晚 = 宽限（不增不断），连漏 2 = 断。
   // 宽限只在"缺卡夜之后（更早）仍有记录"时才算被用——历史尽头的空夜
@@ -66,7 +74,7 @@ export function computeWeekReport(records: SleepRecord[], now: Date = new Date()
   for (const r of nights) {
     if (!byDate.has(r.date)) byDate.set(r.date, r);
   }
-  for (let i = 1; i <= 14; i++) {
+  for (let i = 1; i <= 60; i++) {   // 回溯上限 60 晚（UI 可显示"60+"）
     const key = toLocalDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i));
     const rec = byDate.get(key);
     if (rec) {
@@ -79,7 +87,9 @@ export function computeWeekReport(records: SleepRecord[], now: Date = new Date()
       missAt = i;   // 首次缺卡：宽限（连胜保留但停涨）
     }
   }
-  const graceUsed = missAt > 0 && lastSeen > missAt;
+  // 宽限只对"昨晚缺卡"成立（连胜保留的叙事）；缺卡发生在更早位置
+  // 且更早已无记录时不算
+  const graceUsed = missAt === 1 && lastSeen > missAt;
 
   return { nights: recent7.length, avgScore, avgDurationMin, goodNights, elapsedNights, best, streak, graceUsed };
 }

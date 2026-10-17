@@ -104,23 +104,26 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   // 前台恢复的独立触发（第 53 轮）：不依赖 usageDays 聚合查询 emit——
   // 恢复信号一到就强制绕缓存重查事件并重跑引擎（双通道见 App.tsx）
   const [resumeTick, setResumeTick] = useState(0);
-  const forceNextQueryRef = useRef(false);
-  useEffect(() => subscribeAppResume(() => {
-    forceNextQueryRef.current = true;
-    setResumeTick((t) => t + 1);
-  }), []);
+  // 强制查询的"消费"用 tick 比较而不是一次性 ref（第 54 轮修正）：
+  // 恢复触发的强制链若被 usageDays emit 的重跑取消，ref 已被清零 → 后继
+  // 链不再强制、重试也失效。现在同一个 tick 的所有后继重跑都保持强制，
+  // 直到某条链真正跑完（成功或最终失败）才标记消费。
+  const consumedResumeTickRef = useRef(0);
+  useEffect(() => subscribeAppResume(() => setResumeTick((t) => t + 1)), []);
 
   useEffect(() => {
     if (!isNativePlatform() || chronotype === 'irregular') {
       setModelResult({ phase: 'failed', proposal: null });
+      // 不规律作息下也要消费恢复信号，避免遗留 tick 让之后的重跑误判 forced
+      consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
       return;
     }
+    const forced = resumeTick > consumedResumeTickRef.current;
     // 重跑即先归位 pending：handledDate/records 变化触发的重跑若不同步隐去
-    // 旧提议卡，"交互即刻隐去"的注释承诺落空（旧卡在异步返回前仍可点）
-    setModelResult({ phase: 'pending', proposal: null });
+    // 旧提议卡，"交互即刻隐去"的注释承诺落空。恢复触发的重跑例外——
+    // 已显示的卡不应在慢查询期间闪没（第 54 轮）
+    if (!forced) setModelResult({ phase: 'pending', proposal: null });
     let cancelled = false;
-    const forced = forceNextQueryRef.current;
-    forceNextQueryRef.current = false;
     void (async () => {
       // 恢复触发的查询强制绕 30min TTL：起床信号可能就在缓存写入之后
       let ev = await queryScreenOnEvents(14, forced);
@@ -133,7 +136,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       if (cancelled) return;
       if (!ev) {
         setModelResult({ phase: 'failed', proposal: null });   // 查询失败：回退态
-        if (forced) recordResumeOutcome('事件查询失败（桥接未就绪/权限被回收）');
+        if (forced) recordResumeOutcome('事件查询失败（桥接未就绪或权限被回收，已重试一次）');
+        consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
         return;
       }
       const res = computeModelProposal({
@@ -155,6 +159,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
               : `未出卡：${res.fit?.reason ?? res.block ?? '模型拒绝'}（事件 ${ev.events.length} 条）`,
           );
         }
+        consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
       }
     })();
     return () => { cancelled = true; };
@@ -332,6 +337,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   };
 
   const handleCancelSession = () => {
+    // 进行中的整夜会话一键丢弃不可恢复——破坏性与删除记录同防护级
+    if (!window.confirm('取消本次夜间监测？已记录的时长不会保存。')) return;
     localStorage.removeItem('somnacare_bedtime_start');
     setSleepStartTime(null);
   };

@@ -151,7 +151,9 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
               <div className={`rounded-xl p-2.5 ${innerBg} border ${innerBorder}`}>
                 <p className="text-[9px] text-slate-400">本周达标</p>
                 <p className="text-base font-black font-mono text-white">
-                  {weekReport.goodNights}<span className="text-[10px] text-slate-500">/{weekReport.elapsedNights}</span>
+                  {weekReport.elapsedNights === 0
+                    ? '—'
+                    : <>{weekReport.goodNights}<span className="text-[10px] text-slate-500">/{weekReport.elapsedNights}</span></>}
                 </p>
               </div>
               <div className={`rounded-xl p-2.5 ${innerBg} border ${innerBorder}`}>
@@ -590,7 +592,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setShowShare(true); }}
                 aria-label="生成每周睡眠分享卡"
-                className={`ml-auto mr-1 flex items-center gap-1 px-2.5 py-2.5 -my-2 rounded-full ${theme.accentBg} ${theme.accentFg} text-[10px] font-bold cursor-pointer active:scale-95 transition-transform`}
+                className={`ml-auto mr-1 flex items-center justify-center gap-1 px-3 min-h-11 -my-3 rounded-full ${theme.accentBg} ${theme.accentFg} text-[10px] font-bold cursor-pointer active:scale-95 transition-transform`}
               >
                 <Share2 className="w-3.5 h-3.5" />
                 <span>分享</span>
@@ -674,7 +676,10 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             {usagePerm === 'granted' && usageOpen && (
               <button
                 type="button"
-                onClick={() => { clearUsageData(); setUsageDays([]); }}
+                onClick={() => {
+                    if (!window.confirm('清除本机缓存的手机使用对照数据？系统使用记录不受影响，可重新查询。')) return;
+                    clearUsageData(); setUsageDays([]);
+                  }}
                 className={`text-[10px] ${textMuted} hover:text-slate-300 underline cursor-pointer py-1.5 -my-1.5`}
               >
                 清除手机使用数据
