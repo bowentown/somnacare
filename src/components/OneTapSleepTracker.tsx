@@ -109,6 +109,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   // 链不再强制、重试也失效。现在同一个 tick 的所有后继重跑都保持强制，
   // 直到某条链真正跑完（成功或最终失败）才标记消费。
   const consumedResumeTickRef = useRef(0);
+  const lastHandledRef = useRef(handledDate);
+  const lastRecordsRef = useRef(records);
   useEffect(() => subscribeAppResume(() => setResumeTick((t) => t + 1)), []);
 
   useEffect(() => {
@@ -119,10 +121,13 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       return;
     }
     const forced = resumeTick > consumedResumeTickRef.current;
-    // 重跑即先归位 pending：handledDate/records 变化触发的重跑若不同步隐去
-    // 旧提议卡，"交互即刻隐去"的注释承诺落空。恢复触发的重跑例外——
-    // 已显示的卡不应在慢查询期间闪没（第 54 轮）
-    if (!forced) setModelResult({ phase: 'pending', proposal: null });
+    // forced 只豁免"纯恢复"的重跑；若本次重跑同时伴随用户交互
+    // （handledDate 变化/记录增删），旧卡必须立即归位 pending——
+    // 否则已忽略/已采纳的卡在慢查询期间仍可点（第 54 轮自审）
+    const interacted = handledDate !== lastHandledRef.current || records !== lastRecordsRef.current;
+    lastHandledRef.current = handledDate;
+    lastRecordsRef.current = records;
+    if (!forced || interacted) setModelResult({ phase: 'pending', proposal: null });
     let cancelled = false;
     void (async () => {
       // 恢复触发的查询强制绕 30min TTL：起床信号可能就在缓存写入之后

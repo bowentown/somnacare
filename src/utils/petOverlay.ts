@@ -205,7 +205,7 @@ export async function syncPet(
 ): Promise<void> {
   const g = gemma();
   if (!g || !isPetEnabled()) return;
-  const cached = getCachedLlmSay(profile?.aiConfig, petSayFingerprint(records));
+  const cached = getCachedLlmSay(profile?.aiConfig, petSayFingerprint(records, profile));
   const localLines = buildPetSayLines(records, profile);
   // 混排顺序（第 45 轮优化）：时间性问候（首行，按当前时段实时生成）置顶——
   // 此前缓存 LLM 语录排最前，最多 10 条挤在前面，最该说的时段问候

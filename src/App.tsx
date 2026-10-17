@@ -13,7 +13,7 @@ import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { tapTick } from './utils/haptics';
-import { recordOutcome, dropShadowEntry, pruneShadowEntries } from './utils/modelShadow';
+import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
@@ -393,19 +393,22 @@ export const App: React.FC = () => {
     if (!isNativePlatform()) return;
     const chronotype = userProfile?.chronotype ?? 'night';
     let lastRun = 0;
+    let inFlight = false;
     const refresh = (source: 'visibility' | 'appstate') => {
       if (chronotype === 'irregular') return;   // 不规律作息：自动提议整体关闭，无需刷新
-      // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次
+      // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次。
+      // inFlight 是同步守卫（首个查询返回前第二通道不会双触发）；失败时
+      // inFlight 立即释放且不写 lastRun，允许另一通道补位（第 54 轮修正）
       const now = Date.now();
-      if (now - lastRun < 1500) return;
+      if (inFlight || now - lastRun < 1500) return;
+      inFlight = true;
       // 广播给睡眠页引擎：即使下面的聚合查询失败/返回空，引擎也会被强制
       // 重跑一次（不依赖 usageStore emit 的间接链路）
       notifyAppResume(source);
       void (async () => {
         const ok = !!(await queryScreenOnEvents(14, true));
-        // 只有事件查询成功才记账去抖：失败时允许另一通道（以及引擎自己的
-        // 重试）立刻补位，而不是被 1.5s 窗口吞掉（第 54 轮修正）
         if (ok) lastRun = Date.now();
+        inFlight = false;
         await forceRefreshUsage(2, chronotype);
       })();
     };
@@ -818,6 +821,7 @@ export const App: React.FC = () => {
     if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
     setRecords(initial);
+    clearShadowOutcomes();
     pruneShadowEntries(new Set(nightsOnly(initial).map((r) => r.date)));
     showToast('已载入 7 天演示数据（原记录已被替换）');
   };
@@ -1036,7 +1040,8 @@ export const App: React.FC = () => {
               return;
             }
                         setRecords(sorted);
-                        // 批量替换后清理已不存在的夜的诊断条目（第 54 轮）
+                        // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
+                        clearShadowOutcomes();
                         pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
                         showToast(`已成功导入 ${imported.length} 条睡眠记录`);
                       }}
@@ -1045,6 +1050,9 @@ export const App: React.FC = () => {
                         // （那条路弹"导入将替换"确认框，取消会让 profile 与数据
                         // 永久不一致）。顺序不变（records 本就是降序）
                         setRecords(next);
+                        // 重归类只改 kind：按重归类后的夜睡日期清理条目
+                        // （被改判为小睡的夜不再进诊断统计）
+                        pruneShadowEntries(new Set(nightsOnly(next).map((r) => r.date)));
                       }}
                       theme={currentTheme}
                     />

@@ -1012,10 +1012,18 @@ public class GemmaLLMPlugin extends Plugin {
                     // 毁掉上一份可用的模型（旧实现先删再验）
                     verifyFileIntegrity(tempFile, expectedHash);
 
-                    if (finalFile.exists()) finalFile.delete();
+                    // 原子替换：旧文件先改名备份，新文件落位成功后才删备份；
+                    // rename 失败时回滚旧模型（第 54 轮自审）
+                    File backup = new File(finalFile.getAbsolutePath() + ".bak");
+                    if (backup.exists()) backup.delete();
+                    if (finalFile.exists() && !finalFile.renameTo(backup)) {
+                        throw new IOException("无法备份旧模型文件");
+                    }
                     if (!tempFile.renameTo(finalFile)) {
+                        if (backup.exists()) backup.renameTo(finalFile);
                         throw new IOException("下载完成后重命名失败");
                     }
+                    if (backup.exists()) backup.delete();
 
                     JSObject p = new JSObject();
                     p.put("percent", 100);

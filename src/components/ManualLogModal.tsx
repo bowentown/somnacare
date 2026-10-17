@@ -91,6 +91,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, '手动补录睡眠记录');
   // 文案随所选日期走（第 54 轮）：补录更早的夜时"昨晚"自相矛盾
   const nightWord = (() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '这一晚';
     const d = new Date();
     d.setDate(d.getDate() - 1);
     const y = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

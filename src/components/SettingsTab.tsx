@@ -218,7 +218,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   // 大肥鱼的傲娇播报词：优先展示云端刷的语录（与桌宠实际念的一致），
   // 未刷到时回退本地模板
-  const petSay = getCachedLlmSay(userProfile.aiConfig, petSayFingerprint(records)) ?? buildPetSayLines(records, userProfile);
+  const petSay = getCachedLlmSay(userProfile.aiConfig, petSayFingerprint(records, userProfile)) ?? buildPetSayLines(records, userProfile);
 
   // 换装（樱花版 = 樱花装目录）
   const handlePetSkinChange = (skin: string) => {

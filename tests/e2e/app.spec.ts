@@ -107,6 +107,37 @@ test('晨起手动补录：表单填写 → 保存落库', async ({ page }) => {
   expect(landed?.wakeTime).toBe('07:30');
 });
 
+test('AI 设置弹窗可打开（hooks 顺序回归守卫，第 54 轮）', async ({ page }) => {
+  await openAt(page, 9, 0);
+  await seed(page, []);
+  await open(page);
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: /配置与探查/ }).click();
+  await expect(page.getByText('AI 顾问模型设置')).toBeVisible();
+  // 关闭再打开一次：hook 数量在 isOpen 变化前后必须一致
+  await page.getByRole('dialog', { name: 'AI 顾问模型设置' }).getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByText('AI 顾问模型设置')).toHaveCount(0);
+  await page.getByRole('button', { name: /配置与探查/ }).click();
+  await expect(page.getByText('AI 顾问模型设置')).toBeVisible();
+});
+
+test('趋势页：睡眠周报与连续达标渲染（第 54 轮）', async ({ page }) => {
+  const fixed = new Date();
+  // 周一 00:00 起算的"本周"：给最近 3 晚（昨晚起）都 90 分 →
+  // 连胜 3、近 7 晚均分 90；本周已过夜数取决于运行日，只断言存在性与关键文案
+  const recs = [0, 1, 2].map((i) =>
+    mkRecord(dstr(-(i + 1), fixed), i % 2 ? '00:10' : '23:30', '07:30', 90));
+  await seed(page, recs);
+  await open(page);
+  await navTo(page, '趋势');
+  await expect(page.getByText('睡眠周报')).toBeVisible();
+  await expect(page.getByText('7 晚均分')).toBeVisible();
+  // 种子记录会经夜归属迁移（date−1），昨晚的键变空缺 → 宽限态显示
+  // "3 晚（今晚续上）"；两种文案都属于连续 3 晚
+  await expect(page.getByText(/连续达标 3 晚/)).toBeVisible();
+  await expect(page.getByText(/· 最佳 \d{2}-\d{2}（\d+ 分）/)).toBeVisible();
+});
+
 test('趋势页：统计卡与历史记录渲染', async ({ page }) => {
   const fixed = new Date();
   const recs = Array.from({ length: 7 }, (_, i) =>

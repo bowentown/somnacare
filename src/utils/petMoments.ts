@@ -603,9 +603,14 @@ const SAY_CACHE_TTL_MS = 20 * 60 * 60 * 1000;   // 20 小时：一天一刷
 
 /** 语录数据指纹（第 54 轮）：语录里会引用昨晚分数/时长——新记录写入后
  *  20h 缓存必须立即失效，不能继续播旧数字。与朋友圈事实同一数据源。 */
-export function petSayFingerprint(records: SleepRecord[]): string {
+export function petSayFingerprint(records: SleepRecord[], profile?: { targetBedtime?: string }): string {
   const nights = nightsOnly(records).slice(0, 7);
-  return nights.map((r) => `${r.date}:${r.sleepScore}:${r.durationMinutes}`).join('|');
+  // 覆盖 buildSleepFacts 实际喂给 LLM 的全部隐私无关数值：昨晚的效率/
+  // 潜伏期/夜醒 + 目标就寝（第 54 轮自审：只指纹分数/时长会漏掉这些变化）
+  return nights
+    .map((r) => `${r.date}:${r.sleepScore}:${r.durationMinutes}:${r.sleepEfficiency}:${r.latencyMinutes}:${r.awakeMinutes}`)
+    .join('|')
+    + `|tb:${profile?.targetBedtime ?? ''}`;
 }
 
 export function getCachedLlmSay(cfg?: any, fp?: string): string[] | null {
@@ -686,7 +691,7 @@ ${facts.map((f) => '- ' + f).join('\n')}
     try { localStorage.setItem(SAY_FAIL_KEY, String(Date.now())); } catch { /* ignore */ }
     return null;
   }
-  cacheLlmSay(lines, petSayFingerprint(records));
+  cacheLlmSay(lines, petSayFingerprint(records, profile));
   return lines;
 }
 

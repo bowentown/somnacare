@@ -102,6 +102,15 @@ export function dropShadowEntry(date: string): void {
   if (store.entries.length !== before) persistShadow(store);
 }
 
+/** 整包替换数据前调用：旧 outcome 对应的真值已失效（同日期新数据可能
+ *  完全不同），全部剥离但保留引擎运行记录（第 54 轮自审）。 */
+export function clearShadowOutcomes(): void {
+  const store = loadShadowStore();
+  if (!store.entries.some((e) => e.outcome)) return;
+  store.entries = store.entries.map(({ outcome, ...rest }) => rest as typeof rest);
+  persistShadow(store);
+}
+
 /** 批量替换记录后清理：只保留仍存在的夜睡日期（导入/重置/重归类用）。 */
 export function pruneShadowEntries(validDates: Set<string>): void {
   const store = loadShadowStore();

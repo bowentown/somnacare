@@ -77,9 +77,12 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   const [hfTokenVal, setHfTokenVal] = useState(getHfToken());
   const [llmCrashNote, setLlmCrashNote] = useState<string | null>(null);
   const llmAbortRef = useRef<AbortController | null>(null);
+  // 保存校验错误（第 54 轮）：hook 必须在 if (!isOpen) 早退之前声明
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    setSaveError(null);
     let cancelled = false;
     const crash = consumeLlmCrashFlag();
     if (crash && !cancelled) {
@@ -200,7 +203,6 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
     }
   };
 
-  const [saveError, setSaveError] = useState<string | null>(null);
   const handleSave = () => {
     setSaveError(null);
     if (!ensureHttpsEndpoint()) return;

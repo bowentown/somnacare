@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 
 /**
  * 分区级错误边界（第 52 轮）：此前只有根级边界——一张坏记录的渲染
