@@ -60,8 +60,8 @@ const mk = (date: string, score: number, duration = 470): any =>
   const r5 = computeWeekReport([mk(dstr(-2), 60), mk(dstr(-3), 92)], now);
   check('宽限后遇低分夜仍断签', r5.streak === 0, String(r5.streak));
 
-  // 达标阈值导出与旅行能量同源
-  check('达标阈值 = 80（与旅行能量同源）', GOOD_NIGHT_THRESHOLD === 80);
+  // 达标阈值是评分口径，与旅行能量目标解耦（第 56 轮能量改 200 后不再同源）
+  check('达标阈值 = 80（评分口径，独立于旅行能量）', GOOD_NIGHT_THRESHOLD === 80);
 
   // 全小睡输入：夜睡为空 → 全 null 安全
   const r6 = computeWeekReport([{ ...mk(dstr(-1), 90), kind: 'nap' }] as any, now);

@@ -4,10 +4,11 @@ import { TRIP_POOL, getPostcardById } from '../data/travelPostcards';
 const TRAVEL_STATE_KEY = 'somnacare_travel_state';
 
 /**
- * 单次旅行所需梦境能量。测试期 80（每晚存一档基本能触发一次，方便真机
- * 走完整链路）；正式发布前改回 666。展示端一律引用本常量，不要写死数字。
+ * 单次旅行所需梦境能量：200 分 ≈ 2–3 晚高质量睡眠（单晚评分 70–90）。
+ * 此前测试期 80 一晚就能出发，图鉴解锁过快、旅行缺少期待感（第 56 轮
+ * 用户定档 200）。展示端一律引用本常量，不要写死数字。
  */
-export const TRIP_ENERGY_TARGET = 80;
+export const TRIP_ENERGY_TARGET = 200;
 
 export function getInitialTravelState(): UserTravelState {
   return {
