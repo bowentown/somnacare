@@ -77,8 +77,8 @@ test('启发式：跨午夜历史出卡 → 确认 → 落库 + 影子诊断记�
 
   // 卡片在位：放下/拿起时刻与使用信号一致
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
-  await expect(page.getByText('00:33 放下')).toBeVisible();
-  await expect(page.getByText('08:56 拿起')).toBeVisible();
+  await expect(page.getByRole('button', { name: '就寝推迟15分钟' }).locator('..')).toContainText('00:33');
+  await expect(page.getByRole('button', { name: '起床推迟15分钟' }).locator('..')).toContainText('08:56');
   await expect(page.getByText('睡眠中亮屏 1 次')).toBeVisible();
 
   // 确认 → 完成小结 + 落库（date=夜归属）+ handled 锁 + 影子诊断闭环
@@ -111,7 +111,7 @@ test('忽略：隐去 + 不落库 + 刷新后仍隐去（handled 持久化）', 
   await page.waitForTimeout(4200);
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
 
-  await page.getByRole('button', { name: '忽略' }).click();
+  await page.getByRole('button', { name: '不是我的睡眠' }).click();
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
   const recs = await readStore(page, 'somnacare_sleep_records');
   expect((recs as any[]).length).toBe(midnightRecords.length);   // 没有静默写库
@@ -133,7 +133,7 @@ test('gate 4：目标夜已有夜睡记录 → 不出卡（尊重用户）', asy
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
-  await expect(page.getByText('今晚准备入睡')).toBeVisible();   // 页面本身健康
+  await expect(page.getByText('早安')).toBeVisible();   // 页面本身健康（09:30 → 早安）
 });
 
 test('授权即时生效：设置返回后引擎自动重跑出卡，无需重开页面', async ({ page }) => {
@@ -365,7 +365,7 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
   expect(cardText).toMatch(/07:38 拿起/);
 
   // 处理卡（忽略）→ 解锁标记一次性清除 + handled 落锁，刷新不复活
-  await page.getByRole('button', { name: '忽略' }).click();
+  await page.getByRole('button', { name: '不是我的睡眠' }).click();
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_unlocked'))).toBeNull();
   expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));   // 夜归属：bed 00:28 凌晨放下 → 昨天

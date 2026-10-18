@@ -17,9 +17,10 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-const { recordEngineRun, recordOutcome, loadShadowStore, shadowStats } = await import(
-  new URL('../src/utils/modelShadow.ts', import.meta.url).href
-);
+const {
+  recordEngineRun, recordOutcome, recordAdjustment, recordNegativeLabel,
+  loadShadowStore, shadowStats,
+} = await import(new URL('../src/utils/modelShadow.ts', import.meta.url).href);
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -90,6 +91,18 @@ const st5 = shadowStats(loadShadowStore());
 check('反向锚定：7 采纳 + 3 全错 → 采纳率 70%、独立命中率如实 0%',
   st5.adoptionRate === 70 && st5.independent.hitRate === 0,
   `采纳率=${st5.adoptionRate}% 独立=${st5.independent.hitRate}%`);
+
+// ── 8) 卡上微调与否定标注（第 56 轮）──
+store.clear();
+recordEngineRun({ date: '2026-10-20', model: { bed: '23:00', wake: '07:00' } });
+recordAdjustment('2026-10-20', 15, -15);
+recordAdjustment('2026-10-20', 15, 0);   // 同夜累加 → bed=+30 / wake=-15
+recordEngineRun({ date: '2026-10-21', model: { bed: '23:00', wake: '07:00' } });
+recordNegativeLabel('2026-10-21');
+const st6 = shadowStats(loadShadowStore());
+check('微调按夜累加并聚合平均方向', st6.adjustments.nights === 1 && st6.adjustments.avgBed === 30 && st6.adjustments.avgWake === -15,
+  JSON.stringify(st6.adjustments));
+check('否定标注计数', st6.negatives === 1, String(st6.negatives));
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——影子诊断指标语义失真`);

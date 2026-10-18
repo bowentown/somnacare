@@ -19,11 +19,13 @@ import {
   CheckCircle2,
   Share2,
   Smartphone,
+  Stethoscope,
 } from 'lucide-react';
 import { SleepRecord } from '../types/sleep';
 import { regularityTier } from '../utils/sleepRegularity';
 import { summarizeWeek } from '../utils/weekSummary';
 import { ShareCardModal } from './ShareCardModal';
+import { ClinicalSummaryModal } from './ClinicalSummaryModal';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
 import { computeWeekReport, GOOD_NIGHT_THRESHOLD } from '../utils/weekReport';
 import {
@@ -63,6 +65,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
   const [hoveredRecord, setHoveredRecord] = useState<SleepRecord | null>(null);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showClinical, setShowClinical] = useState(false);
   // ── 手机使用对照（P3）：native-only，权限/数据/引导标记 ──
   const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
   const [usageDays, setUsageDays] = useState<UsageDay[]>(() => getCachedUsageDays());
@@ -228,7 +231,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
           <div className="relative h-40 rounded-2xl border border-dashed border-slate-600 bg-black/20 flex flex-col items-center justify-center gap-1.5 animate-tab-fade-in">
             <span className="text-sm font-black text-slate-300">暂无睡眠数据</span>
             <span className="text-[10px] text-slate-500 leading-relaxed text-center px-6">
-              回睡眠页记录第一晚，或从偏好页导入备份——曲线会在积累 1 晚后出现
+              记录第一晚后这里就会出现曲线
             </span>
           </div>
         )}
@@ -414,9 +417,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     <span className="w-2.5 h-2.5 rounded-sm bg-rose-400" />清醒
                   </span>
                 </div>
-                <span className={`text-[9px] ${textMuted} font-sans`}>
-                  * 分期为模型估算值，非临床检测
-                </span>
               </div>
             </div>
           </div>
@@ -583,20 +583,31 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             onClick={() => setIsHistoryExpanded(true)}
             className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4 cursor-pointer hover:border-white/20 active:scale-[0.99] transition-all`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
               <Sparkles className={`w-4 h-4 ${theme.accentText}`} />
               <h3 className="text-sm font-bold text-white">近期睡眠小结</h3>
               <span className={`text-[10px] ${textMuted} font-mono`}>近 {sum.nights} 晚</span>
-              {/* 分享卡入口：插画家+宠物语录+聚合数字，生成前可预览可勾选 */}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setShowShare(true); }}
-                aria-label="生成每周睡眠分享卡"
-                className={`ml-auto mr-1 flex items-center justify-center gap-1 px-3 min-h-11 -my-3 rounded-full ${theme.accentBg} ${theme.accentFg} text-[10px] font-bold cursor-pointer active:scale-95 transition-transform`}
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>分享</span>
-              </button>
+              {/* 分享卡入口 + 就诊摘要（第 56 轮）：生成前都可预览 */}
+              <div className="ml-auto mr-1 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowClinical(true); }}
+                  aria-label="生成就诊摘要"
+                  className="flex items-center justify-center gap-1 px-3 py-2.5 min-h-11 rounded-full bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+                >
+                  <Stethoscope className="w-3.5 h-3.5" />
+                  <span>就诊摘要</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowShare(true); }}
+                  aria-label="生成每周睡眠分享卡"
+                  className={`flex items-center justify-center gap-1 px-3 py-2.5 min-h-11 rounded-full ${theme.accentBg} ${theme.accentFg} text-[10px] font-bold cursor-pointer active:scale-95 transition-transform`}
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>分享</span>
+                </button>
+              </div>
             </div>
             {sum.avgScore === null || sum.avgDurationMin === null || sum.avgDeepMin === null ? (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>
@@ -634,9 +645,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 <p className={`text-[10px] ${textMuted} leading-relaxed`}>
                   就寝 ±{sum.regularity.bedDev} 分钟 · 起床 ±{sum.regularity.wakeDev} 分钟 ·{' '}
                   {regularityTier(sum.regularity.score) === 'steady' ? '作息很稳' : regularityTier(sum.regularity.score) === 'ok' ? '基本规律' : '作息波动大'}
-                </p>
-                <p className={`text-[10px] ${textMuted} leading-relaxed`}>
-                  按你的作息起止点计算，不是测量值
                 </p>
               </div>
             ) : (
@@ -753,9 +761,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     </span>
                   </div>
                 ))}
-                <p className={`text-[10px] ${textMuted} leading-relaxed`}>
-                  基于手机使用记录（屏幕亮灭），不是睡眠监测；"放下手机"不等于入睡。
-                </p>
               </div>
             );
           })()}
@@ -764,6 +769,10 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
 
       {createPortal(
         <ShareCardModal open={showShare} onClose={() => setShowShare(false)} records={records} theme={theme} />,
+        document.body,
+      )}
+      {createPortal(
+        <ClinicalSummaryModal open={showClinical} onClose={() => setShowClinical(false)} records={records} theme={theme} />,
         document.body,
       )}
     </div>

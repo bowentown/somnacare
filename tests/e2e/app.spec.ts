@@ -91,7 +91,7 @@ test('晨起手动补录：表单填写 → 保存落库', async ({ page }) => {
   await open(page);
 
   await page.getByText('晨起手动补录').click();
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toBeVisible();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
 
   const dateInput = page.locator('input[type="date"]');
   await dateInput.fill(today);
@@ -100,7 +100,7 @@ test('晨起手动补录：表单填写 → 保存落库', async ({ page }) => {
   await timeInputs.nth(1).fill('07:30');
   await page.getByRole('button', { name: /保存记录并更新睡眠趋势/ }).click();
 
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toHaveCount(0);   // 弹窗已收
+  await expect(page.getByText('补录睡眠')).toHaveCount(0);   // 弹窗已收
   const recs = await readStore(page, 'somnacare_sleep_records');
   const landed = (recs as any[]).find((r) => r.date === today);
   expect(landed?.bedtime).toBe('23:30');

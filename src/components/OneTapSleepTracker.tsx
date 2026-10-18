@@ -1,16 +1,24 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Moon, Sun, AlertTriangle, Zap } from 'lucide-react';
+import { Moon, Sun, AlertTriangle, Zap, Coffee } from 'lucide-react';
+import { toLocalDateString, localDateOffset } from '../utils/dateUtils';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { buildRecordFromWindow } from '../utils/recordBuilder';
 import { Smartphone } from 'lucide-react';
 import { computeProposal, computeModelProposal, type Proposal } from '../utils/proposal';
-import { recordEngineRun, recordOutcome } from '../utils/modelShadow';
+import { recordEngineRun, recordOutcome, recordAdjustment, recordNegativeLabel } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
 import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
 import { clearProposalUnlock, getProposalUnlock, initProposalUnlockFromStorage, subscribeProposalUnlock } from '../utils/proposalUnlock';
 import { recordResumeOutcome, subscribeAppResume } from '../utils/appResume';
+import {
+  cancelProposalNotification,
+  consumeProposalAction,
+  scheduleProposalNotification,
+  subscribeProposalAction,
+  type ProposalAction,
+} from '../utils/proposalNotify';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
@@ -30,9 +38,11 @@ interface OneTapSleepTrackerProps {
   onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
   /** 记录方式（手动/自动）等卡片内偏好持久化 */
   onUpdateProfile?: (updated: Partial<UserProfile>) => void;
+  /** 提议卡是否在场（首页自救助手据此避让） */
+  onProposalPresenceChange?: (visible: boolean) => void;
 }
 
-export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile, onUpdateProfile }) => {
+export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile, onUpdateProfile, onProposalPresenceChange }) => {
   const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
     const saved = localStorage.getItem('somnacare_bedtime_start');
     if (!saved) return null;
@@ -59,6 +69,29 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   // 自动提议，主按钮换成权限引导/已开启状态。自动档在真机依赖"使用情况访问"
   const recordMode = userProfile?.sleepRecordMode ?? 'manual';
   const setRecordMode = (m: 'manual' | 'auto') => onUpdateProfile?.({ sleepRecordMode: m });
+  // 时段自适应（第 56 轮）：早上主按钮是补昨晚，午后是小睡，晚上才是开始监测
+  const [hourNow, setHourNow] = useState(() => new Date().getHours());
+  useEffect(() => {
+    const t = window.setInterval(() => setHourNow(new Date().getHours()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const dayPhase: 'morning' | 'afternoon' | 'evening' | 'late' =
+    hourNow >= 5 && hourNow < 11 ? 'morning'
+      : hourNow >= 11 && hourNow < 18 ? 'afternoon'
+        : hourNow >= 18 && hourNow < 23 ? 'evening' : 'late';
+  // 时段自适应只对夜间作息成立：白天主睡者的"午后"是主睡不是小睡，
+  // 维持原按钮语义（开始监测），避免用错的时段标签误导
+  const isNightChronotype = (userProfile?.chronotype ?? 'night') === 'night';
+  const manualHeading = !isNightChronotype
+    ? '今晚准备入睡'
+    : dayPhase === 'morning' ? '早安'
+      : dayPhase === 'afternoon' ? '午后小睡'
+        : dayPhase === 'evening' ? '今晚准备入睡' : '该睡了';
+  const manualCta = !isNightChronotype
+    ? '开始夜间监测'
+    : dayPhase === 'morning' ? '补录昨晚睡眠'
+      : dayPhase === 'afternoon' ? '记录一次小睡' : '开始夜间监测';
+  const manualUsesMonitor = !isNightChronotype || dayPhase === 'evening' || dayPhase === 'late';
   const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
   const permTimerRef = useRef<number | null>(null);
   const [handledDate, setHandledDate] = useState<string | null>(() => {
@@ -78,6 +111,9 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     return getProposalUnlock();
   });
   useEffect(() => subscribeProposalUnlock(setUnlockedDate), []);
+  // 通知动作待办（第 56 轮）：冷启动先读盘，运行中由订阅即时送达
+  const [pendingAction, setPendingAction] = useState<ProposalAction | null>(() => consumeProposalAction());
+  useEffect(() => subscribeProposalAction(setPendingAction), []);
 
   useEffect(() => {
     if (!isNativePlatform()) return;
@@ -240,29 +276,70 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   const PROPOSAL_FRESH_MS = 12 * 3600000;
   const visibleProposal =
     proposal && Date.now() - proposal.wakeMs <= PROPOSAL_FRESH_MS ? proposal : null;
+  const proposalVisible = !!visibleProposal;
+  useEffect(() => {
+    onProposalPresenceChange?.(proposalVisible);
+  }, [proposalVisible, onProposalPresenceChange]);
+
+  // 卡上 ±15 分钟微调（第 56 轮）：晨间只想挪一刻钟时不该打开整张补录表单。
+  // 位移在换夜（targetDate 变化）时归零；确认/改一下都用调整后的窗口
+  const [bedShift, setBedShift] = useState(0);    // 分钟，15 的倍数
+  const [wakeShift, setWakeShift] = useState(0);
+  const proposalKey = visibleProposal?.targetDate ?? '';
+  useEffect(() => { setBedShift(0); setWakeShift(0); }, [proposalKey]);
+  const STEP = 15;
+  const SHIFT_MAX = 120;
+  const adjustedProposal = useMemo(() => {
+    if (!visibleProposal) return null;
+    const b = visibleProposal.bedtimeMs + bedShift * 60000;
+    const w = visibleProposal.wakeMs + wakeShift * 60000;
+    if (w - b < 60 * 60000 || w - b > 16 * 3600000) return visibleProposal;   // 微调不产生荒谬窗口
+    const fmt = (ms: number) => {
+      const d = new Date(ms);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    };
+    return {
+      ...visibleProposal,
+      bedtimeMs: b,
+      wakeMs: w,
+      bedtime: fmt(b),
+      wakeTime: fmt(w),
+      windowMinutes: Math.round((w - b) / 60000),
+    };
+  }, [visibleProposal, bedShift, wakeShift]);
 
   const markHandled = () => {
     if (!visibleProposal) return;
     try { localStorage.setItem('somnacare_proposal_handled', visibleProposal.targetDate); } catch { /* ignore */ }
-    // 解锁标记一次性：处理完（确认/改一下/忽略）即清，防残留误放行
+    // 解锁标记一次性：处理完（确认/改一下/否定）即清，防残留误放行
     clearProposalUnlock();
+    // 通知栏里的动作已处理，撤掉提醒
+    cancelProposalNotification(visibleProposal.targetDate);
     setHandledDate(visibleProposal.targetDate);
   };
 
   // 确认：用共享构建器落库（recordSource: 'usage'），完成小结与一键就寝同款
   const handleAcceptProposal = () => {
     tapTick();
-    if (!visibleProposal) return;
+    if (!adjustedProposal) return;
     const built = buildRecordFromWindow({
-      sleepStartMs: visibleProposal.bedtimeMs,
-      wakeMs: visibleProposal.wakeMs,
+      sleepStartMs: adjustedProposal.bedtimeMs,
+      wakeMs: adjustedProposal.wakeMs,
       targetDurationHours,
       id: `usage-${Date.now()}`,
       recordSource: 'usage',
       chronotype: userProfile?.chronotype ?? 'night',
     });
+    // 人工微调留痕（第 56 轮）：系统性偏差是改进模型的真值信号。
+    // 只在微调真的生效时记录——窗口被钳回原值时不能留下假的方向标签
+    const shiftApplied =
+      adjustedProposal.bedtime !== visibleProposal?.bedtime ||
+      adjustedProposal.wakeTime !== visibleProposal?.wakeTime;
+    if (shiftApplied && (bedShift !== 0 || wakeShift !== 0)) {
+      recordAdjustment(adjustedProposal.targetDate, bedShift, wakeShift);
+    }
     markHandled();
-    recordOutcome(visibleProposal.targetDate, built.record.bedtime, built.record.wakeTime, 'confirmed');
+    recordOutcome(adjustedProposal.targetDate, built.record.bedtime, built.record.wakeTime, 'confirmed');
     setCompletedRecord(built.record);
     setSessionTruncated(built.truncated);
     setShowSummaryModal(true);
@@ -270,14 +347,42 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   };
 
   const handleEditProposal = () => {
-    if (!visibleProposal) return;
+    if (!adjustedProposal) return;
     onOpenManualLogPrefilled?.({
+      date: adjustedProposal.targetDate,
+      bedtime: adjustedProposal.bedtime,
+      wakeTime: adjustedProposal.wakeTime,
+    });
+    markHandled();
+  };
+
+  // 「不是我的睡眠」= 否定标注（第 56 轮）：该夜进负样本统计，不再只是静默隐藏
+  const handleNegativeLabel = () => {
+    if (!visibleProposal) return;
+    recordNegativeLabel(visibleProposal.targetDate);
+    markHandled();
+  };
+
+  // 通知（第 56 轮）：自动档的卡在场时挂一条带动作的通知，每夜最多一条。
+  // 用户不动 App 也能在通知栏点「确认记录」，动作随冷启动/前台恢复回来落库
+  useEffect(() => {
+    if (!visibleProposal || recordMode !== 'auto' || sessionActive) return;
+    void scheduleProposalNotification({
       date: visibleProposal.targetDate,
       bedtime: visibleProposal.bedtime,
       wakeTime: visibleProposal.wakeTime,
     });
-    markHandled();
-  };
+  }, [visibleProposal?.targetDate, visibleProposal?.bedtime, visibleProposal?.wakeTime, recordMode, sessionActive]);
+
+  // 消费通知动作：确认/改一下只在目标夜匹配时执行（隔夜残留自然失效）
+  useEffect(() => {
+    if (!pendingAction || !visibleProposal) return;
+    if (pendingAction.date !== visibleProposal.targetDate) return;
+    if (pendingAction.type === 'confirm') handleAcceptProposal();
+    else handleEditProposal();
+    setPendingAction(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAction, visibleProposal]);
 
   useEffect(() => {
     if (!sleepStartTime) {
@@ -314,6 +419,36 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     const now = Date.now();
     setSleepStartTime(now);
     try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
+  };
+
+  // 早/午后主按钮：直接打开预填好的补录（没有预填通路时退回开始监测）
+  const handleQuickLog = () => {
+    tapTick();
+    if (!onOpenManualLogPrefilled) { handleStartSleep(); return; }
+    if (dayPhase === 'morning') {
+      // 醒来时间不能预填到未来：目标起床时刻晚于此刻时，用此刻
+      const now = new Date();
+      const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const targetWake = userProfile?.targetWakeTime ?? '07:30';
+      onOpenManualLogPrefilled({
+        date: localDateOffset(-1),
+        bedtime: userProfile?.targetBedtime ?? '23:30',
+        wakeTime: targetWake <= nowHm ? targetWake : nowHm,
+      });
+      return;
+    }
+    const now = new Date();
+    const wake = new Date(now);
+    wake.setSeconds(0, 0);
+    wake.setMinutes(wake.getMinutes() - (wake.getMinutes() % 5));
+    const bed = new Date(Math.max(wake.getTime() - 40 * 60000, now.getTime() - 3 * 3600000));
+    const hhmm = (d: Date) =>
+      `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    onOpenManualLogPrefilled({
+      date: toLocalDateString(),
+      bedtime: hhmm(bed),
+      wakeTime: hhmm(wake),
+    });
   };
 
   const handleWakeUp = () => {
@@ -368,23 +503,56 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-base font-black tracking-wide text-white">昨晚的手机使用</h3>
-                  <p className={`text-xs ${theme.textMuted} mt-0.5`}>确认一下，省去手动记录</p>
                 </div>
               </div>
             </div>
 
-            <div className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-4 flex items-center justify-between gap-2`}>
-              <span className="text-sm font-black font-mono text-white">{visibleProposal.bedtime} 放下</span>
+            <div className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-3 flex items-center justify-between gap-1`}>
+              <div className="flex flex-col items-center gap-1 min-w-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="就寝提前15分钟"
+                    disabled={bedShift <= -SHIFT_MAX}
+                    onClick={() => { tapTick(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >−</button>
+                  <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
+                  <button
+                    type="button"
+                    aria-label="就寝推迟15分钟"
+                    disabled={bedShift >= SHIFT_MAX}
+                    onClick={() => { tapTick(); setBedShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >＋</button>
+                </div>
+                <span className="text-[10px] text-slate-400">放下</span>
+              </div>
               <span className={`${theme.accentText} font-black`}>→</span>
-              {/* 起床时刻 ≈ 现在 ⇒ 屏幕数据被"此刻"右截断：真早起与起夜后接着睡
-                  在数据上不可区分——如实标注，让用户自行判断（还在睡就别确认） */}
-              <span className="text-sm font-black font-mono text-white">
-                {visibleProposal.wakeTime} 拿起{Date.now() - visibleProposal.wakeMs < 3600000 ? '（截至此刻）' : ''}
-              </span>
+              <div className="flex flex-col items-center gap-1 min-w-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="起床提前15分钟"
+                    disabled={wakeShift <= -SHIFT_MAX}
+                    onClick={() => { tapTick(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >−</button>
+                  <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
+                  <button
+                    type="button"
+                    aria-label="起床推迟15分钟"
+                    disabled={wakeShift >= SHIFT_MAX}
+                    onClick={() => { tapTick(); setWakeShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >＋</button>
+                </div>
+                <span className="text-[10px] text-slate-400">拿起</span>
+              </div>
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-slate-300 px-1">
-              <span>约 {formatDurationChinese(visibleProposal.windowMinutes)}</span>
+              <span>约 {formatDurationChinese(adjustedProposal?.windowMinutes ?? visibleProposal.windowMinutes)}</span>
               {visibleProposal.nightPickups > 0 && <span>睡眠中亮屏 {visibleProposal.nightPickups} 次</span>}
             </div>
 
@@ -406,16 +574,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
               </button>
               <button
                 type="button"
-                onClick={markHandled}
+                onClick={handleNegativeLabel}
                 className="flex-1 py-2.5 rounded-xl bg-slate-800/70 text-slate-400 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
               >
-                忽略
+                不是我的睡眠
               </button>
             </div>
-
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              数据来自手机使用记录（屏幕亮灭），不是睡眠监测；"放下手机"不等于入睡。
-            </p>
           </div>
         ) : !sleepStartTime ? (
           <div className="space-y-3.5">
@@ -444,42 +608,30 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
               <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
                 {recordMode === 'auto' && isNativePlatform()
                   ? <Zap className={`w-5 h-5 ${theme.accentText}`} />
-                  : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
+                  : dayPhase === 'morning'
+                    ? <Sun className={`w-5 h-5 ${theme.accentText}`} />
+                    : dayPhase === 'afternoon'
+                      ? <Coffee className={`w-5 h-5 ${theme.accentText}`} />
+                      : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
               </div>
               <div className="min-w-0">
                 <h3 className="text-base font-black tracking-wide text-white">
                   {recordMode === 'auto' && isNativePlatform()
                     ? (usagePerm === 'granted' ? '自动记录已开启' : '开启自动记录')
-                    : '今晚准备入睡'}
+                    : manualHeading}
                 </h3>
-                <p className={`text-xs ${theme.textMuted} mt-0.5`}>
-                  {recordMode === 'auto' && isNativePlatform()
-                    ? '手机自动识别作息 · 无需每晚手动操作'
-                    : '记录真实作息起止点'}
-                </p>
               </div>
             </div>
 
             {recordMode === 'auto' && isNativePlatform() ? (
               usagePerm === 'granted' ? (
-                <div className="space-y-2.5">
-                  <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 flex items-start gap-3">
-                    <Zap className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs font-black text-white">已开启自动记录</p>
-                      <p className={`text-[11px] ${theme.textMuted} mt-0.5 leading-relaxed`}>
-                        今晚无需任何操作——明早醒来，昨晚的睡眠会作为提议出现，点一下就完成记录。
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleStartSleep}
-                    className="w-full py-2 text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
-                  >
-                    今晚还是想手动监测？
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleStartSleep}
+                  className="w-full py-1.5 text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+                >
+                  今晚还是想手动监测？
+                </button>
               ) : (
                 <div className="space-y-2.5">
                   <button
@@ -492,17 +644,17 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     <span className="text-sm">→</span>
                   </button>
                   <p className={`text-[10px] ${theme.textMuted} leading-relaxed px-1`}>
-                    需要"使用情况访问"权限：只读屏幕亮灭时刻，不读任何内容，数据全部留在本机。开启后今晚就不用管了。
+                    需"使用情况访问"权限 · 只读屏幕亮灭时刻，数据留在本机
                   </p>
                 </div>
               )
             ) : (
               <button
                 type="button"
-                onClick={handleStartSleep}
+                onClick={manualUsesMonitor ? handleStartSleep : handleQuickLog}
                 className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
               >
-                <span>开始夜间监测</span>
+                <span>{manualCta}</span>
                 <span className="text-sm">→</span>
               </button>
             )}
@@ -540,7 +692,6 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                   <span className="text-sm font-black tracking-wide block text-slate-950">
                     已醒来 · 记录本次实际时长
                   </span>
-                  <span className="text-[11px] text-slate-800 font-bold">按实际入睡分钟数精准结算</span>
                 </div>
               </div>
               <span className="text-xs font-black bg-black/10 px-3 py-2 rounded-xl text-slate-950 text-center">

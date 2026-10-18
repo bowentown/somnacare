@@ -203,7 +203,7 @@ test('旅程3 凌晨：03:30 打开（还在睡）→ 不出卡且页面正常',
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
   await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
-  await expect(page.getByText('今晚准备入睡')).toBeVisible();
+  await expect(page.getByText('该睡了')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -219,7 +219,7 @@ test('旅程4 手动补录：默认昨晚、16h 截断、相同时间被拦', as
   await page.waitForTimeout(4200);
 
   await page.getByText('晨起手动补录').click();
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toBeVisible();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
   // 默认日期 = 昨晚（夜归属键）
   const dateInput = page.locator('input[type="date"]');
   await expect(dateInput).toHaveValue(dstr(-1, fixed));
@@ -237,7 +237,7 @@ test('旅程4 手动补录：默认昨晚、16h 截断、相同时间被拦', as
   await timeInputs.nth(0).fill('23:30');
   await timeInputs.nth(1).fill('21:00');
   await page.getByRole('button', { name: /保存记录并更新睡眠趋势/ }).click();
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toHaveCount(0);
+  await expect(page.getByText('补录睡眠')).toHaveCount(0);
   const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
   const landed = recs.find((r: any) => r.date === dstr(-1, fixed) && r.recordSource === 'manual');
   expect(landed).toBeTruthy();
@@ -390,12 +390,12 @@ test('旅程7b 改一下：卡片预填到补录弹窗 → 修正后以 manual �
   expect(shown).toBeTruthy();
 
   await page.getByRole('button', { name: '改一下' }).click();
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toBeVisible();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
   // 预填日期 = 夜归属（昨天）；改醒来时间后保存
   await expect(page.locator('input[type="date"]')).toHaveValue(dstr(-1, fixed));
   await page.locator('input[type="time"]').nth(1).fill('08:10');
   await page.getByRole('button', { name: /保存记录并更新睡眠趋势/ }).click();
-  await expect(page.getByText('晨起极速记录 / 真实补录')).toHaveCount(0);
+  await expect(page.getByText('补录睡眠')).toHaveCount(0);
 
   const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
   const landed = recs.find((r: any) => r.date === dstr(-1, fixed) && r.recordSource === 'manual');
@@ -420,7 +420,7 @@ test('旅程8 冷启动：点按跳过开屏 → 主界面可交互', async ({ p
   // 开屏在场时点按任意处 → 立即卸载（不等 1.9s）
   await page.mouse.click(200, 300);
   await page.waitForTimeout(300);
-  await expect(page.getByText('今晚准备入睡')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText('早安')).toBeVisible({ timeout: 5000 });
   expect(errors).toEqual([]);
 });
 
@@ -443,5 +443,256 @@ test('旅程9 首次使用：引导卡出现且可完成/跳过', async ({ page 
   const next = page.getByRole('button', { name: /下一步|开始/ });
   if (await next.count()) await next.first().click();
   await page.waitForTimeout(300);
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 10：±15 分钟微调（B）——卡上直接挪，确认后落库与影子都留痕
+// ─────────────────────────────────────────────────────────────
+test('旅程10 微调：卡上把起床推迟 15 分钟 → 记录与影子同步', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(7, 50, 0, 0);
+  await mockNativeUsage(page, {
+    events: synthEvents(fixed),
+    usageDays: [{ date: dstr(-1, fixed), lastActive: '23:40', firstActive: '07:05', nightPickups: 0 }],
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  const wakeCell = page.getByRole('button', { name: '起床推迟15分钟' }).locator('..');
+  const before = (await wakeCell.innerText()).match(/(\d{2}):(\d{2})/);
+  expect(before).toBeTruthy();
+  const [bh, bm] = [Number(before![1]), Number(before![2])];
+  const expected = `${pad(Math.floor(((bh * 60 + bm + 15) % 1440) / 60))}:${pad((bm + 15) % 60)}`;
+
+  await page.getByRole('button', { name: '起床推迟15分钟' }).click();
+  await expect.poll(() => wakeCell.innerText()).toContain(expected);
+
+  await page.getByRole('button', { name: /记为这次就寝/ }).click();
+  const okBtn = page.getByRole('button', { name: '确定并查看详情' });
+  if (await okBtn.count()) await okBtn.click();
+
+  const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
+  const landed = (recs as any[]).find((r) => r.recordSource === 'usage');
+  expect(landed?.wakeTime).toBe(expected);
+
+  const shadow = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_model_shadow') || '{"entries":[]}'));
+  const entry = (shadow.entries ?? []).find((e: any) => e.date === dstr(-1, fixed));
+  expect(entry?.adjust?.wake).toBe(15);
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 11：否定标注（F）——「不是我的睡眠」不写记录，只留负样本
+// ─────────────────────────────────────────────────────────────
+test('旅程11 否定：点「不是我的睡眠」→ 不落库、负样本与统计可见', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 30, 0, 0);
+  await mockNativeUsage(page, {
+    events: synthEvents(fixed),
+    usageDays: [{ date: dstr(-1, fixed), lastActive: '23:40', firstActive: '07:05', nightPickups: 0 }],
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  await page.getByRole('button', { name: '不是我的睡眠' }).click();
+  await expect(page.getByText('昨晚的手机使用')).toHaveCount(0);
+
+  const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
+  expect((recs as any[]).length).toBe(0);
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));
+
+  const shadow = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_model_shadow') || '{"entries":[]}'));
+  const entry = (shadow.entries ?? []).find((e: any) => e.date === dstr(-1, fixed));
+  expect(entry?.negative).toBe(true);
+
+  await navTo(page, '偏好');
+  await expect(page.getByText(/否定 1 晚/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 12：自救助手（C）——自动档没出卡 → 一键自检并滚到面板
+// ─────────────────────────────────────────────────────────────
+test('旅程12 自救助手：自动档无卡 → 点检查 → 偏好页自检结论', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 30, 0, 0);
+  await mockNativeUsage(page, { events: [], usageDays: [], dailyEmpty: true });
+  await seed(page, [], {
+    somnacare_user_profile: JSON.stringify({
+      name: '测试', age: 30, sleepRecordMode: 'auto', chronotype: 'night',
+      targetBedtime: '23:30', targetWakeTime: '07:30', targetDurationHours: 8,
+      brightnessLevel: 100, warmthFilter: false, alarms: [], smartAlarmEnabled: true,
+      smartWakeWindowMinutes: 20, soundDetectionSensitivity: 'medium',
+    }),
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await expect(page.getByText('自动记录没出现？')).toBeVisible();
+  await page.getByRole('button', { name: '检查自动记录链路' }).click();
+  await expect(page.getByText(/⓪ 监测会话/)).toBeVisible({ timeout: 8000 });
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 13：时段自适应（G）——早上补昨晚、午后记小睡
+// ─────────────────────────────────────────────────────────────
+test('旅程13 早上主按钮：09:00「补录昨晚睡眠」→ 预填昨晚与目标时刻', async ({ page }) => {
+  const errors = watchErrors(page);
+  await seed(page, []);
+  const fixed = await openAt(page, 9, 0);
+  await expect(page.getByText('早安')).toBeVisible();
+  await page.getByRole('button', { name: '补录昨晚睡眠' }).click();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
+  await expect(page.locator('input[type="date"]')).toHaveValue(dstr(-1, fixed));
+  await expect(page.locator('input[type="time"]').nth(0)).toHaveValue('23:30');
+  await expect(page.locator('input[type="time"]').nth(1)).toHaveValue('07:30');
+  expect(errors).toEqual([]);
+});
+
+test('旅程14 午后主按钮：14:00「记录一次小睡」→ 预填刚才的 40 分钟', async ({ page }) => {
+  const errors = watchErrors(page);
+  await seed(page, []);
+  const fixed = await openAt(page, 14, 0);
+  await expect(page.getByText('午后小睡')).toBeVisible();
+  await page.getByRole('button', { name: '记录一次小睡' }).click();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
+  await expect(page.locator('input[type="date"]')).toHaveValue(dstr(0, fixed));
+  await expect(page.locator('input[type="time"]').nth(0)).toHaveValue('13:20');
+  await expect(page.locator('input[type="time"]').nth(1)).toHaveValue('14:00');
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 15：就诊摘要（I）——预览、切换具体时刻、导出
+// ─────────────────────────────────────────────────────────────
+test('旅程15 就诊摘要：预览可生成、可切换时刻、可下载', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = await openAt(page, 10, 0);
+  await seed(page, [
+    mkRecord(dstr(-1, fixed), '23:40', '07:05'),
+    mkRecord(dstr(-2, fixed), '23:20', '06:55'),
+    mkRecord(dstr(-3, fixed), '00:10', '07:30'),
+    mkRecord(dstr(-4, fixed), '23:50', '07:10'),
+  ], NIGHT_SCHEMA);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '趋势');
+  await page.getByRole('button', { name: '生成就诊摘要' }).click();
+  await expect(page.getByRole('img', { name: '就诊摘要预览' })).toBeVisible({ timeout: 8000 });
+  await page.getByRole('button', { name: '包含具体时刻' }).click();
+  await expect(page.getByRole('img', { name: '就诊摘要预览' })).toBeVisible();
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: '保存 / 分享' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toContain('clinical-summary');
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 16：备份提醒（J）——没备份过时提示，导出后落时间戳
+// ─────────────────────────────────────────────────────────────
+test('旅程16 备份提醒：导出后记录时间戳并显示「今天」', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = await openAt(page, 10, 0);
+  const recs = Array.from({ length: 7 }, (_, i) =>
+    mkRecord(dstr(-1 - i, fixed), '23:30', '07:00'));
+  await seed(page, recs, NIGHT_SCHEMA);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '偏好');
+  await expect(page.getByText(/还没有备份过/)).toBeVisible();
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: /导出 JSON 备份/ }).click(),
+  ]);
+  expect(download.suggestedFilename()).toContain('full-backup');
+  expect(await page.evaluate(() => Number(localStorage.getItem('somnacare_last_backup_at')))).toBeGreaterThan(0);
+  await expect(page.getByText('上次备份：今天')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 17：通知确认（A）——自动档挂通知，动作回来即落库
+// ─────────────────────────────────────────────────────────────
+test('旅程17 通知确认：通知栏「确认记录」动作 → 无需点卡即完成记录', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(7, 50, 0, 0);
+  await mockNativeUsage(page, {
+    events: synthEvents(fixed),
+    usageDays: [{ date: dstr(-1, fixed), lastActive: '23:40', firstActive: '07:05', nightPickups: 0 }],
+  });
+  await seed(page, [], {
+    somnacare_user_profile: JSON.stringify({
+      name: '测试', age: 30, sleepRecordMode: 'auto', chronotype: 'night',
+      targetBedtime: '23:30', targetWakeTime: '07:30', targetDurationHours: 8,
+      brightnessLevel: 100, warmthFilter: false, alarms: [], smartAlarmEnabled: true,
+      smartWakeWindowMinutes: 20, soundDetectionSensitivity: 'medium',
+    }),
+  });
+  await page.addInitScript(() => {
+    const scheduled: any[] = [];
+    let cb: ((e: any) => void) | null = null;
+    (window as any).__proposalScheduled = scheduled;
+    (window as any).__proposalActionReady = false;
+    (window as any).__fireProposalAction = (actionId: string, date: string) => {
+      cb?.({ actionId, notification: { extra: { proposalDate: date } } });
+    };
+    (window as any).Capacitor.Plugins.LocalNotifications = {
+      checkPermissions: async () => ({ display: 'granted' }),
+      requestPermissions: async () => ({ display: 'granted' }),
+      registerActionTypes: async () => {},
+      addListener: async (_e: string, fn: (e: any) => void) => {
+        cb = fn;
+        (window as any).__proposalActionReady = true;
+        return { remove() {} };
+      },
+      createChannel: async () => {},
+      schedule: async (o: any) => { scheduled.push(...o.notifications); },
+      cancel: async () => {},
+      getPending: async () => ({ notifications: [] }),
+    };
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await expect(page.getByText('昨晚的手机使用')).toBeVisible();
+  await page.waitForFunction(() => (window as any).__proposalActionReady === true);
+  await page.waitForFunction(() => ((window as any).__proposalScheduled ?? []).length > 0);
+  const scheduled = await page.evaluate(() => (window as any).__proposalScheduled);
+  expect(scheduled[0]?.actionTypeId).toBe('somnacare-proposal-actions');
+  expect(scheduled[0]?.extra?.proposalDate).toBe(dstr(-1, fixed));
+
+  await page.evaluate((d) => (window as any).__fireProposalAction('confirm', d), dstr(-1, fixed));
+  await expect(page.getByText(/晨安！恭喜完成睡眠|记录完毕/)).toBeVisible({ timeout: 8000 });
+  const okBtn = page.getByRole('button', { name: '确定并查看详情' });
+  if (await okBtn.count()) await okBtn.click();
+
+  const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
+  const landed = (recs as any[]).find((r) => r.recordSource === 'usage');
+  expect(landed).toBeTruthy();
+  expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));
   expect(errors).toEqual([]);
 });

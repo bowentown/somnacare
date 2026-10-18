@@ -173,8 +173,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
               <Moon className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-black text-white">晨起极速记录 / 真实补录</h3>
-              <p className="text-xs text-slate-300">根据实际作息推算睡眠周期与各期占比（估算值）</p>
+              <h3 className="text-base font-black text-white">补录睡眠</h3>
             </div>
           </div>
           <button

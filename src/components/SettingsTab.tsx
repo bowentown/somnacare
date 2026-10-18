@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronDown,
   RotateCcw,
@@ -74,6 +74,8 @@ interface SettingsTabProps {
   /** 作息切换的存量重归类专用通路（静默替换，不弹导入确认框） */
   onReplaceRecords?: (records: SleepRecord[]) => void;
   theme: ThemeConfig;
+  /** 首页「自动记录没出现？」入口：递增即自动跑一次链路自检并滚到面板 */
+  autoCheckSignal?: number;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
@@ -84,6 +86,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   onImportRecords,
   onReplaceRecords,
   theme,
+  autoCheckSignal,
 }) => {
   const [themeOpen, setThemeOpen] = useState(false);
   const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
@@ -202,6 +205,20 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     }
   };
 
+  // 首页自救助手入口（第 56 轮）：信号一到就跑自检，等分区滑动落位后滚到面板。
+  // 用户不用知道自检藏在偏好页哪一层——点一下直接看到链路结论。
+  const selfCheckPanelRef = useRef<HTMLDivElement>(null);
+  const lastAutoCheckRef = useRef(0);
+  useEffect(() => {
+    if (!autoCheckSignal || autoCheckSignal === lastAutoCheckRef.current) return;
+    lastAutoCheckRef.current = autoCheckSignal;
+    void runProposalSelfCheck();
+    window.setTimeout(() => {
+      selfCheckPanelRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 380);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCheckSignal]);
+
   // 大肥鱼桌宠
   const petNative = isPetNative();
   const [petOn, setPetOn] = useState(() => isPetEnabled());
@@ -259,6 +276,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     }
   };
 
+  // 上次备份时间（第 56 轮）：数据只在本机，长期不备份=一次卸载全丢。
+  // 成功导出后落时间戳，卡片按"30 天/从未且已有数据"升级成琥珀提醒
+  const [lastBackupAt, setLastBackupAt] = useState<number>(() => {
+    try { return Number(localStorage.getItem('somnacare_last_backup_at')) || 0; } catch { return 0; }
+  });
+  const markBackedUp = () => {
+    const now = Date.now();
+    try { localStorage.setItem('somnacare_last_backup_at', String(now)); } catch { /* ignore */ }
+    setLastBackupAt(now);
+  };
+
   const handleExportJSON = async () => {
     // 全量备份（schema 2）：记录 + 档案 + 图鉴 + 朋友圈 + 聊天 + 桌宠偏好。
     // API 密钥/HF token 默认剥离——备份文件会离开设备，不应当凭据
@@ -280,6 +308,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           recursive: true,
         });
         if (!res?.uri) throw new Error('writeFile 未返回文件地址');
+        markBackedUp();
         alert(`备份已生成：${name}\n即将打开分享面板，请选择"保存到文件"或网盘完成导出。`);
         try {
           await pl?.Share?.share({ title: '睡眠数据备份', url: res.uri, dialogTitle: '分享睡眠备份' });
@@ -302,6 +331,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      markBackedUp();
       window.setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {
       console.warn('[export] 备份导出失败', e);
@@ -495,7 +525,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       {/* 自动记录模型诊断（第 37 轮影子跑）：模型参数至今只用公开数据集标定，
           本卡让真实使用自动积累准确率——每次确认提议/手动补录都是真值，
           无需用户汇报。数据只存本机、不进备份 */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+      <div ref={selfCheckPanelRef} className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-white">自动记录 · 模型诊断</h3>
           <span className="text-[9px] font-mono text-slate-400">实验功能</span>
@@ -525,6 +555,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 独立命中率来自手动补录的 {st.independent.nights} 晚（独立真值）{st.independent.maeMin !== null ? ` · 平均误差 ${st.independent.maeMin} 分` : ''}；
                 采纳率只反映你多常直接采纳，不代表模型准不准。
               </p>
+              {(st.adjustments.nights > 0 || st.negatives > 0) && (
+                <p className="text-[9px] text-slate-400 leading-relaxed">
+                  你的修正：{st.adjustments.nights} 次
+                  {st.adjustments.avgBed !== null && st.adjustments.avgWake !== null
+                    ? `（就寝 ${st.adjustments.avgBed >= 0 ? '+' : ''}${st.adjustments.avgBed} 分 · 起床 ${st.adjustments.avgWake >= 0 ? '+' : ''}${st.adjustments.avgWake} 分）`
+                    : ''}
+                  {st.negatives > 0 ? ` · 否定 ${st.negatives} 晚` : ''}
+                </p>
+              )}
               {st.droppedOutcomes > 0 && (
                 <p className="text-[9px] text-amber-400/90 leading-relaxed">
                   另有 {st.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录哪一晚"请选就寝那晚。
@@ -539,12 +578,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 <div className="space-y-1.5">
                   {recent.map((e) => {
                     const eng = e.model ?? e.heuristic;
-                    const tag = e.outcome ? (e.outcome.type === 'confirmed' ? '已采纳' : '手动补录') : '未反馈';
+                    const tag = e.negative ? '已否定' : e.outcome ? (e.outcome.type === 'confirmed' ? '已采纳' : '手动补录') : '未反馈';
+                    const adjust = e.adjust && (e.adjust.bed !== 0 || e.adjust.wake !== 0)
+                      ? ` · 修正 ${e.adjust.bed >= 0 ? '+' : ''}${e.adjust.bed}/${e.adjust.wake >= 0 ? '+' : ''}${e.adjust.wake}`
+                      : '';
                     return (
                       <div key={e.date} className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[10px] font-mono`}>
                         <span className="text-slate-400 shrink-0">{e.date.slice(5)}</span>
-                        <span className="text-slate-300">{eng ? `${eng.bed} → ${eng.wake}` : '—'}</span>
-                        <span className={`shrink-0 ${e.outcome ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        <span className="text-slate-300">{eng ? `${eng.bed} → ${eng.wake}` : '—'}{adjust}</span>
+                        <span className={`shrink-0 ${e.negative ? 'text-rose-400' : e.outcome ? 'text-emerald-400' : 'text-slate-500'}`}>
                           {e.outcome ? `记录 ${e.outcome.bed}→${e.outcome.wake}` : tag}
                         </span>
                       </div>
@@ -783,6 +825,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             />
           </label>
         </div>
+
+        {(() => {
+          const days = lastBackupAt ? Math.floor((Date.now() - lastBackupAt) / 86400000) : null;
+          const warn = days === null ? records.length >= 7 : days > 30;
+          return (
+            <p className={`text-[10px] font-mono px-0.5 ${warn ? 'text-amber-400' : 'text-slate-500'}`}>
+              {days === null ? '还没有备份过' : days === 0 ? '上次备份：今天' : `上次备份：${days} 天前`}
+              {warn ? ' · 建议导出一份' : ''}
+            </p>
+          );
+        })()}
 
         <button
           type="button"

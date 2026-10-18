@@ -31,6 +31,7 @@ import { LaunchSplash } from './components/LaunchSplash';
 import { PaneErrorBoundary } from './components/PaneErrorBoundary';
 import { closeTopModalIfAny } from './utils/modalA11y';
 import { notifyAppResume } from './utils/appResume';
+import { initProposalNotify } from './utils/proposalNotify';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
@@ -54,6 +55,8 @@ export const App: React.FC = () => {
   // 手动补录预填（提议式记录的"改一下"通路）
   const [manualLogPrefill, setManualLogPrefill] = useState<{ date: string; bedtime: string; wakeTime: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // 首页自救助手 → 偏好页链路自检（第 56 轮）：切分区并递增信号
+  const [autoCheckSignal, setAutoCheckSignal] = useState(0);
   // 朋友圈打开信号：递增触发 AIAdvicePanel 打开朋友圈（送达弹窗 CTA 用）
   const [momentsSignal, setMomentsSignal] = useState(0);
   // AI 聊天输入聚焦：打字时隐藏底部导航（否则导航条悬在键盘上方占一行）。
@@ -380,6 +383,12 @@ export const App: React.FC = () => {
       cancelled = true;
       try { handle?.remove(); } catch { /* ignore */ }
     };
+  }, []);
+
+  // 通知动作监听（第 56 轮）：必须在最早时机注册——从通知栏冷启动时，
+  // 动作事件可能早于睡眠页挂载；待办写盘后由提议卡消费
+  useEffect(() => {
+    initProposalNotify();
   }, []);
 
   // 后台恢复即刷新使用信号（真机 10-14 实测的"每天早上必须去偏好页点自检
@@ -996,6 +1005,10 @@ export const App: React.FC = () => {
                       onNavigateToTrends={() => setActiveTab('trends')}
                       onSaveRecord={handleSaveManualRecord}
                       theme={currentTheme}
+                      onOpenAutoCheck={() => {
+                        setActiveTab('settings');
+                        setAutoCheckSignal((v) => v + 1);
+                      }}
                     />
                   )}
 
@@ -1045,6 +1058,7 @@ export const App: React.FC = () => {
                         pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
                         showToast(`已成功导入 ${imported.length} 条睡眠记录`);
                       }}
+                      autoCheckSignal={autoCheckSignal}
                       onReplaceRecords={(next) => {
                         // 作息类型切换的存量重归类专用通路：不走 onImportRecords
                         // （那条路弹"导入将替换"确认框，取消会让 profile 与数据

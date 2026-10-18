@@ -7,6 +7,7 @@ import {
   Plus,
   Play,
   ArrowRight,
+  ShieldAlert,
 } from 'lucide-react';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { formatDurationChinese } from '../utils/sleepScore';
@@ -16,7 +17,8 @@ import { toLocalDateString } from '../utils/dateUtils';
 import { SoundscapePlayer } from './SoundscapePlayer';
 import { Music2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
-import { requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
+import { isNativePlatform, requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
+import { localDateOffset } from '../utils/dateUtils';
 import { PondCard } from './PondCard';
 
 interface TodayTabProps {
@@ -31,6 +33,8 @@ interface TodayTabProps {
   /** 到点提醒'好的'后的开始监测信号（时间戳 ms） */
   startSignal?: number;
   theme: ThemeConfig;
+  /** 早上自动记录没出卡时，带用户去偏好页跑链路自检（第 56 轮） */
+  onOpenAutoCheck?: () => void;
 }
 
 // 作息目标联动工具：HH:MM ↔ 当日分钟数（跨午夜安全）
@@ -54,6 +58,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   onUpdateProfile,
   startSignal,
   theme,
+  onOpenAutoCheck,
 }) => {
   // 首页主卡只显示夜睡（小睡另有紧凑行）——旧数据无 kind 视为夜睡
   const latestRecord = nightsOnly(records)[0] || null;
@@ -63,6 +68,29 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效
   const [bedtimePerm, setBedtimePerm] = useState<boolean | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+
+  // 早上自救助手（第 56 轮）：自动档 + 8:00–13:00 + 昨晚没记录 + 提议卡也没出
+  // → 给一个直达链路自检的入口，而不是让用户自己去偏好页深处找
+  const [proposalPresence, setProposalPresence] = useState(false);
+  const [nowHour, setNowHour] = useState(() => new Date().getHours());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowHour(new Date().getHours()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const autoRescue = (() => {
+    if (!onOpenAutoCheck || !isNativePlatform()) return false;
+    if ((userProfile.sleepRecordMode ?? 'manual') !== 'auto') return false;
+    if ((userProfile.chronotype ?? 'night') !== 'night') return false;
+    if (nowHour < 8 || nowHour >= 13) return false;
+    if (proposalPresence) return false;
+    const lastNight = localDateOffset(-1);
+    if (nightsOnly(records).some((r) => r.date === lastNight)) return false;
+    try {
+      if (localStorage.getItem('somnacare_proposal_handled') === lastNight) return false;
+      if (localStorage.getItem('somnacare_bedtime_start')) return false;
+    } catch { /* ignore */ }
+    return true;
+  })();
 
   // 得分环 + 数字 count-up（进入页面时 0 → 目标值，800ms 缓出）
   const [displayScore, setDisplayScore] = useState(0);
@@ -94,7 +122,24 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   return (
     <div className={`space-y-4 pb-28 ${theme.textPrimary}`}>
       {/* 1. Primary One-Tap Sleep Tracker */}
-      {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} />}
+      {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} onProposalPresenceChange={setProposalPresence} />}
+
+      {autoRescue && (
+        <button
+          type="button"
+          onClick={onOpenAutoCheck}
+          aria-label="检查自动记录链路"
+          className={`w-full ${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center justify-between gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
+        >
+          <span className="flex items-center gap-2 text-[11px] font-bold text-slate-200">
+            <ShieldAlert className={`w-4 h-4 ${theme.accentText}`} />
+            自动记录没出现？
+          </span>
+          <span className={`flex items-center gap-1 text-[11px] font-black ${theme.accentText}`}>
+            检查一下 <ChevronRight className="w-3.5 h-3.5" />
+          </span>
+        </button>
+      )}
 
       {/* 活的海：nagomi 程序化锦鲤池（主题 → 月夜/晴日/黄昏/雨），点水聚鱼 */}
       <PondCard theme={theme} records={records} userProfile={userProfile} />
@@ -213,9 +258,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                   </div>
                 );
               })()}
-              <div className="pt-1 text-[10px] text-slate-400">
-                模型估算 · 非医疗诊断
-              </div>
               {(() => {
                 const t = latestRecord.durationMinutes + latestRecord.awakeMinutes || 1;
                 const p = {
@@ -241,11 +283,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                   </div>
                 );
               })()}
-              {latestRecord.sleepScore < 75 && (
-                <div className="pt-1 text-[11px] text-amber-300/90 font-medium">
-                  💡 提示：单晚评分波动很常见，规律作息比某一晚的数字更重要。
-                </div>
-              )}
             </div>
           </div>
 
@@ -261,7 +298,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             <Moon className={`w-6 h-6 ${theme.accentText}`} />
           </div>
           <h4 className="text-sm font-bold text-white pt-1">暂无睡眠记录</h4>
-          <p className={`text-xs ${theme.textMuted}`}>点击上方开始就寝，或通过下方快速补录真实作息</p>
         </div>
       )}
 
@@ -348,7 +384,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
         <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
           <div>
             <span className="text-xs font-bold text-slate-200 block">到点提醒我</span>
-            <span className="text-[10px] text-slate-400">到点弹出提醒动画，早点睡</span>
           </div>
           <button
             type="button"
@@ -389,8 +424,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
 
         <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
           <div>
-            <span className="text-xs font-bold text-slate-200 block">深夜救援</span>
-            <span className="text-[10px] text-slate-400">半夜拿起手机时，给对的那句话（15 分钟规则）</span>
+            <span className="text-xs font-bold text-slate-200 block">深夜救援 · 15 分钟规则</span>
           </div>
           <button
             type="button"
@@ -511,9 +545,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                 }
                 return `🕐 距今晚目标就寝约 ${Math.floor(untilBed / 60)} 小时${untilBed % 60} 分`;
               })()}
-            </p>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              此目标将用于：睡眠评分基准、报告偏差分析与 AI 建议。
             </p>
           </div>
         </div>

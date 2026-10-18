@@ -35,7 +35,7 @@ const seed = async (page: import('@playwright/test').Page) => {
 test('五个分区同时渲染（滑动轨道常驻）', async ({ page }) => {
   await seed(page);
   const texts = await page.evaluate(() => document.body.innerText);
-  expect(texts).toContain('今晚准备入睡');      // 睡眠
+  expect(texts).toMatch(/早安|午后小睡|今晚准备入睡|该睡了/);   // 睡眠主卡（时段自适应标题）
   expect(texts).toContain('趋势与结构');        // 趋势
   expect(texts).toContain('大肥鱼的朋友圈');    // AI 顾问
   expect(texts).toContain('护眼滤镜');          // 护眼

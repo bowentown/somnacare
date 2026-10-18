@@ -34,6 +34,10 @@ export interface ShadowEntry {
     bed: string;
     wake: string;
   };
+  /** 用户人工微调（分钟）：确认前在卡上挪过时刻，系统性偏差的改进信号 */
+  adjust?: { bed: number; wake: number };
+  /** 用户点了「不是我的睡眠」：负样本（不是没反馈，是明确否定） */
+  negative?: boolean;
 }
 
 export interface ShadowStore {
@@ -111,6 +115,35 @@ export function clearShadowOutcomes(): void {
   persistShadow(store);
 }
 
+/** 记录一次人工微调（分钟级），按目标夜幂等合并（第 56 轮）。 */
+export function recordAdjustment(date: string, bedDelta: number, wakeDelta: number): void {
+  if (bedDelta === 0 && wakeDelta === 0) return;
+  const store = loadShadowStore();
+  const idx = store.entries.findIndex((e) => e.date === date);
+  if (idx >= 0) {
+    const prev = store.entries[idx].adjust;
+    store.entries[idx].adjust = {
+      bed: (prev?.bed ?? 0) + bedDelta,
+      wake: (prev?.wake ?? 0) + wakeDelta,
+    };
+  } else {
+    store.entries.push({ date, adjust: { bed: bedDelta, wake: wakeDelta } });
+  }
+  persistShadow(store);
+}
+
+/** 标记该夜为「不是我的睡眠」（负样本，第 56 轮）。 */
+export function recordNegativeLabel(date: string): void {
+  const store = loadShadowStore();
+  const idx = store.entries.findIndex((e) => e.date === date);
+  if (idx >= 0) {
+    store.entries[idx].negative = true;
+  } else {
+    store.entries.push({ date, negative: true });
+  }
+  persistShadow(store);
+}
+
 /** 批量替换记录后清理：只保留仍存在的夜睡日期（导入/重置/重归类用）。 */
 export function pruneShadowEntries(validDates: Set<string>): void {
   const store = loadShadowStore();
@@ -149,6 +182,14 @@ export interface ShadowStats {
     wakeMaeMin: number | null;
     hitRate: number | null;       // ±45 分钟命中率（分母 = 实际可比夜数）
   };
+  /** 卡上 ±15 分钟微调聚合：用户把提议往哪个方向挪（模型系统性偏差信号） */
+  adjustments: {
+    nights: number;
+    avgBed: number | null;
+    avgWake: number | null;
+  };
+  /** 「不是我的睡眠」标注夜数（明确负样本） */
+  negatives: number;
 }
 
 /** 单夜误差：圆周短弧（跨午夜安全），单位分钟 */
@@ -188,6 +229,10 @@ export function shadowStats(store: ShadowStore): ShadowStats {
   const compared = bedDiffs.length;   // ★ 分母 = 实际参与比较的夜数
   const mean = (a: number[]) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
 
+  const adjusted = store.entries.filter(
+    (e) => e.adjust && (e.adjust.bed !== 0 || e.adjust.wake !== 0),
+  );
+
   return {
     nights: withEngine.length,
     withOutcome: withOutcome.length,
@@ -201,5 +246,11 @@ export function shadowStats(store: ShadowStore): ShadowStats {
       wakeMaeMin: mean(wakeDiffs),
       hitRate: compared ? Math.round((hits / compared) * 100) : null,
     },
+    adjustments: {
+      nights: adjusted.length,
+      avgBed: mean(adjusted.map((e) => e.adjust!.bed)),
+      avgWake: mean(adjusted.map((e) => e.adjust!.wake)),
+    },
+    negatives: store.entries.filter((e) => e.negative).length,
   };
 }

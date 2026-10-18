@@ -54,6 +54,12 @@ export async function requestAlarmPermissions(): Promise<boolean> {
 }
 
 /**
+ * 通知 ID 分区间（第 56 轮）：闹钟哈希 < 1_000_000；≥ 此值的是提议卡通知。
+ * 闹钟全量重排时只取消本区间，不能把待确认的提议通知一起清掉。
+ */
+export const PROPOSAL_NOTIFICATION_MIN_ID = 1_000_000;
+
+/**
  * 为单个闹钟分配稳定的数字 ID（以支持原生 Notification id）
  */
 function hashStringToInt(str: string): number {
@@ -62,7 +68,9 @@ function hashStringToInt(str: string): number {
     hash = (hash << 5) - hash + str.charCodeAt(i);
     hash |= 0;
   }
-  return Math.abs(hash) % 1000000;
+  // 闹钟 ID 必须落在 [0, 1_000_000) 区间内：重复闹钟还要 +700，
+  // 用 %1_000_000 会越界撞进提议通知区间（第 56 轮）
+  return Math.abs(hash) % 100000;
 }
 
 /**
@@ -95,11 +103,15 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
       // 通道已存在或创建失败不阻断调度
     }
 
-    // 1. 取消已挂起的历史通知，防止重复堆叠
+    // 1. 取消已挂起的历史闹钟通知，防止重复堆叠。
+    //    只清闹钟区间——提议卡通知（≥ PROPOSAL_NOTIFICATION_MIN_ID）归
+    //    proposalNotify 管，用户在通知栏点"确认记录"前不能被闹钟同步吞掉
     const pending = await plugin.getPending();
-    if (pending?.notifications?.length > 0) {
+    const pendingAlarms = (pending?.notifications ?? [])
+      .filter((n: { id: number }) => n.id < PROPOSAL_NOTIFICATION_MIN_ID);
+    if (pendingAlarms.length > 0) {
       await plugin.cancel({
-        notifications: pending.notifications.map((n) => ({ id: n.id })),
+        notifications: pendingAlarms.map((n: { id: number }) => ({ id: n.id })),
       });
     }
 

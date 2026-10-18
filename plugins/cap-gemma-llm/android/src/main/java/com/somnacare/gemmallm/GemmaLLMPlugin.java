@@ -55,6 +55,44 @@ public class GemmaLLMPlugin extends Plugin {
     private static final java.util.concurrent.ExecutorService BACKGROUND =
             java.util.concurrent.Executors.newSingleThreadExecutor();
 
+    // ==== 通知动作冷启动读取（第 56 轮） ====
+
+    /**
+     * 冷启动读取提议通知的动作。
+     *
+     * @capacitor/local-notifications 只在 onNewIntent 里派发
+     * localNotificationActionPerformed——进程被杀后从通知栏启动时，
+     * 这条事件会丢。通知的 PendingIntent 把动作与通知 JSON 放在
+     * Activity 的启动 Intent 里（键名是插件的固定常量），这里直接读出来，
+     * 交给 JS 待办链路；读完即清，避免下次冷启动重复确认。
+     */
+    @PluginMethod
+    public void proposalNotificationAction(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.app.Activity activity = getActivity();
+            Intent intent = activity != null ? activity.getIntent() : null;
+            if (intent != null) {
+                String action = intent.getStringExtra("LocalNotificationUserAction");
+                String raw = intent.getStringExtra("LocalNotficationObject");   // 插件常量拼写如此
+                if (("confirm".equals(action) || "edit".equals(action)) && raw != null) {
+                    org.json.JSONObject obj = new org.json.JSONObject(raw);
+                    org.json.JSONObject extra = obj.optJSONObject("extra");
+                    String date = extra != null ? extra.optString("proposalDate", "") : "";
+                    if (!date.isEmpty()) {
+                        ret.put("actionId", action);
+                        ret.put("date", date);
+                    }
+                }
+                intent.removeExtra("LocalNotificationUserAction");
+                intent.removeExtra("LocalNotficationObject");
+            }
+        } catch (Exception ignored) {
+            // 畸形通知 JSON / 无启动 Intent：当作没有动作，不影响正常启动
+        }
+        call.resolve(ret);
+    }
+
     // ==== 能力探测与内存门控 ====
 
     // ==== 主题联动桌面图标（activity-alias） ====
