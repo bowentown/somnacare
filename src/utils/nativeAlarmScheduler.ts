@@ -108,7 +108,10 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     //    proposalNotify 管，用户在通知栏点"确认记录"前不能被闹钟同步吞掉
     const pending = await plugin.getPending();
     const pendingAlarms = (pending?.notifications ?? [])
-      .filter((n: { id: number }) => n.id < PROPOSAL_NOTIFICATION_MIN_ID);
+      // 旧版本重复闹钟的 ID 可能越过 1e6（旧哈希 %1e6 + 700）：extra.alarmId
+      // 是更可靠的归属标记，升级后也要能清掉
+      .filter((n: { id: number; extra?: { alarmId?: string } }) =>
+        n.id < PROPOSAL_NOTIFICATION_MIN_ID || !!n.extra?.alarmId);
     if (pendingAlarms.length > 0) {
       await plugin.cancel({
         notifications: pendingAlarms.map((n: { id: number }) => ({ id: n.id })),
