@@ -70,8 +70,12 @@ public class GemmaLLMPlugin extends Plugin {
     public void proposalNotificationAction(PluginCall call) {
         JSObject ret = new JSObject();
         try {
-            android.app.Activity activity = getActivity();
-            Intent intent = activity != null ? activity.getIntent() : null;
+            // 走 getContext() 再转 Activity：getActivity() 的返回类型是
+            // AppCompatActivity，而插件模块的编译类路径没有 androidx.appcompat
+            // （CI 实测 cannot access AppCompatActivity）
+            android.content.Context ctx = getContext();
+            Intent intent = ctx instanceof android.app.Activity
+                    ? ((android.app.Activity) ctx).getIntent() : null;
             if (intent != null) {
                 String action = intent.getStringExtra("LocalNotificationUserAction");
                 String raw = intent.getStringExtra("LocalNotficationObject");   // 插件常量拼写如此
