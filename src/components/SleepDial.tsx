@@ -1,34 +1,46 @@
 import React, { useEffect, useId, useState } from 'react';
 import { SleepRecord } from '../types/sleep';
+import { clockMinutes } from '../utils/clockMath';
 
 /**
- * 昨夜睡眠环（第 58 轮重做）。
+ * 昨夜睡眠时钟（第 59 轮）。
  *
- * 旧版是"24 小时表盘 + 刻度 + 清醒点 + 此刻指针"，在 96px 下所有细节
- * 都退化成划痕，弧线断开处也像坏图。改成睡眠类 App 通用的干净读数：
- *  - 一条完整轨道 + 按「睡眠时长 / 目标时长」填充的渐变弧；
- *  - 圆头端点 + 弧末端一个高光点（Oura / Apple 活动环的读数语言）；
- *  - 中心只留评分与档位，具体时刻交给右侧文字。
- * 这是"目标完成度"而不是 24 小时钟面——不假装精确到分钟。
+ * 用户要的是"一眼看到昨晚几点睡、几点起"，不是一个抽象完成度环。
+ * 所以回到 24 小时钟面：00 在正上方，顺时针 24 小时；实色弧 = 实际
+ * 卧床窗，起止各一个端点；中心保留评分。只保留 00/06/12/18 四个锚点，
+ * 不再画 24 根刻度、此刻指针和清醒点——那些在 96px 下只会变成划痕。
  */
 interface Props {
   record: SleepRecord;
-  targetMinutes?: number;
   scoreHex: string;
   scoreLabel: string;
   size?: number;
 }
 
-const R = 40;
-const CIRC = 2 * Math.PI * R;
+const CX = 50;
+const CY = 50;
+const R = 34;
 
-export const SleepDial: React.FC<Props> = ({
-  record,
-  targetMinutes,
-  scoreHex,
-  scoreLabel,
-  size = 96,
-}) => {
+function polar(angle: number, radius = R): { x: number; y: number } {
+  const rad = ((angle - 90) * Math.PI) / 180;
+  return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) };
+}
+
+function arcPath(startMin: number, endMin: number): string {
+  let delta = endMin - startMin;
+  if (delta <= 0) delta += 1440;
+  const a = polar((startMin / 1440) * 360);
+  const b = polar(((startMin + delta) / 1440) * 360);
+  const large = delta > 720 ? 1 : 0;
+  return `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} A ${R} ${R} 0 ${large} 1 ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
+}
+
+function timeToMin(t?: string): number | null {
+  if (!t || !/^\d{2}:\d{2}$/.test(t)) return null;
+  return clockMinutes(t);
+}
+
+export const SleepDial: React.FC<Props> = ({ record, scoreHex, scoreLabel, size = 96 }) => {
   const [displayScore, setDisplayScore] = useState(0);
   const gid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
 
@@ -46,64 +58,86 @@ export const SleepDial: React.FC<Props> = ({
     return () => cancelAnimationFrame(raf);
   }, [record.sleepScore, record.id]);
 
-  const rawGoal = targetMinutes ?? 8 * 60;
-  const goal = Math.max(60, Number.isFinite(rawGoal) ? rawGoal : 8 * 60);
-  const progress = Math.max(0.02, Math.min(1, record.durationMinutes / goal));
-  const angle = progress * 360 - 90;
-  const dotX = 50 + R * Math.cos((angle * Math.PI) / 180);
-  const dotY = 50 + R * Math.sin((angle * Math.PI) / 180);
+  const bed = timeToMin(record.bedtime);
+  const wake = timeToMin(record.wakeTime);
+  const bedPoint = bed !== null ? polar((bed / 1440) * 360) : null;
+  let wakePoint: { x: number; y: number } | null = null;
+  if (bed !== null && wake !== null) {
+    const delta = wake > bed ? wake - bed : wake + 1440 - bed;
+    wakePoint = polar(((bed + delta) / 1440) * 360);
+  }
+  const labels: Array<{ text: string; angle: number }> = [
+    { text: '00', angle: 0 },
+    { text: '06', angle: 90 },
+    { text: '12', angle: 180 },
+    { text: '18', angle: 270 },
+  ];
 
   return (
     <div
       className="relative shrink-0"
       style={{ width: size, height: size }}
       role="img"
-      aria-label={`昨晚睡眠 ${record.durationMinutes} 分钟，评分 ${record.sleepScore}`}
+      aria-label={`昨晚睡眠 ${record.bedtime} 到 ${record.wakeTime}，评分 ${record.sleepScore}`}
     >
       <svg viewBox="0 0 100 100" className="w-full h-full">
         <defs>
-          <linearGradient id={`${gid}-ring`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={scoreHex} stopOpacity="0.5" />
+          <linearGradient id={`${gid}-arc`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={scoreHex} stopOpacity="0.55" />
             <stop offset="100%" stopColor={scoreHex} />
           </linearGradient>
         </defs>
 
-        {/* 轨道 */}
-        <circle cx="50" cy="50" r={R} fill="none" stroke="rgba(148,163,184,0.16)" strokeWidth="7" />
+        {/* 24h 轨道 */}
+        <circle cx={CX} cy={CY} r={R} fill="none" stroke="rgba(148,163,184,0.18)" strokeWidth="4.5" />
 
-        {/* 进度弧：底层柔光 + 主弧 */}
-        <g transform="rotate(-90 50 50)">
-          <circle
-            cx="50" cy="50" r={R}
-            fill="none"
-            stroke={`url(#${gid}-ring)`}
-            strokeWidth="10"
-            strokeLinecap="round"
-            strokeDasharray={CIRC}
-            strokeDashoffset={CIRC * (1 - progress)}
-            opacity="0.18"
-          />
-          <circle
-            cx="50" cy="50" r={R}
-            fill="none"
-            stroke={`url(#${gid}-ring)`}
-            strokeWidth="6.5"
-            strokeLinecap="round"
-            strokeDasharray={CIRC}
-            strokeDashoffset={CIRC * (1 - progress)}
-          />
-        </g>
+        {/* 睡眠窗弧：底层柔光 + 主弧 */}
+        {bed !== null && wake !== null && (
+          <>
+            <path
+              d={arcPath(bed, wake)}
+              fill="none"
+              stroke={scoreHex}
+              strokeWidth="8"
+              strokeLinecap="round"
+              opacity="0.14"
+            />
+            <path
+              d={arcPath(bed, wake)}
+              fill="none"
+              stroke={`url(#${gid}-arc)`}
+              strokeWidth="5.5"
+              strokeLinecap="round"
+            />
+            {bedPoint && <circle cx={bedPoint.x} cy={bedPoint.y} r="2.2" fill={scoreHex} />}
+            {wakePoint && <circle cx={wakePoint.x} cy={wakePoint.y} r="2.8" fill="#ffffff" />}
+          </>
+        )}
 
-        {/* 弧末端高光点 */}
-        <circle cx={dotX} cy={dotY} r="4.6" fill={scoreHex} opacity="0.22" />
-        <circle cx={dotX} cy={dotY} r="2.4" fill="#ffffff" />
+        {/* 四个时钟锚点 */}
+        {labels.map((l) => {
+          const p = polar(l.angle, 46);
+          return (
+            <text
+              key={l.text}
+              x={p.x}
+              y={p.y + 2.4}
+              textAnchor="middle"
+              fontSize="8.5"
+              fontFamily="ui-monospace, monospace"
+              fill="rgba(148,163,184,0.8)"
+            >
+              {l.text}
+            </text>
+          );
+        })}
       </svg>
 
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <span className="font-black font-mono text-white tabular-nums leading-none" style={{ fontSize: size * 0.25 }}>
+        <span className="font-black font-mono text-white tabular-nums leading-none" style={{ fontSize: size * 0.23 }}>
           {displayScore}
         </span>
-        <span className="font-black mt-1 tracking-wider" style={{ color: scoreHex, fontSize: size * 0.1 }}>
+        <span className="font-black mt-0.5 tracking-wider" style={{ color: scoreHex, fontSize: size * 0.095 }}>
           {scoreLabel}
         </span>
       </div>

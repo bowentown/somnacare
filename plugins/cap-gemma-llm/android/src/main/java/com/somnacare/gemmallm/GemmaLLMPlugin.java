@@ -1,11 +1,15 @@
 package com.somnacare.gemmallm;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.provider.Settings;
+import android.view.accessibility.AccessibilityManager;
+import java.util.List;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -98,6 +102,65 @@ public class GemmaLLMPlugin extends Plugin {
     }
 
     // ==== 能力探测与内存门控 ====
+
+    // ==== 摇一摇/开屏广告跳过（第 59 轮） ====
+
+    /**
+     * 无障碍点击服务是独立的长驻服务；这里只负责开关与状态，
+     * 真正扫描/点击在 AdSkipService 里（事件驱动，默认关闭）。
+     */
+    @PluginMethod
+    public void adSkipStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        Context ctx = getContext();
+        ret.put("enabled", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(AdSkipService.KEY_ENABLED, false));
+        ret.put("serviceEnabled", isAdSkipServiceEnabled());
+        ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(AdSkipService.KEY_HITS, 0));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipSetEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        Context ctx = getContext();
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(AdSkipService.KEY_ENABLED, enabled).apply();
+        JSObject ret = new JSObject();
+        ret.put("enabled", enabled);
+        ret.put("serviceEnabled", isAdSkipServiceEnabled());
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipOpenSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+        } catch (Exception ignored) {
+            // 部分 ROM 无此页：UI 侧提示手动前往
+        }
+        call.resolve();
+    }
+
+    private boolean isAdSkipServiceEnabled() {
+        try {
+            AccessibilityManager am = (AccessibilityManager) getContext()
+                    .getSystemService(Context.ACCESSIBILITY_SERVICE);
+            if (am == null || !am.isEnabled()) return false;
+            List<AccessibilityServiceInfo> list = am.getEnabledAccessibilityServiceList(
+                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+            String own = getContext().getPackageName();
+            for (AccessibilityServiceInfo info : list) {
+                String id = info.getId();
+                if (id != null && id.contains(own) && id.contains("AdSkipService")) return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
 
     // ==== 主题联动桌面图标（activity-alias） ====
 

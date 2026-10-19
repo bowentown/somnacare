@@ -167,7 +167,6 @@ test('旅程1 晨间：07:50 冷启动自动出卡 → 确认 → 趋势/能量/
 
   // 趋势页：昨晚卡与历史列表都出现新记录
   await navTo(page, '趋势');
-  await expect(page.getByText('睡眠周报')).toBeVisible();
   await expect(page.getByText(/近 1 晚|近 2 晚|近 3 晚/)).toBeVisible();
 
   // 旅行能量：countedScores 记入该夜（night 键 = date）
@@ -720,7 +719,7 @@ test('旅程17 通知确认：通知栏「确认记录」动作 → 无需点卡
 // ─────────────────────────────────────────────────────────────
 // 旅程18 视觉三件套：24h 表盘 / 分期时间轴 / 月相挂件直达图鉴
 // ─────────────────────────────────────────────────────────────
-test('旅程18 视觉：睡眠表盘 + 分期时间轴 + 月相挂件直达图鉴', async ({ page }) => {
+test('旅程18 视觉：睡眠时钟 + 效率指标 + 月相挂件直达图鉴', async ({ page }) => {
   const errors = watchErrors(page);
   const fixed = new Date();
   fixed.setHours(10, 0, 0, 0);
@@ -734,7 +733,7 @@ test('旅程18 视觉：睡眠表盘 + 分期时间轴 + 月相挂件直达图�
   await page.waitForTimeout(4200);
 
   await expect(page.getByRole('img', { name: /昨晚睡眠 .*评分/ })).toBeVisible();
-  await expect(page.getByRole('img', { name: /睡眠分期时间轴/ })).toBeVisible();
+  await expect(page.getByText('睡眠效率', { exact: true }).first()).toBeVisible();
   const pill = page.getByTestId('nav-pill');
   await expect(pill).toHaveAttribute('data-active-index', '0');
 
@@ -847,5 +846,53 @@ test('旅程21 环境光：开关默认开启，关闭后写入档案', async ({
     const raw = localStorage.getItem('somnacare_user_profile');
     return raw ? JSON.parse(raw).ambientLightEnabled : undefined;
   })).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程22 广告跳过：默认关闭 → 开启后调原生开关并引导无障碍授权
+// ─────────────────────────────────────────────────────────────
+test('旅程22 广告跳过：偏好页开关默认关闭，开启走原生 + 无障碍引导', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await page.addInitScript(() => {
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: {
+        GemmaLLM: {
+          adSkipStatus: async () => ({ enabled: false, serviceEnabled: false, hits: 0 }),
+          adSkipSetEnabled: async ({ enabled }: { enabled: boolean }) => {
+            (window as any).__adSkipCalls = (window as any).__adSkipCalls || [];
+            (window as any).__adSkipCalls.push({ type: 'set', enabled });
+            return { enabled, serviceEnabled: false, hits: 0 };
+          },
+          adSkipOpenSettings: async () => {
+            (window as any).__adSkipCalls = (window as any).__adSkipCalls || [];
+            (window as any).__adSkipCalls.push({ type: 'open' });
+          },
+        },
+      },
+    };
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '偏好');
+  const sw = page.getByRole('button', { name: '摇一摇广告跳过' });
+  await expect(sw).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByText(/不读取输入内容/)).toBeVisible();
+
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/待授权/)).toBeVisible();
+  const calls = await page.evaluate(() => (window as any).__adSkipCalls || []);
+  expect(calls.some((c: any) => c.type === 'set' && c.enabled === true)).toBe(true);
+  expect(calls.some((c: any) => c.type === 'open')).toBe(true);
   expect(errors).toEqual([]);
 });

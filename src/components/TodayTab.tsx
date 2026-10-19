@@ -24,7 +24,6 @@ import { computeWeekReport } from '../utils/weekReport';
 import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../services/travelService';
 import { PondCard } from './PondCard';
 import { SleepDial } from './SleepDial';
-import { SleepStageTimeline } from './SleepStageTimeline';
 import { MoonEnergy } from './MoonEnergy';
 
 interface TodayTabProps {
@@ -237,8 +236,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             >
               <SleepDial
                 record={latestRecord}
-                targetMinutes={userProfile.targetDurationHours * 60}
-                scoreHex={scoreInfo.stroke}
+                  scoreHex={scoreInfo.stroke}
                 scoreLabel={scoreInfo.label}
                 size={64}
               />
@@ -278,7 +276,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             {/* 睡眠完成度环（第 58 轮）：干净轨道 + 渐变弧 + 端点高光 */}
             <SleepDial
               record={latestRecord}
-              targetMinutes={userProfile.targetDurationHours * 60}
               scoreHex={scoreInfo.stroke}
               scoreLabel={scoreInfo.label}
               size={96}
@@ -299,9 +296,9 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-300 font-bold whitespace-nowrap">深睡阶段</span>
+                <span className="text-slate-300 font-bold whitespace-nowrap">睡眠效率</span>
                 <span className="font-mono text-emerald-400 font-black whitespace-nowrap">
-                  {latestRecord.deepSleepMinutes}分 · {Math.round((latestRecord.deepSleepMinutes / Math.max(1, latestRecord.durationMinutes + latestRecord.awakeMinutes)) * 100)}%
+                  {latestRecord.sleepEfficiency}%
                 </span>
               </div>
             </div>
@@ -313,10 +310,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               <span className={`font-bold whitespace-nowrap ${targetCompare.tone}`}>{targetCompare.text}</span>
             </div>
           )}
-
-          <div className="mt-3">
-            <SleepStageTimeline record={latestRecord} />
-          </div>
 
           {latestRecord.dreamNotes && (
             <div className="mt-3 pt-3 border-t border-slate-700/80 text-xs text-slate-200">

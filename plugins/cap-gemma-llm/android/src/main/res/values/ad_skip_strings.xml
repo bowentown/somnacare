@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ad_skip_accessibility_desc">开屏广告或摇一摇广告出现「跳过」按钮时自动点一下。只匹配跳过文字，不读取输入内容，数据不离开本机。</string>
+</resources>

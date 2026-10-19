@@ -27,7 +27,7 @@ import { summarizeWeek } from '../utils/weekSummary';
 import { ShareCardModal } from './ShareCardModal';
 import { ClinicalSummaryModal } from './ClinicalSummaryModal';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
-import { computeWeekReport, GOOD_NIGHT_THRESHOLD } from '../utils/weekReport';
+import { computeWeekReport } from '../utils/weekReport';
 import {
   usageHasPermission,
   usageOpenSettings,
@@ -167,55 +167,11 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
     return last7Records.map((r, i) => `${scoreToX(i)},${scoreToY(r.sleepScore)}`).join(' ');
   };
 
+  // 周报卡已删除（与近期小结重复）；连胜仍保留为小结里的一行
   const weekReport = computeWeekReport(records);
-  const streakLabel = weekReport.streak > 0
-    ? (weekReport.graceUsed ? `${weekReport.streak} 晚（今晚续上）` : `${weekReport.streak} 晚连胜`)
-    : null;
 
   return (
     <div className={`space-y-3 pb-28 ${theme.textPrimary}`}>
-      {/* 睡眠周报（第 52 轮新增）：一张卡说清"这周睡得怎么样、连胜多少晚" */}
-      <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} space-y-3`}>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-white">睡眠周报</span>
-          <span className="text-[10px] text-slate-500 font-mono">近 7 晚</span>
-        </div>
-        {weekReport.nights === 0 ? (
-          <p className="text-[11px] text-slate-400">还没有睡眠记录——第一晚记录后这里会出现周报。</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className={`rounded-xl p-2.5 ${innerBg} border ${innerBorder}`}>
-                <p className="text-[9px] text-slate-400">本周达标</p>
-                <p className="text-base font-black font-mono text-white">
-                  {weekReport.elapsedNights === 0
-                    ? '—'
-                    : <>{weekReport.goodNights}<span className="text-[10px] text-slate-500">/{weekReport.elapsedNights}</span></>}
-                </p>
-              </div>
-              <div className={`rounded-xl p-2.5 ${innerBg} border ${innerBorder}`}>
-                <p className="text-[9px] text-slate-400">7 晚均分</p>
-                <p className="text-base font-black font-mono text-white">{weekReport.avgScore ?? '—'}</p>
-              </div>
-              <div className={`rounded-xl p-2.5 ${innerBg} border ${innerBorder}`}>
-                <p className="text-[9px] text-slate-400">7 晚均时长</p>
-                <p className="text-base font-black font-mono text-white">
-                  {weekReport.avgDurationMin !== null ? `${(weekReport.avgDurationMin / 60).toFixed(1)}h` : '—'}
-                </p>
-              </div>
-            </div>
-            {streakLabel && (
-              <div className="flex items-center gap-2 text-[11px] font-bold px-1">
-                <span className={theme.accentText}>🔥 连续达标 {streakLabel}</span>
-                {weekReport.best && weekReport.best.score >= GOOD_NIGHT_THRESHOLD && (
-                  <span className="text-slate-500 font-normal">· 最佳 {weekReport.best.date.slice(5)}（{weekReport.best.score} 分）</span>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
       {/* Visual Trends Container */}
       <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} space-y-3`}>
         {/* Toggle Switch */}
@@ -634,6 +590,10 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
         // best=undefined 白屏）。第 24 轮：不再平行推导 nightsOnly，
         // 也不用 ! 断言（全小睡时三个均值确实是 null——用空值收窄消费）
         const sum = summarizeWeek(records);
+        const recentNights = nightsOnly(records).slice(0, 7);
+        const avgEfficiency = recentNights.length
+          ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
+          : null;
         return (
           <div
             role="button"
@@ -669,7 +629,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 </button>
               </div>
             </div>
-            {sum.avgScore === null || sum.avgDurationMin === null || sum.avgDeepMin === null ? (
+            {sum.avgScore === null || sum.avgDurationMin === null || avgEfficiency === null ? (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>
                 还没有夜睡记录——白天的午睡不计入周小结。
               </p>
@@ -687,9 +647,9 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 </span>
               </div>
               <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3`}>
-                <span className={`text-[10px] ${textMuted} block mb-0.5`}>场均深睡</span>
+                <span className={`text-[10px] ${textMuted} block mb-0.5`}>平均效率</span>
                 <span className="text-xl font-black font-mono text-emerald-400 tabular-nums">
-                  {sum.avgDeepMin}<span className="text-sm">M</span>
+                  {avgEfficiency}<span className="text-sm">%</span>
                 </span>
               </div>
             </div>
@@ -710,6 +670,11 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             ) : (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>
                 📊 记录满 3 晚后，这里会显示作息规律度（就寝与起床的稳定程度）
+              </p>
+            )}
+            {weekReport.streak > 0 && (
+              <p className={`text-[11px] font-bold ${theme.accentText}`}>
+                🔥 连续达标 {weekReport.streak} 晚{weekReport.graceUsed ? '（今晚续上）' : ''}
               </p>
             )}
             {sum.best && (

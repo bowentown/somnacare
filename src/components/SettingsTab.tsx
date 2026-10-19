@@ -11,6 +11,7 @@ import {
   Download,
   Upload,
   Fish,
+  MousePointerClick,
 } from 'lucide-react';
 import { UserProfile, CustomAlarmSetting, CustomAIConfig, SleepRecord, SleepStageSegment } from '../types/sleep';
 import { AlarmManager } from './AlarmManager';
@@ -29,6 +30,13 @@ import { unlockProposal } from '../utils/proposalUnlock';
 import { petSayFingerprint } from '../utils/petMoments';
 import { getLastResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
+import {
+  getAdSkipStatus,
+  openAdSkipAccessibilitySettings,
+  setAdSkipEnabled,
+  type AdSkipStatus,
+} from '../utils/adSkip';
+import { tapTick } from '../utils/haptics';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
 function switchLauncherIcon(themeId: string) {
@@ -90,6 +98,61 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 }) => {
   const [themeOpen, setThemeOpen] = useState(false);
   const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
+  // 模型诊断默认折叠：逐夜行对普通用户意义有限，保留三项摘要即可
+  const [modelDiagOpen, setModelDiagOpen] = useState(false);
+  const shadowStore = loadShadowStore();
+  const shadow = shadowStats(shadowStore);
+  const pct = (v: number | null) => (v === null ? '—' : `${v}%`);
+
+  // 广告跳过（第 59 轮）：默认关闭；无障碍服务状态与开关分开显示
+  const adSkipNative = isNativePlatform();
+  const [adSkip, setAdSkip] = useState<AdSkipStatus>({ enabled: false, serviceEnabled: false, hits: 0 });
+  const [adSkipBusy, setAdSkipBusy] = useState(false);
+  const adSkipPollRef = useRef<number | null>(null);
+  const refreshAdSkip = async () => {
+    const st = await getAdSkipStatus();
+    setAdSkip(st);
+    return st;
+  };
+  useEffect(() => {
+    if (!adSkipNative) return;
+    void refreshAdSkip();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void refreshAdSkip();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      if (adSkipPollRef.current !== null) window.clearInterval(adSkipPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adSkipNative]);
+  const handleAdSkipToggle = async () => {
+    if (!adSkipNative || adSkipBusy) return;
+    tapTick();
+    const next = !adSkip.enabled;
+    setAdSkipBusy(true);
+    try {
+      const st = await setAdSkipEnabled(next);
+      setAdSkip(st);
+      if (next && !st.serviceEnabled) {
+        await openAdSkipAccessibilitySettings();
+        if (adSkipPollRef.current !== null) window.clearInterval(adSkipPollRef.current);
+        let tries = 0;
+        adSkipPollRef.current = window.setInterval(async () => {
+          tries += 1;
+          const cur = await getAdSkipStatus();
+          setAdSkip(cur);
+          if (cur.serviceEnabled || tries >= 20) {
+            if (adSkipPollRef.current !== null) window.clearInterval(adSkipPollRef.current);
+            adSkipPollRef.current = null;
+          }
+        }, 2000);
+      }
+    } finally {
+      setAdSkipBusy(false);
+    }
+  };
 
   // ── 提议链路自检（第 42 轮）：自动记录"已开启却永远不出卡"此前完全静默，
   // 真机上无法区分"没数据 / 被闸门拒绝 / 引擎没跑"。这里把整条链路
@@ -212,6 +275,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   useEffect(() => {
     if (!autoCheckSignal || autoCheckSignal === lastAutoCheckRef.current) return;
     lastAutoCheckRef.current = autoCheckSignal;
+    setModelDiagOpen(true);   // 自检入口要能看到面板内容
     void runProposalSelfCheck();
     window.setTimeout(() => {
       selfCheckPanelRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -549,54 +613,138 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         )}
       </div>
 
-      {/* 自动记录模型诊断（第 37 轮影子跑）：模型参数至今只用公开数据集标定，
-          本卡让真实使用自动积累准确率——每次确认提议/手动补录都是真值，
-          无需用户汇报。数据只存本机、不进备份 */}
-      <div ref={selfCheckPanelRef} className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-white">自动记录 · 模型诊断</h3>
-          <span className="text-[9px] font-mono text-slate-400">实验功能</span>
+      {/* 摇一摇/开屏广告跳过（第 59 轮）：默认关闭，依赖系统无障碍权限 */}
+      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
+              <MousePointerClick className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-black text-white">摇一摇广告跳过</h3>
+              <p className="text-[10px] text-slate-400 truncate">
+                {adSkipNative ? '开屏广告出现「跳过」时自动点一下' : '安装 APK 后可用'}
+              </p>
+            </div>
+          </div>
+          {adSkipNative && (
+            <button
+              type="button"
+              onClick={() => void handleAdSkipToggle()}
+              disabled={adSkipBusy}
+              aria-pressed={adSkip.enabled}
+              aria-label="摇一摇广告跳过"
+              className="relative inline-flex items-center cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              <span
+                className="block w-10 h-5 rounded-full transition-colors relative"
+                style={{ background: adSkip.enabled ? theme.accentHex : '#475569' }}
+              >
+                <span
+                  className="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all"
+                  style={{ left: adSkip.enabled ? '22px' : '2px' }}
+                />
+              </span>
+            </button>
+          )}
         </div>
-        {(() => {
-          const store = loadShadowStore();
-          const st = shadowStats(store);
-          const recent = store.entries.filter((e) => e.model || e.heuristic).slice(-14).reverse();
+
+        {adSkipNative && adSkip.enabled && !adSkip.serviceEnabled && (
+          <button
+            type="button"
+            onClick={() => void openAdSkipAccessibilitySettings()}
+            className="w-full py-2.5 rounded-xl border border-amber-400/50 bg-amber-500/10 text-amber-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
+          >
+            需要无障碍权限 · 前往系统设置开启
+          </button>
+        )}
+
+        {adSkipNative && (
+          <div className="flex items-center justify-between gap-2 text-[10px]">
+            <span className={adSkip.enabled && adSkip.serviceEnabled ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+              {adSkip.enabled
+                ? (adSkip.serviceEnabled ? '已生效' : '待授权（在系统设置里开启本应用的无障碍服务）')
+                : '已关闭'}
+            </span>
+            <span className="text-slate-500 font-mono shrink-0">已跳过 {adSkip.hits} 次</span>
+          </div>
+        )}
+
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          只匹配「跳过 / 跳过广告」文字，不读取输入内容，数据不离开本机。
+        </p>
+      </div>
+
+      {/* 自动记录模型诊断（第 37 轮影子跑；第 59 轮默认折叠） */}
+      <div ref={selfCheckPanelRef} className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+        <button
+          type="button"
+          onClick={() => setModelDiagOpen((v) => !v)}
+          aria-expanded={modelDiagOpen}
+          className="w-full flex items-center justify-between cursor-pointer"
+        >
+          <h3 className="text-sm font-bold text-white">自动记录 · 模型诊断</h3>
+          <span className="flex items-center gap-2 text-[9px] font-mono text-slate-400">
+            实验功能
+            <ChevronDown className={`w-4 h-4 transition-transform ${modelDiagOpen ? 'rotate-180' : ''}`} />
+          </span>
+        </button>
+
+        {!modelDiagOpen && (
+          <p className="text-[10px] font-mono text-slate-400 leading-relaxed">
+            积累 {shadow.nights} 夜 · 采纳 {pct(shadow.adoptionRate)} · 独立命中 {pct(shadow.independent.hitRate)}
+            {shadow.negatives > 0 ? ` · 否定 ${shadow.negatives} 晚` : ''}
+          </p>
+        )}
+
+        {/* 自检入口常驻：折叠时也能一键跑链路，结果会自动展开面板 */}
+        <button
+          type="button"
+          onClick={() => { setModelDiagOpen(true); void runProposalSelfCheck(); }}
+          disabled={diagBusy}
+          className="w-full py-2.5 rounded-xl bg-slate-800/70 border border-slate-600 text-slate-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-60"
+        >
+          {diagBusy ? '自检中…' : '早上没等到提议卡？点此自检链路'}
+        </button>
+
+        {modelDiagOpen && (() => {
+          const recent = shadowStore.entries.filter((e) => e.model || e.heuristic).slice(-14).reverse();
           return (
             <div className="space-y-2.5">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">积累夜数</p>
-                  <p className="text-base font-black font-mono text-white">{st.nights}</p>
+                  <p className="text-base font-black font-mono text-white">{shadow.nights}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">采纳率</p>
-                  <p className="text-base font-black font-mono text-white">{st.adoptionRate !== null ? `${st.adoptionRate}%` : '—'}</p>
+                  <p className="text-base font-black font-mono text-white">{shadow.adoptionRate !== null ? `${shadow.adoptionRate}%` : '—'}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">独立命中率</p>
-                  <p className="text-base font-black font-mono text-white">{st.independent.hitRate !== null ? `${st.independent.hitRate}%` : '—'}</p>
+                  <p className="text-base font-black font-mono text-white">{shadow.independent.hitRate !== null ? `${shadow.independent.hitRate}%` : '—'}</p>
                 </div>
               </div>
               {/* 语义必须分开说清：采纳率=使用习惯；独立命中率（仅手动补录夜）才反映模型准度 */}
               <p className="text-[9px] text-slate-400 leading-relaxed">
-                独立命中率来自手动补录的 {st.independent.nights} 晚（独立真值）{st.independent.maeMin !== null ? ` · 平均误差 ${st.independent.maeMin} 分` : ''}；
+                独立命中率来自手动补录的 {shadow.independent.nights} 晚（独立真值）{shadow.independent.maeMin !== null ? ` · 平均误差 ${shadow.independent.maeMin} 分` : ''}；
                 采纳率只反映你多常直接采纳，不代表模型准不准。
               </p>
-              {(st.adjustments.nights > 0 || st.negatives > 0) && (
+              {(shadow.adjustments.nights > 0 || shadow.negatives > 0) && (
                 <p className="text-[9px] text-slate-400 leading-relaxed">
-                  你的修正：{st.adjustments.nights} 次
-                  {st.adjustments.avgBed !== null && st.adjustments.avgWake !== null
-                    ? `（就寝 ${st.adjustments.avgBed >= 0 ? '+' : ''}${st.adjustments.avgBed} 分 · 起床 ${st.adjustments.avgWake >= 0 ? '+' : ''}${st.adjustments.avgWake} 分）`
+                  你的修正：{shadow.adjustments.nights} 次
+                  {shadow.adjustments.avgBed !== null && shadow.adjustments.avgWake !== null
+                    ? `（就寝 ${shadow.adjustments.avgBed >= 0 ? '+' : ''}${shadow.adjustments.avgBed} 分 · 起床 ${shadow.adjustments.avgWake >= 0 ? '+' : ''}${shadow.adjustments.avgWake} 分）`
                     : ''}
-                  {st.negatives > 0 ? ` · 否定 ${st.negatives} 晚` : ''}
+                  {shadow.negatives > 0 ? ` · 否定 ${shadow.negatives} 晚` : ''}
                 </p>
               )}
-              {st.droppedOutcomes > 0 && (
+              {shadow.droppedOutcomes > 0 && (
                 <p className="text-[9px] text-amber-400/90 leading-relaxed">
-                  另有 {st.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录哪一晚"请选就寝那晚。
+                  另有 {shadow.droppedOutcomes} 条记录因日期与提议夜不匹配未计入——补录时"记录哪一晚"请选就寝那晚。
                 </p>
               )}
-              {st.withOutcome === 0 && (
+              {shadow.withOutcome === 0 && (
                 <p className="text-[10px] text-slate-400 leading-relaxed">
                   模型输出会按夜自动存档；你每次确认提议或手动补录后，这里会算出提议时刻与实际记录的误差。
                 </p>
@@ -624,16 +772,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <p className="text-[9px] text-slate-400 leading-relaxed">
                 需要开启使用情况访问且积累 ≥7 天数据，模型才会介入提议。误差 = 提议时刻与你最终确认/补录时刻的差异（按圆周口径，跨午夜安全）。
               </p>
-              {/* 第 42 轮：链路失败此前完全静默——用户区分不了"没数据"和"被拒绝"，
-                  真机问题（如事件日志被 ROM 裁剪）只能靠这里自检暴露 */}
-              <button
-                type="button"
-                onClick={() => void runProposalSelfCheck()}
-                disabled={diagBusy}
-                className="w-full py-2.5 rounded-xl bg-slate-800/70 border border-slate-600 text-slate-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-60"
-              >
-                {diagBusy ? '自检中…' : '早上没等到提议卡？点此自检链路'}
-              </button>
               {chainDiag && (
                 <pre className="whitespace-pre-wrap text-[10px] font-mono text-slate-300 bg-black/25 rounded-xl p-3 leading-relaxed border border-slate-700">{chainDiag}</pre>
               )}
