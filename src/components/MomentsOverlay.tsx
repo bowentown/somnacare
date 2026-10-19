@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Heart, MessageCircle, Loader2, RefreshCw } from 'lucide-react';
+import { X, Heart, MessageCircle, Loader2, RefreshCw, Image as ImageIcon, Package, Map } from 'lucide-react';
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { useModalA11y } from '../utils/modalA11y';
 import {
@@ -32,8 +32,6 @@ interface Props {
   records: SleepRecord[];
   userProfile: UserProfile;
   onClose: () => void;
-  /** 递增信号：首页月相挂件直达图鉴（第 57 轮） */
-  openCodexSignal?: number;
 }
 
 /** "今天 / 昨天 / MM-dd" */
@@ -165,7 +163,7 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
  * 文案由真实睡眠事实生成（DeepSeek API 可用时走 LLM，否则本地傲娇模板），
  * 每张卡片底部都展示生成时的事实清单——"每句话都有出处"。
  */
-export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose, openCodexSignal }) => {
+export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose }) => {
   const momentsA11y = useModalA11y(true, onClose, '大肥鱼的朋友圈');
   const [moments, setMoments] = useState<Moment[]>(() => loadMoments());
   const [busy, setBusy] = useState(false);
@@ -177,10 +175,6 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose,
   const [momentsCap, setMomentsCapState] = useState(() => getMomentsCap());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 首页月相挂件 → 直接落到图鉴层，不用先找"图鉴"胶囊
-  useEffect(() => {
-    if (openCodexSignal) setShowCodex(true);
-  }, [openCodexSignal]);
 
   const travelProgress = getTravelProgress();
 
@@ -256,7 +250,13 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose,
       <div className="shrink-0 px-4 pt-3 pb-2.5 border-b border-slate-800/80 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-xl shrink-0">🐋</div>
+            <div className="w-9 h-9 rounded-xl overflow-hidden bg-slate-900 border border-white/10 flex items-center justify-center shrink-0">
+              <img
+                src={`${import.meta.env.BASE_URL || '/'}whale-selfie.png`}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            </div>
             <div className="min-w-0">
               <p className="text-xs font-black text-white leading-tight truncate">大肥鱼的朋友圈</p>
               <p className="text-[9px] text-slate-400 truncate">蓝色大肥鱼 · 聪明但懒 · 事已至此，先吃饭吧</p>
@@ -272,13 +272,13 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose,
           </button>
         </div>
         <div className="relative">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setShowShareCard(true)}
-            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-[10px] font-bold text-indigo-200 flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+            className="shrink-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 text-[10px] font-bold text-slate-200 cursor-pointer active:scale-95 transition-transform"
           >
-            <span>🖼️</span>
+            <ImageIcon className="w-3.5 h-3.5 text-indigo-300" />
             <span>睡眠卡</span>
           </button>
           <button
@@ -290,28 +290,28 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose,
               setMomentsCapState(next);
               setMoments(capMoments(loadMoments()));
             }}
-            className="px-2.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+            className="shrink-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 text-[10px] font-bold text-slate-200 cursor-pointer active:scale-95 transition-transform"
             aria-label={`朋友圈容量 ${momentsCap} 条，点击切换到下一档`}
           >
-            <span>📦</span>
+            <Package className="w-3.5 h-3.5 text-slate-400" />
             <span>容量 {momentsCap}</span>
           </button>
           <button
             type="button"
             onClick={() => setShowCodex(true)}
-            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-[10px] font-bold text-indigo-200 flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+            className="shrink-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-sky-400/25 bg-sky-500/10 px-3 text-[10px] font-bold text-sky-200 cursor-pointer active:scale-95 transition-transform"
           >
-            <span>🗺️</span>
+            <Map className="w-3.5 h-3.5 text-sky-300" />
             <span>图鉴 {travelProgress.unlockedCount}/{travelProgress.totalCount}</span>
           </button>
           <button
             type="button"
             onClick={() => void regenerate()}
             disabled={busy}
-            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer disabled:opacity-40 active:scale-95 transition-transform"
+            className="shrink-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/15 bg-white/10 px-3 text-[10px] font-bold text-white cursor-pointer disabled:opacity-40 active:scale-95 transition-transform"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            生成今日动态
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            生成动态
           </button>
         </div>
         {/* 右缘渐隐：胶囊可横向滚动（no-scrollbar 藏了滚动条） */}

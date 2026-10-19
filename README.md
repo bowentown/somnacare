@@ -255,3 +255,4 @@ APK 由 CI 用**固定签名**构建：签名密钥存放在 GitHub Secrets（`A
 Today 页"活的海"池塘引擎同样**不在 MIT 范围内**：移植自开源项目
 [nagomi](https://github.com/msk1039/nagomi)（PolyForm Noncommercial 1.0.0，
 非商业使用，署名 Mayank Kadam），全文见 `src/pond/LICENSE.nagomi`。
+睡眠分期时间轴使用 [react-hypnogram](https://github.com/CrazyBucket/react-hypnogram)（MIT，Copyright (c) 2026 react-hypnogram contributors）。

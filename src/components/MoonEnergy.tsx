@@ -1,23 +1,23 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 /**
- * 月相能量（第 57 轮）：把旅行能量从进度条换成"由缺到圆"的月亮。
+ * 梦境能量徽章（第 58 轮重做）。
  *
- * 画的不是装饰：亮面面积与 progress 严格对应。
- *  - progress = 0：新月（全暗）
- *  - 0.5：右半月
- *  - 1：满月（出发）
- * 用一条"右半圆 + 椭圆返回弧"的路径实现，跨浏览器无滤镜依赖。
+ * 上一版直接画"月相"：在 52px 的尺寸下，明暗交界线像一条生硬的刀口，
+ * 84% 的凸月看起来只是一颗黄圆点，确实不好看。改成睡眠 App 更成熟的
+ * 读数语言（Oura/Apple 的活动环 + 中心符号）：
+ *  - 外圈是一条金色进度弧（睡眠目标完成度）；
+ *  - 中心是一个深色月球 + 柔和的月牙 + 一颗小星，不是几何色块；
+ *  - 满环时月牙自带一圈微光，仍然保留"满月出发"的语义。
  */
 interface Props {
   value: number;
   target: number;
   size?: number;
   className?: string;
-  /** 暗面颜色：默认夜空蓝灰 */
-  darkColor?: string;
-  /** 亮面颜色：默认暖金 */
+  /** 兼容旧调用：亮面颜色 */
   litColor?: string;
+  darkColor?: string;
 }
 
 export const MoonEnergy: React.FC<Props> = ({
@@ -25,15 +25,13 @@ export const MoonEnergy: React.FC<Props> = ({
   target,
   size = 48,
   className = '',
-  darkColor = '#273449',
   litColor = '#fcd34d',
+  darkColor = '#0b1222',
 }) => {
   const progress = target > 0 ? Math.max(0, Math.min(1, value / target)) : 0;
-  const rx = 46 * Math.abs(1 - 2 * progress);
-  // 新月至半月：返回弧从底部经右侧回顶部（sweep=0，向内咬掉亮面）；
-  // 半月到满月：返回弧经左侧回顶部（sweep=1，补成凸月/满月）
-  const sweep = progress < 0.5 ? 0 : 1;
-  const litPath = `M 50 4 A 46 46 0 0 1 50 96 A ${rx.toFixed(2)} 46 0 0 ${sweep} 50 4`;
+  const gid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const r = 43;
+  const circ = 2 * Math.PI * r;
 
   return (
     <div
@@ -43,11 +41,43 @@ export const MoonEnergy: React.FC<Props> = ({
       aria-label={`梦境能量 ${Math.round(progress * 100)}%`}
     >
       <svg viewBox="0 0 100 100" className="w-full h-full">
-        <circle cx={50} cy={50} r={48} fill={litColor} opacity={progress > 0.98 ? 0.18 : 0.07} />
-        <circle cx={50} cy={50} r={46} fill={darkColor} />
-        {progress > 0 && <path d={litPath} fill={litColor} />}
-        {/* 一点冷色高光，让亮面不像扁平色块 */}
-        <circle cx={38} cy={34} r={46} fill="#ffffff" opacity={progress > 0 ? 0.05 : 0} />
+        <defs>
+          <linearGradient id={`${gid}-arc`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={litColor} stopOpacity="0.55" />
+            <stop offset="100%" stopColor={litColor} />
+          </linearGradient>
+          <radialGradient id={`${gid}-orb`} cx="38%" cy="32%" r="75%">
+            <stop offset="0%" stopColor="#243653" />
+            <stop offset="100%" stopColor={darkColor} />
+          </radialGradient>
+          <mask id={`${gid}-moon`}>
+            <circle cx="50" cy="51" r="17.5" fill="#ffffff" />
+            <circle cx="60" cy="42" r="15" fill="#000000" />
+          </mask>
+        </defs>
+
+        {/* 外圈：轨道 + 进度弧 */}
+        <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="4" />
+        {progress > 0 && (
+          <circle
+            cx="50" cy="50" r={r}
+            fill="none"
+            stroke={`url(#${gid}-arc)`}
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={circ}
+            strokeDashoffset={circ * (1 - progress)}
+            transform="rotate(-90 50 50)"
+          />
+        )}
+
+        {/* 月球本体 */}
+        <circle cx="50" cy="50" r="32" fill={`url(#${gid}-orb)`} stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
+        {progress >= 1 && <circle cx="50" cy="50" r="32" fill={litColor} opacity="0.08" />}
+
+        {/* 月牙 + 小星 */}
+        <circle cx="50" cy="51" r="17.5" fill={litColor} opacity="0.95" mask={`url(#${gid}-moon)`} />
+        <circle cx="67" cy="34" r="1.4" fill="#ffffff" opacity="0.75" />
       </svg>
     </div>
   );

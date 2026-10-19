@@ -37,6 +37,7 @@ import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
+import { TravelCodexModal } from './components/travel/TravelCodexModal';
 import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival, restoreRecordScore } from './services/travelService';
 
 /** 分区错误边界展示名（PaneErrorBoundary 文案用）。 */
@@ -57,8 +58,8 @@ export const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   // 首页自救助手 → 偏好页链路自检（第 56 轮）：切分区并递增信号
   const [autoCheckSignal, setAutoCheckSignal] = useState(0);
-  // 首页月相挂件 → 旅行图鉴（第 57 轮）
-  const [codexSignal, setCodexSignal] = useState(0);
+  // 首页月相挂件 → 旅行图鉴（第 58 轮：独立打开，关闭即回睡眠区）
+  const [codexOpen, setCodexOpen] = useState(false);
   // 保存记录 → 池塘落涟漪（第 57 轮）
   const [pondCelebrateSignal, setPondCelebrateSignal] = useState(0);
   // 删除记录 5 秒撤销（第 57 轮）
@@ -1097,10 +1098,7 @@ export const App: React.FC = () => {
                         setActiveTab('settings');
                         setAutoCheckSignal((v) => v + 1);
                       }}
-                      onOpenCodex={() => {
-                        setActiveTab('coach');
-                        setCodexSignal((v) => v + 1);
-                      }}
+                      onOpenCodex={() => setCodexOpen(true)}
                       celebrateSignal={pondCelebrateSignal}
                     />
                   )}
@@ -1115,7 +1113,7 @@ export const App: React.FC = () => {
                   )}
 
                   {id === 'coach' && (
-                    <AIAdvicePanel records={records} userProfile={userProfile} theme={currentTheme} openMomentsSignal={momentsSignal} openCodexSignal={codexSignal} onChatFocusChange={handleChatFocusChange} />
+                    <AIAdvicePanel records={records} userProfile={userProfile} theme={currentTheme} openMomentsSignal={momentsSignal} onChatFocusChange={handleChatFocusChange} />
                   )}
 
                   {id === 'eyecare' && (
@@ -1204,6 +1202,12 @@ export const App: React.FC = () => {
         initialWakeTime={manualLogPrefill?.wakeTime}
         chronotype={userProfile.chronotype ?? 'night'}
       />
+
+      {/* 旅行图鉴（首页月相挂件直达）：独立层，关闭回到当前分区 */}
+      {codexOpen && createPortal(
+        <TravelCodexModal onClose={() => setCodexOpen(false)} />,
+        document.body,
+      )}
 
       {/* 大肥鱼漫游明信片送达仪式弹窗 */}
       {pendingPostcardId && (

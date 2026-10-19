@@ -126,6 +126,26 @@ export const TodayTab: React.FC<TodayTabProps> = ({
 
   const scoreInfo = latestRecord ? getScoreColor(latestRecord.sleepScore) : getScoreColor(85);
 
+  // 目标对比单独成行（不再挤在右侧窄列里导致"目标"竖排换行）
+  const targetCompare = (() => {
+    if (!latestRecord || !userProfile.targetBedtime || !userProfile.targetWakeTime) return null;
+    const target = `${userProfile.targetBedtime}–${userProfile.targetWakeTime}`;
+    const nightCalibratedDefault =
+      userProfile.chronotype === 'day' && userProfile.targetBedtime === '23:30';
+    if (nightCalibratedDefault) {
+      return { target, text: '目标仍为夜间口径 · 建议改设置', tone: 'text-slate-400' };
+    }
+    const [bh, bm] = latestRecord.bedtime.split(':').map(Number);
+    const [th, tm] = userProfile.targetBedtime.split(':').map(Number);
+    let diff = bh * 60 + bm - (th * 60 + tm);
+    if (diff > 720) diff -= 1440;
+    if (diff < -720) diff += 1440;
+    if (diff === 0) return { target, text: '与目标一致', tone: 'text-emerald-400' };
+    return diff > 0
+      ? { target, text: `晚于目标 ${diff} 分钟`, tone: 'text-rose-400' }
+      : { target, text: `早于目标 ${-diff} 分钟`, tone: 'text-sky-400' };
+  })();
+
   // 首页昼夜双布局的排序表：晚上先给"现在要做的事"，昨晚评分收到最后
   const sectionOrder = isEvening
     ? { tracker: 1, sound: 2, goals: 3, moon: 4, pond: 5, actions: 6, sleep: 7, nap: 8 }
@@ -217,9 +237,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             >
               <SleepDial
                 record={latestRecord}
-                targetBedtime={userProfile.targetBedtime}
-                targetWakeTime={userProfile.targetWakeTime}
-                accentHex={theme.accentHex}
+                targetMinutes={userProfile.targetDurationHours * 60}
                 scoreHex={scoreInfo.stroke}
                 scoreLabel={scoreInfo.label}
                 size={64}
@@ -256,73 +274,48 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center justify-between gap-5 my-1">
-            {/* 24 小时睡眠表盘（第 57 轮）：实际弧 vs 目标弧 + 此刻指针 */}
+          <div className="flex items-center gap-5 my-1">
+            {/* 睡眠完成度环（第 58 轮）：干净轨道 + 渐变弧 + 端点高光 */}
             <SleepDial
               record={latestRecord}
-              targetBedtime={userProfile.targetBedtime}
-              targetWakeTime={userProfile.targetWakeTime}
-              accentHex={theme.accentHex}
+              targetMinutes={userProfile.targetDurationHours * 60}
               scoreHex={scoreInfo.stroke}
               scoreLabel={scoreInfo.label}
               size={96}
             />
 
-            {/* Metrics */}
-            <div className="flex-1 space-y-2 text-xs">
-              <div className="flex items-baseline justify-between">
-                <span className="text-slate-300 font-bold">总睡眠时长</span>
-                <span className="font-black text-white font-mono text-sm">
+            {/* Metrics：标签/数值都不换行，避免"目 标"式的断字 */}
+            <div className="flex-1 min-w-0 space-y-2.5 text-xs">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-slate-300 font-bold whitespace-nowrap">总睡眠时长</span>
+                <span className="font-black text-white font-mono text-sm whitespace-nowrap">
                   {formatDurationChinese(latestRecord.durationMinutes)}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-slate-300 font-bold">入睡 / 醒来</span>
-                <span className="font-mono text-slate-100 font-bold">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-slate-300 font-bold whitespace-nowrap">入睡 / 醒来</span>
+                <span className="font-mono text-slate-100 font-bold whitespace-nowrap">
                   {latestRecord.bedtime} - {latestRecord.wakeTime}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-slate-300 font-bold">深睡阶段</span>
-                <span className="font-mono text-emerald-400 font-black">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-slate-300 font-bold whitespace-nowrap">深睡阶段</span>
+                <span className="font-mono text-emerald-400 font-black whitespace-nowrap">
                   {latestRecord.deepSleepMinutes}分 · {Math.round((latestRecord.deepSleepMinutes / Math.max(1, latestRecord.durationMinutes + latestRecord.awakeMinutes)) * 100)}%
                 </span>
               </div>
-              {userProfile.targetBedtime && (() => {
-                // 白天主睡者 vs 夜间口径的默认目标（23:30）不在同一作息日历上：
-                // 差 690 分钟既非"晚"也无行动意义，标红只会误导——诚实降级为提示，
-                // 引导把就寝目标改成白天的目标时刻（设置后此处恢复真实对比）
-                const nightCalibratedDefault =
-                  userProfile.chronotype === 'day' && userProfile.targetBedtime === '23:30';
-                if (nightCalibratedDefault) {
-                  return (
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-slate-300 font-bold">就寝 vs 目标</span>
-                      <span className="font-mono font-bold text-xs text-slate-400">
-                        目标仍为夜间口径 · 建议改设置
-                      </span>
-                    </div>
-                  );
-                }
-                const [bh, bm] = latestRecord.bedtime.split(':').map(Number);
-                const [th, tm] = userProfile.targetBedtime.split(':').map(Number);
-                let diff = bh * 60 + bm - (th * 60 + tm);
-                if (diff > 720) diff -= 1440;
-                if (diff < -720) diff += 1440;
-                const txt = diff === 0 ? '与目标一致' : diff > 0 ? `晚于目标 ${diff} 分钟` : `早于目标 ${-diff} 分钟`;
-                return (
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-slate-300 font-bold">就寝 vs 目标</span>
-                    <span className={`font-mono font-bold text-sm ${diff > 30 ? 'text-rose-400' : diff < -30 ? 'text-sky-400' : 'text-emerald-400'}`}>
-                      {txt}
-                    </span>
-                  </div>
-                );
-              })()}
-              <div className="pt-1.5">
-                <SleepStageTimeline record={latestRecord} />
-              </div>
             </div>
+          </div>
+
+          {targetCompare && (
+            <div className="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between gap-3 text-[11px]">
+              <span className="text-slate-400 font-mono whitespace-nowrap">目标 {targetCompare.target}</span>
+              <span className={`font-bold whitespace-nowrap ${targetCompare.tone}`}>{targetCompare.text}</span>
+            </div>
+          )}
+
+          <div className="mt-3">
+            <SleepStageTimeline record={latestRecord} />
           </div>
 
           {latestRecord.dreamNotes && (

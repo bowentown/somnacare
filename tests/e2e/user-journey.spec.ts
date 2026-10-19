@@ -733,7 +733,7 @@ test('旅程18 视觉：睡眠表盘 + 分期时间轴 + 月相挂件直达图�
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
 
-  await expect(page.getByRole('img', { name: /睡眠表盘/ })).toBeVisible();
+  await expect(page.getByRole('img', { name: /昨晚睡眠 .*评分/ })).toBeVisible();
   await expect(page.getByRole('img', { name: /睡眠分期时间轴/ })).toBeVisible();
   const pill = page.getByTestId('nav-pill');
   await expect(pill).toHaveAttribute('data-active-index', '0');
@@ -742,7 +742,13 @@ test('旅程18 视觉：睡眠表盘 + 分期时间轴 + 月相挂件直达图�
   await expect(page.getByText('大肥鱼的漫游图鉴').first()).toBeVisible({ timeout: 8000 });
   await expect(page.getByText('梦境旅行能量')).toBeVisible();
   await expect(page.getByRole('img', { name: /梦境能量/ }).first()).toBeVisible();
-  await expect(pill).toHaveAttribute('data-active-index', '2');
+  // 直接打开图鉴，不再切到 AI 分区、也不经过朋友圈
+  await expect(pill).toHaveAttribute('data-active-index', '0');
+  await expect(page.getByRole('dialog', { name: '大肥鱼的朋友圈' })).toHaveCount(0);
+  // 退出图鉴回到睡眠区（用户的初心）
+  await page.getByRole('button', { name: '关闭图鉴' }).click();
+  await expect(page.getByText('大肥鱼的漫游图鉴')).toHaveCount(0);
+  await expect(page.getByText('早安')).toBeVisible();
   expect(errors).toEqual([]);
 });
 

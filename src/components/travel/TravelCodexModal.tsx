@@ -4,11 +4,11 @@ import type { ContinentType, TravelPostcard } from '../../types/travel';
 
 // 大洲标签：ready 与否由 ART_READY_CONTINENTS 驱动——补齐插画后把大洲加进
 // 数组即可，标签自动从「筹备中」变为计数，无需改这里
-const CONTINENT_TABS: { key: Exclude<TabFilter, 'all'>; emoji: string; label: string }[] = [
-  { key: 'asia', emoji: '🌸', label: '亚洲' },
-  { key: 'europe', emoji: '🏰', label: '欧洲' },
-  { key: 'americas', emoji: '🗽', label: '美洲' },
-  { key: 'africa', emoji: '🦁', label: '非洲' },
+const CONTINENT_TABS: { key: Exclude<TabFilter, 'all'>; label: string }[] = [
+  { key: 'asia', label: '亚洲' },
+  { key: 'europe', label: '欧洲' },
+  { key: 'americas', label: '美洲' },
+  { key: 'africa', label: '非洲' },
 ];
 import { ALL_POSTCARDS, ART_READY_CONTINENTS, TRIP_POOL, thumbUrlOf } from '../../data/travelPostcards';
 import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../../services/travelService';
@@ -61,7 +61,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
       return;
     }
     const label = c === 'europe' ? '欧洲' : c === 'americas' ? '美洲' : '非洲';
-    showTip(`🗺️ ${label}旅行插画筹备中，敬请期待大肥鱼的下一波远行～`);
+    showTip(`${label}旅行插画筹备中，敬请期待大肥鱼的下一波远行～`);
   };
 
   const handleCardClick = (card: TravelPostcard) => {
@@ -84,10 +84,10 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
       <div className="shrink-0 flex items-center justify-between px-4 pt-3 pb-2.5 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
         <div className="flex items-center gap-2.5">
           <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shadow-md"
+            className="w-9 h-9 rounded-xl flex items-center justify-center shadow-md"
             style={{ background: 'linear-gradient(135deg, #6366f1, #0ea5e9)' }}
           >
-            🗺️
+            <Compass className="w-4 h-4 text-white" />
           </div>
           <div>
             <h2 className="text-xs font-black text-white leading-tight">大肥鱼的漫游图鉴</h2>
@@ -155,7 +155,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
           >
             全部 ({unlockedCount}/{totalCards})
           </button>
-          {CONTINENT_TABS.map(({ key, emoji, label }) => {
+          {CONTINENT_TABS.map(({ key, label }) => {
             const ready = ART_READY_CONTINENTS.includes(key);
             const poolCount = ALL_POSTCARDS.filter((c) => c.continent === key).length;
             const got = ALL_POSTCARDS.filter((c) => c.continent === key && unlockedSet.has(c.id)).length;
@@ -171,7 +171,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
                     : 'bg-slate-900/80 text-[#94a3b8] hover:text-[#e2e8f0] border border-[#1e293b]'
                 }`}
               >
-                {emoji} {label}
+                {label}
                 {ready ? ` (${got}/${poolCount})` : ' · 筹备中'}
               </button>
             );

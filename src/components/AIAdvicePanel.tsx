@@ -67,13 +67,11 @@ interface AIAdvicePanelProps {
   theme: ThemeConfig;
   /** 递增信号：外部（如明信片送达弹窗）请求打开朋友圈，+1 即开一次 */
   openMomentsSignal?: number;
-  /** 递增信号：首页月相挂件请求直接打开旅行图鉴（第 57 轮） */
-  openCodexSignal?: number;
   /** 聊天输入框聚焦状态上报：App 在打字时隐藏底部导航（否则导航条悬在键盘上方） */
   onChatFocusChange?: (focused: boolean) => void;
 }
 
-export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfile, theme, openMomentsSignal, openCodexSignal, onChatFocusChange }) => {
+export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfile, theme, openMomentsSignal, onChatFocusChange }) => {
   const [analysis, setAnalysis] = useState<SleepAnalysisResult | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [showMoments, setShowMoments] = useState(false);
@@ -82,10 +80,6 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   useEffect(() => {
     if (openMomentsSignal) setShowMoments(true);
   }, [openMomentsSignal]);
-  // 首页月相挂件：先开朋友圈壳层，MomentsOverlay 再按同一信号直接展开图鉴
-  useEffect(() => {
-    if (openCodexSignal) setShowMoments(true);
-  }, [openCodexSignal]);
   const [activeProviderName, setActiveProviderName] = useState<string>(() => {
     // 初始标签反映用户已保存的档位，而非写死的默认值
     switch (userProfile.aiConfig?.provider) {
@@ -1073,7 +1067,6 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
           <MomentsOverlay
             records={records}
             userProfile={userProfile}
-            openCodexSignal={openCodexSignal}
             onClose={() => setShowMoments(false)}
           />,
           document.body,

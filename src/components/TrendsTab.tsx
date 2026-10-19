@@ -369,32 +369,25 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                       tabIndex={0}
                       aria-label={`查看 ${r.date} 的睡眠详情`}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHoveredRecord(r); } }}
-                      className="cursor-pointer"
+                      onFocus={() => setHoveredRecord(r)}
+                      className="cursor-pointer focus:outline-none"
+                      style={{ outline: 'none' }}
                       onClick={() => setHoveredRecord(r)}
                     >
                       {/* 隐形命中区：r=4 的点直径只有 8px，手指根本点不中 */}
                       <circle cx={x} cy={y} r={16} fill="transparent" pointerEvents="all" />
+                      {/* 数值只在上方摘要里出现：图内再叠白字会压住曲线与网格 */}
+                      {isHovered && (
+                        <circle cx={x} cy={y} r={9} fill="none" stroke={theme.accentHex} strokeOpacity="0.35" strokeWidth="1.5" />
+                      )}
                       <circle
                         cx={x}
                         cy={y}
-                        r={isHovered ? 5.5 : 4}
+                        r={isHovered ? 5 : 4}
                         fill={isHovered ? '#ffffff' : theme.accentHex}
                         stroke={theme.accentHex}
                         strokeWidth="2"
                       />
-                      {isHovered && (
-                        <text
-                          x={x}
-                          y={y - 8}
-                          textAnchor="middle"
-                          fill="#ffffff"
-                          fontSize="10"
-                          fontWeight="bold"
-                          fontFamily="monospace"
-                        >
-                          {r.sleepScore}
-                        </text>
-                      )}
                     </g>
                   );
                 })}
@@ -409,7 +402,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     aria-label={`查看 ${r.date} 的睡眠详情`}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHoveredRecord(r); } }}
                     onClick={() => setHoveredRecord(r)}
-                    className={`cursor-pointer ${
+                    className={`cursor-pointer focus:outline-none ${
                       activeRecord?.id === r.id ? accentText + ' font-bold' : 'hover:text-white'
                     }`}
                   >
