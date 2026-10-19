@@ -146,20 +146,7 @@ public class GemmaLLMPlugin extends Plugin {
     }
 
     private boolean isAdSkipServiceEnabled() {
-        try {
-            AccessibilityManager am = (AccessibilityManager) getContext()
-                    .getSystemService(Context.ACCESSIBILITY_SERVICE);
-            if (am == null || !am.isEnabled()) return false;
-            List<AccessibilityServiceInfo> list = am.getEnabledAccessibilityServiceList(
-                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
-            String own = getContext().getPackageName();
-            for (AccessibilityServiceInfo info : list) {
-                String id = info.getId();
-                if (id != null && id.contains(own) && id.contains("AdSkipService")) return true;
-            }
-        } catch (Exception ignored) {
-        }
-        return false;
+        return AdSkipService.isAccessibilityEnabled(getContext());
     }
 
     // ==== 主题联动桌面图标（activity-alias） ====

@@ -32,6 +32,7 @@ import { PaneErrorBoundary } from './components/PaneErrorBoundary';
 import { closeTopModalIfAny } from './utils/modalA11y';
 import { notifyAppResume } from './utils/appResume';
 import { initProposalNotify } from './utils/proposalNotify';
+import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
@@ -702,11 +703,32 @@ export const App: React.FC = () => {
   // toast 计时器收口：先清旧定时器再设新的——并存的两条定时器互不知情，
   // 后弹的短提示会被先前长提示的回调提前收掉
   const toastTimerRef = useRef<number>(0);
+  const adSkipWarnedRef = useRef(false);
   const showToast = (msg: string, durationMs = 3200) => {
     setToastMessage(msg);
     window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToastMessage(null), durationMs);
   };
+
+  // 广告跳过服务被系统关闭时，本次会话首次前台恢复给一次提示
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    const check = () => {
+      void getAdSkipStatus().then((st) => {
+        if (st.enabled && !st.serviceEnabled && !adSkipWarnedRef.current) {
+          adSkipWarnedRef.current = true;
+          showToast('广告跳过服务已被系统关闭，去偏好页重新开启', 5000);
+        }
+      });
+    };
+    check();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 响铃检测循环（每 10s 对表）
   useEffect(() => {

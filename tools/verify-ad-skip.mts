@@ -22,6 +22,7 @@ const service = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/
 const xml = read('plugins/cap-gemma-llm/android/src/main/res/xml/ad_skip_accessibility.xml');
 const strings = read('plugins/cap-gemma-llm/android/src/main/res/values/ad_skip_strings.xml');
 const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
+const boot = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BootReceiver.java');
 const js = read('src/utils/adSkip.ts');
 const settings = read('src/components/SettingsTab.tsx');
 const workflow = read('.github/workflows/build-apk.yml');
@@ -53,6 +54,9 @@ ok('克制：启动 12s 窗口 / 每次启动最多 2 次 / 节点上限 / 冷�
   && service.includes('MAX_NODES')
   && service.includes('CLICK_COOLDOWN_MS')
   && service.includes('EVENT_THROTTLE_MS'));
+ok('倒计时：跳过 3/跳过 3s 不受启动窗口限制',
+  service.includes('COUNTDOWN')
+  && service.includes('inLaunchWindow || countdown'));
 ok('隐私：服务内无任何网络代码', !/java\.net|HttpURLConnection|new URL\(/.test(service));
 ok('点击：仅对可点击节点执行 ACTION_CLICK',
   service.includes('ACTION_CLICK') && service.includes('isClickable()'));
@@ -71,10 +75,16 @@ ok('JS：状态 / 开关 / 设置页封装',
   js.includes('getAdSkipStatus')
   && js.includes('setAdSkipEnabled')
   && js.includes('openAdSkipAccessibilitySettings'));
-ok('UI：开关 + 隐私告知 + 原生调用',
+ok('UI：开关 + 隐私告知 + 保持开启引导',
   settings.includes('摇一摇广告跳过')
   && settings.includes('不读取输入内容')
-  && settings.includes('setAdSkipEnabled'));
+  && settings.includes('setAdSkipEnabled')
+  && settings.includes('服务被系统关闭了')
+  && settings.includes('openBatteryOptimizationSettings'));
+ok('保持开启：开机/时间变更时若服务被关闭 → 通知可点回',
+  boot.includes('postAdSkipReminder')
+  && boot.includes('ad_skip_enabled')
+  && boot.includes('AdSkipService.isAccessibilityEnabled'));
 ok('CI：服务注入 + 权限/配置 meta-data + 命中断言',
   workflow.includes('com.somnacare.gemmallm.AdSkipService')
   && workflow.includes('BIND_ACCESSIBILITY_SERVICE')

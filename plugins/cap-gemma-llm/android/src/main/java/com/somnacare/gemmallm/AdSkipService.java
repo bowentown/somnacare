@@ -8,10 +8,13 @@ import android.graphics.Rect;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * 摇一摇 / 开屏广告跳过（第 59 轮，第 60 轮按公开规则升级）。
@@ -46,6 +49,8 @@ public class AdSkipService extends AccessibilityService {
     private static final long LAUNCH_WINDOW_MS = 12_000;
     private static final int MAX_CLICKS_PER_LAUNCH = 2;
     private static final int MAX_NODES = 500;
+    /** 「跳过 3」「跳过3s」这类倒计时是强广告信号：不受 12s 启动窗口限制 */
+    private static final Pattern COUNTDOWN = Pattern.compile("^跳过(广告)?\\s*\\d+\\s*[sS秒]?\\s*广告?$");
 
     /** 文字/描述里出现这些词就不是开屏跳过（片头、教程、设置等） */
     private static final String[] TEXT_EXCLUDES = {
@@ -87,6 +92,24 @@ public class AdSkipService extends AccessibilityService {
     private boolean enabled() {
         return getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ENABLED, false);
+    }
+
+    /** 供插件/开机广播共用：本应用的无障碍服务当前是否真的在系统里启用。 */
+    static boolean isAccessibilityEnabled(Context context) {
+        try {
+            AccessibilityManager am = (AccessibilityManager) context
+                    .getSystemService(Context.ACCESSIBILITY_SERVICE);
+            if (am == null || !am.isEnabled()) return false;
+            List<AccessibilityServiceInfo> list = am.getEnabledAccessibilityServiceList(
+                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+            String own = context.getPackageName();
+            for (AccessibilityServiceInfo info : list) {
+                String id = info.getId();
+                if (id != null && id.contains(own) && id.contains("AdSkipService")) return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     private boolean isExcludedPackage(String pkg) {
@@ -176,8 +199,11 @@ public class AdSkipService extends AccessibilityService {
             matched = true;
         }
 
-        // 文字/描述只在启动窗口内匹配，避免普通页面里的"跳过"被误点
-        if (!matched && inLaunchWindow) {
+        // 文字/描述默认只在启动窗口内匹配；带倒计时的「跳过 3」是强广告信号，
+        // 任何时刻都认（截图里的快爆广告就是这种，晚于 12s 也能跳过）
+        boolean countdown = COUNTDOWN.matcher(textValue).matches()
+                || COUNTDOWN.matcher(descValue).matches();
+        if (!matched && (inLaunchWindow || countdown)) {
             if (matchesText(textValue) || matchesText(descValue)) matched = true;
         }
 

@@ -57,6 +57,12 @@ check('生产者：产出两条本周 fact', !!weekElapsed && !!weekRec,
 check('事实数值正确：已过 6 天、达标 1 天、有记录 1 天、未记录 5 天（今晚与上周记录被排除）',
   weekElapsed === '本周已过 6 天，达标 1 天' && weekRec === '本周有记录 1 天，未记录 5 天',
   JSON.stringify([weekElapsed, weekRec]));
+const weekSlots = facts.find((f: string) => f.includes('本周逐夜'));
+check('生产者：逐夜状态 000002-（周六达标，其余未记录，周日未来）',
+  weekSlots === '本周逐夜 000002-', String(weekSlots));
+const emptyFacts = buildSleepFacts([], { targetBedtime: '23:30' } as any, now);
+check('无记录：不生成本周 fact（避免 0/0 空战报卡）',
+  !emptyFacts.some((f: string) => f.includes('本周已过')));
 
 // ── 3) 消费端正则必须能解析出正确数字 ──
 let parsedGood: string | null = null;

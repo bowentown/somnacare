@@ -655,7 +655,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             onClick={() => void openAdSkipAccessibilitySettings()}
             className="w-full py-2.5 rounded-xl border border-amber-400/50 bg-amber-500/10 text-amber-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
           >
-            需要无障碍权限 · 前往系统设置开启
+            无障碍服务未开启 · 点此重新开启
           </button>
         )}
 
@@ -673,6 +673,45 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <p className="text-[10px] text-slate-400 leading-relaxed">
           只匹配「跳过」类文字或 skip 控件，不读取输入内容，数据不离开本机。
         </p>
+
+        {adSkipNative && (
+          <details className="rounded-xl bg-black/15 border border-slate-700/50 p-3">
+            <summary className="text-[10px] font-bold text-slate-300 cursor-pointer select-none">
+              服务被系统关闭了？看这里
+            </summary>
+            <div className="mt-2 space-y-2 text-[10px] text-slate-400 leading-relaxed">
+              <p>
+                重启、系统更新或省电清理后，Android 可能自动关闭无障碍服务；重新打开上方开关即可恢复。
+              </p>
+              <p>
+                想让它更稳：在系统设置里允许本应用自启动、关闭电池优化，并在最近任务里锁定本应用。
+              </p>
+              <p>
+                如果无障碍开关是灰的：应用信息 → 右上角菜单 → 允许受限设置。
+              </p>
+              <div className="flex gap-2 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      void (window as any).Capacitor?.Plugins?.GemmaLLM?.openBatteryOptimizationSettings?.();
+                    } catch { /* ignore */ }
+                  }}
+                  className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+                >
+                  电池优化设置
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void openAdSkipAccessibilitySettings()}
+                  className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+                >
+                  无障碍设置
+                </button>
+              </div>
+            </div>
+          </details>
+        )}
       </div>
 
       {/* 自动记录模型诊断（第 37 轮影子跑；第 59 轮默认折叠） */}

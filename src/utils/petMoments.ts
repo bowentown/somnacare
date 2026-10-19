@@ -179,8 +179,22 @@ export function buildSleepFacts(
   const weekRecs = nightsOnly(records as SleepRecord[]).filter((r) => weekDates.has(r.date));
   const goodWeek = weekRecs.filter((r) => r.sleepScore >= 80).length;
   const missed = Math.max(0, elapsedSlots - weekRecs.length);
-  facts.push(`本周已过 ${elapsedSlots} 天，达标 ${goodWeek} 天`);
-  facts.push(`本周有记录 ${weekRecs.length} 天，未记录 ${missed} 天`);
+  // 没有记录就不生成战报事实：周一的 0/0 + "全部有记录" 是当众撒谎，
+  // 也会让朋友圈配一张只有破折号的怪卡
+  if (elapsedSlots > 0 && weekRecs.length > 0) {
+    facts.push(`本周已过 ${elapsedSlots} 天，达标 ${goodWeek} 天`);
+    facts.push(`本周有记录 ${weekRecs.length} 天，未记录 ${missed} 天`);
+    // 逐夜状态（周一起）：2=达标，1=有记录未达标，0=未记录，-=未来
+    const slots: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      if (i >= elapsedSlots) { slots.push('-'); continue; }
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const rec = weekRecs.find((r) => r.date === key);
+      slots.push(!rec ? '0' : rec.sleepScore >= 80 ? '2' : '1');
+    }
+    facts.push(`本周逐夜 ${slots.join('')}`);
+  }
   return facts;
 }
 
@@ -383,7 +397,7 @@ function localMoment(
     text: LOCAL_COMMENTS[f][Math.floor(Math.random() * LOCAL_COMMENTS[f].length)],
   }));
   const cards: MomentCard[] = ['data'];
-  if (facts.some((f) => f.startsWith('近 '))) cards.push('week');
+  if (facts.some((f) => f.startsWith('本周已过 '))) cards.push('week');
   if (Math.random() < 0.6) cards.push('selfie');
   return { text, comments, cards };
 }
@@ -475,6 +489,11 @@ export async function ensureTodayMoment(
       cards = Array.isArray(parsed.cards)
         ? [...new Set(parsed.cards.filter((c: any) => validCards.includes(c)) as MomentCard[])].slice(0, 3)
         : [];
+      // 没有本周战报事实（周一/本周无记录）就不允许 LLM 选 week 卡，
+      // 否则会渲染一张只有破折号的空卡
+      if (!facts.some((f) => f.startsWith('本周已过 '))) {
+        cards = cards.filter((c) => c !== 'week');
+      }
       // 数字白名单：编造的数据让"出处清单"变成谎言 → 整条退回本地模板
       if (text && !numbersCheck(text, comments, facts)) {
         console.warn('[petMoments] LLM 文案包含事实清单之外的数字，回退本地模板');

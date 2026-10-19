@@ -94,41 +94,66 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
     );
   }
   if (type === 'week') {
-    // 战报口径（第 29 轮，用户定义）：周一起算、夜按醒来日归属——
-    //   n = 达标（≥80 分）夜数 / x = 有记录夜数，大数字 n/x；
-    //   m = 本周已过夜数 − x = 未记录的夜数。
-    // 双格式解析：旧版动态的事实串是「近 N 日有 G 天」（快照冻结，不可重写），
-    // 解析不到新串时回退旧口径——此前兜底 0/0 还宣称"全部有记录"，是当众撒谎
+    // 战报口径（第 29 轮，用户定义）：周一起算、夜按"放下手机那晚"归属——
+    //   n = 达标（≥80 分）夜数 / x = 已度过夜数；missed = 未记录夜数。
+    // 旧快照只有"近 N 日"口径，保留兼容；没有可读数据时返回 null，
+    // 不再画一张只有破折号的空卡（周一 / 本周无记录）。
     const weekMatch = moment.facts.map((f) => f.match(/本周已过 (\d+) 天，达标 (\d+) 天/)).find(Boolean) ?? null;
     const recMatch = moment.facts.map((f) => f.match(/本周有记录 (\d+) 天，未记录 (\d+) 天/)).find(Boolean) ?? null;
+    const slotsMatch = moment.facts.map((f) => f.match(/本周逐夜 ([0-2-]{7})/)).find(Boolean) ?? null;
     const legacyMatch = moment.facts.map((f) => f.match(/近 (\d+) 日有 (\d+) 天/)).find(Boolean) ?? null;
     let goodDays = 0;
     let recDays = 0;
-    let missed: number | null = null;   // null = 旧口径快照，无从知晓未记录数
+    let elapsedDays = 0;
+    let missed: number | null = null;
     if (weekMatch && recMatch) {
+      elapsedDays = Number(weekMatch[1]);
       goodDays = Number(weekMatch[2]);
       recDays = Number(recMatch[1]);
       missed = Number(recMatch[2]);
     } else if (legacyMatch) {
       recDays = Number(legacyMatch[1]);
       goodDays = Number(legacyMatch[2]);
+      elapsedDays = recDays;
     }
-    const pct = weekMatch ? Math.min(100, Math.round((goodDays / Math.max(1, Number(weekMatch[1]))) * 100)) : 0;
+    if (elapsedDays <= 0 || recDays <= 0) return null;
+
+    const pct = Math.min(100, Math.round((goodDays / Math.max(1, elapsedDays)) * 100));
+    const slots: string[] = slotsMatch
+      ? slotsMatch[1].split('')
+      : Array.from({ length: 7 }, (_, i) => {
+          if (i >= elapsedDays) return '-';
+          if (i < goodDays) return '2';
+          if (i < recDays) return '1';
+          return '0';
+        });
+    const slotTone = (s: string): string =>
+      s === '2' ? 'bg-emerald-400'
+        : s === '1' ? 'bg-amber-300'
+          : s === '0' ? 'bg-slate-600'
+            : 'bg-slate-800 opacity-50';
+
     return (
-      <div className="rounded-xl bg-gradient-to-br from-emerald-900/40 to-slate-900 border border-emerald-800/40 aspect-square p-2.5 flex flex-col justify-between">
+      <div className="rounded-xl bg-gradient-to-br from-emerald-950/70 to-slate-900 border border-emerald-800/40 aspect-square p-2.5 flex flex-col justify-between">
         <p className="text-[9px] font-bold text-emerald-300">本周达标战报</p>
-        <div>
-          <p className="text-2xl font-black text-white leading-none">
-            {/* 全新用户 0 条记录时 0/0 无意义 → 退化显示 */}
-            {recDays === 0 ? <span>—</span> : <>{goodDays}<span className="text-xs text-slate-400 font-bold">/{recDays} 天</span></>}
-          </p>
-          {/* 用户定的文案：去掉"有/算"，一行放下（nowrap，窄卡不折行） */}
-          <p className="text-[9px] text-slate-400 mt-0.5 whitespace-nowrap">
-            {missed === null ? '按当时记录晚数计' : missed > 0 ? `${missed} 天未记录 · ≥80 达标` : '全部有记录 · ≥80 达标'}
-          </p>
+        <div className="flex items-end justify-between gap-1">
+          <div>
+            <p className="text-2xl font-black text-white leading-none">
+              {goodDays}<span className="text-xs text-slate-400 font-bold">/{elapsedDays}</span>
+            </p>
+            <p className="text-[8px] text-slate-400 mt-0.5">晚达标</p>
+          </div>
+          <span className="text-[9px] font-mono text-emerald-300">{pct}%</span>
         </div>
-        <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-          <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-sky-400" style={{ width: `${pct}%` }} />
+        <div>
+          <div className="flex gap-[3px]">
+            {slots.map((s, i) => (
+              <span key={i} className={`flex-1 h-1.5 rounded-full ${slotTone(s)}`} />
+            ))}
+          </div>
+          <p className="text-[8px] text-slate-400 mt-0.5 whitespace-nowrap">
+            {missed !== null && missed > 0 ? `${missed} 晚未记录` : '每晚都有记录'}
+          </p>
         </div>
       </div>
     );
