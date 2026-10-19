@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   TrendingUp,
@@ -42,6 +42,7 @@ import { forceRefreshUsage, getCachedUsageDays } from '../utils/usageStore';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
+import { hapticStep } from '../utils/haptics';
 
 interface TrendsTabProps {
   records: SleepRecord[];
@@ -107,6 +108,39 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
   // 单条记录时居中，避免点贴在左边缘
   const scoreToX = (i: number) =>
     last7Records.length <= 1 ? CHART_W / 2 : i * (CHART_W / (last7Records.length - 1));
+
+  // 拖拽 scrub（第 57 轮）：按住曲线横向滑动，十字线跟随、跨点轻触。
+  // 图表区标 data-no-swipe——否则横向手势会被五分区翻页层接管
+  const svgRef = useRef<SVGSVGElement>(null);
+  const scrubbingRef = useRef(false);
+  const scrubIdRef = useRef<string | null>(null);
+  const scrubAt = (clientX: number): void => {
+    const el = svgRef.current;
+    if (!el || last7Records.length === 0) return;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const idx = last7Records.length <= 1 ? 0 : Math.round(ratio * (last7Records.length - 1));
+    const rec = last7Records[idx];
+    if (!rec) return;
+    if (scrubIdRef.current !== rec.id) {
+      scrubIdRef.current = rec.id;
+      hapticStep();
+    }
+    setHoveredRecord(rec);
+  };
+  const onChartPointerDown = (e: React.PointerEvent<SVGSVGElement>): void => {
+    scrubbingRef.current = true;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    scrubAt(e.clientX);
+  };
+  const onChartPointerMove = (e: React.PointerEvent<SVGSVGElement>): void => {
+    if (e.pointerType === 'mouse' || scrubbingRef.current) scrubAt(e.clientX);
+  };
+  const onChartPointerEnd = (e: React.PointerEvent<SVGSVGElement>): void => {
+    scrubbingRef.current = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  const activeIndex = activeRecord ? last7Records.findIndex((r) => r.id === activeRecord.id) : -1;
 
   // ── 参考线的唯一定义 ──
   // 线本身与右上角图例【都读这份数组】，所以图例不可能与线不一致。
@@ -239,9 +273,21 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
         {/* View Mode 1: Quality Score Trend */}
         {viewMode === 'quality' && (
           <div className="space-y-2 animate-tab-fade-in">
-            <div className={`relative h-40 ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} flex flex-col justify-between`}>
-              {/* ── 图例：与参考线读同一份 REF_LINES，色/线型都不可能不一致 ── */}
-              <div className="flex items-center justify-end gap-3 text-[9px] font-mono shrink-0 leading-none">
+            <div data-no-swipe className={`relative h-40 ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} flex flex-col justify-between`}>
+              {/* ── 顶部：当前点数据 + 图例（与参考线读同一份 REF_LINES）── */}
+              <div className="flex items-center justify-between gap-3 text-[9px] font-mono shrink-0 leading-none">
+                <span data-testid="score-detail" className="text-slate-400 truncate">
+                  {activeRecord ? (
+                    <>
+                      <span className="text-slate-300">{activeRecord.date.slice(5)}</span>
+                      <span className="mx-1 text-slate-600">·</span>
+                      <span className="text-white font-bold">{activeRecord.sleepScore} 分</span>
+                      <span className="mx-1 text-slate-600">·</span>
+                      {formatDurationChinese(activeRecord.durationMinutes)}
+                    </>
+                  ) : null}
+                </span>
+                <span className="flex items-center gap-3 shrink-0">
                 {REF_LINES.map((l) => (
                   <span key={l.score} className={`flex items-center gap-1 ${l.tone}`}>
                     <svg width="14" height="6" viewBox="0 0 14 6" aria-hidden="true" focusable="false">
@@ -253,9 +299,20 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     {l.label}
                   </span>
                 ))}
+                </span>
               </div>
 
-              <svg className="w-full h-24 overflow-visible" viewBox="0 0 280 80">
+              <svg
+                ref={svgRef}
+                data-testid="score-chart"
+                className="w-full h-24 overflow-visible"
+                viewBox="0 0 280 80"
+                style={{ touchAction: 'pan-y' }}
+                onPointerDown={onChartPointerDown}
+                onPointerMove={onChartPointerMove}
+                onPointerUp={onChartPointerEnd}
+                onPointerCancel={onChartPointerEnd}
+              >
                 <defs>
                   <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={theme.accentHex} stopOpacity="0.35" />
@@ -273,6 +330,16 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     className={l.tone}
                   />
                 ))}
+
+                {/* 拖拽十字线：只在用户真的拖动/悬停时出现 */}
+                {hoveredRecord && activeIndex >= 0 && (
+                  <line
+                    x1={scoreToX(activeIndex)} y1={0} x2={scoreToX(activeIndex)} y2={CHART_H}
+                    stroke="rgba(255,255,255,0.45)"
+                    strokeWidth={1}
+                    strokeDasharray="2 2"
+                  />
+                )}
 
                 {last7Records.length > 1 && (
                   <polygon

@@ -143,6 +143,8 @@ export interface UserProfile {
   alarms?: CustomAlarmSetting[];
   /** 睡眠区主卡的记录方式：manual=手动监测按钮；auto=使用信号自动提议（第 38 轮） */
   sleepRecordMode?: 'manual' | 'auto';
+  /** 环境光（第 57 轮）：按本地时段给页面叠一层极淡色温，默认开启 */
+  ambientLightEnabled?: boolean;
   aiConfig?: CustomAIConfig;
 }
 

@@ -22,7 +22,8 @@ import {
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
-import { tapTick } from '../utils/haptics';
+import { hapticConfirm, hapticNegate, hapticStep, tapTick } from '../utils/haptics';
+import { getDayPhase } from '../utils/dayPhase';
 
 
 interface OneTapSleepTrackerProps {
@@ -70,15 +71,12 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   const recordMode = userProfile?.sleepRecordMode ?? 'manual';
   const setRecordMode = (m: 'manual' | 'auto') => onUpdateProfile?.({ sleepRecordMode: m });
   // 时段自适应（第 56 轮）：早上主按钮是补昨晚，午后是小睡，晚上才是开始监测
-  const [hourNow, setHourNow] = useState(() => new Date().getHours());
+  const [phaseNow, setPhaseNow] = useState(() => new Date());
   useEffect(() => {
-    const t = window.setInterval(() => setHourNow(new Date().getHours()), 60_000);
+    const t = window.setInterval(() => setPhaseNow(new Date()), 60_000);
     return () => window.clearInterval(t);
   }, []);
-  const dayPhase: 'morning' | 'afternoon' | 'evening' | 'late' =
-    hourNow >= 5 && hourNow < 11 ? 'morning'
-      : hourNow >= 11 && hourNow < 18 ? 'afternoon'
-        : hourNow >= 18 && hourNow < 23 ? 'evening' : 'late';
+  const dayPhase = getDayPhase(phaseNow);
   // 时段自适应只对夜间作息成立：白天主睡者的"午后"是主睡不是小睡，
   // 维持原按钮语义（开始监测），避免用错的时段标签误导
   const isNightChronotype = (userProfile?.chronotype ?? 'night') === 'night';
@@ -320,7 +318,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
 
   // 确认：用共享构建器落库（recordSource: 'usage'），完成小结与一键就寝同款
   const handleAcceptProposal = () => {
-    tapTick();
+    hapticConfirm();
     if (!adjustedProposal) return;
     const built = buildRecordFromWindow({
       sleepStartMs: adjustedProposal.bedtimeMs,
@@ -359,6 +357,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   // 「不是我的睡眠」= 否定标注（第 56 轮）：该夜进负样本统计，不再只是静默隐藏
   const handleNegativeLabel = () => {
     if (!visibleProposal) return;
+    hapticNegate();
     recordNegativeLabel(visibleProposal.targetDate);
     markHandled();
   };
@@ -514,7 +513,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     type="button"
                     aria-label="就寝提前15分钟"
                     disabled={bedShift <= -SHIFT_MAX}
-                    onClick={() => { tapTick(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    onClick={() => { hapticStep(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
                     className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
                   <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
@@ -522,7 +521,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     type="button"
                     aria-label="就寝推迟15分钟"
                     disabled={bedShift >= SHIFT_MAX}
-                    onClick={() => { tapTick(); setBedShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    onClick={() => { hapticStep(); setBedShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
                     className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >＋</button>
                 </div>
@@ -535,7 +534,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     type="button"
                     aria-label="起床提前15分钟"
                     disabled={wakeShift <= -SHIFT_MAX}
-                    onClick={() => { tapTick(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    onClick={() => { hapticStep(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
                     className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
                   <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
@@ -543,7 +542,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     type="button"
                     aria-label="起床推迟15分钟"
                     disabled={wakeShift >= SHIFT_MAX}
-                    onClick={() => { tapTick(); setWakeShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    onClick={() => { hapticStep(); setWakeShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
                     className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >＋</button>
                 </div>
@@ -580,6 +579,22 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                 不是我的睡眠
               </button>
             </div>
+          </div>
+        ) : !sleepStartTime && modelResult.phase === 'pending' && recordMode === 'auto' && isNativePlatform() ? (
+          /* 引擎计算中（第 57 轮）：此前的常规自动档文案会先闪一下再被
+             提议卡替换，语义和高度都跳。用无文字骨架等结果落定 */
+          <div className="space-y-3.5" aria-busy="true" aria-label="正在检查昨晚的手机使用">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center animate-pulse`}>
+                <Zap className={`w-5 h-5 ${theme.accentText} opacity-40`} />
+              </div>
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-24 rounded-full bg-slate-600/50 animate-pulse" />
+                <div className="h-2.5 w-36 rounded-full bg-slate-700/40 animate-pulse" />
+              </div>
+            </div>
+            <div className={`h-16 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} animate-pulse`} />
+            <div className={`h-11 rounded-2xl ${theme.accentBg} opacity-25 animate-pulse`} />
           </div>
         ) : !sleepStartTime ? (
           <div className="space-y-3.5">

@@ -22,6 +22,26 @@ const mkRecord = (date: string, bedtime: string, wakeTime: string, score = 86) =
   latencyMinutes: 12, wakeCount: 1,
 });
 
+
+/** 带逐段分期的记录：用于锁住 hypnogram 时间轴（不是百分比回退） */
+const mkRecordWithStages = (date: string) => ({
+  ...mkRecord(date, '23:30', '07:30', 86),
+  durationMinutes: 460,
+  deepSleepMinutes: 90,
+  lightSleepMinutes: 310,
+  remSleepMinutes: 60,
+  awakeMinutes: 20,
+  stages: [
+    { stage: 'awake', startTime: '23:30', endTime: '23:40', durationMinutes: 10 },
+    { stage: 'deep', startTime: '23:40', endTime: '01:10', durationMinutes: 90 },
+    { stage: 'light', startTime: '01:10', endTime: '03:10', durationMinutes: 120 },
+    { stage: 'rem', startTime: '03:10', endTime: '04:10', durationMinutes: 60 },
+    { stage: 'light', startTime: '04:10', endTime: '06:30', durationMinutes: 140 },
+    { stage: 'awake', startTime: '06:30', endTime: '06:40', durationMinutes: 10 },
+    { stage: 'light', startTime: '06:40', endTime: '07:30', durationMinutes: 50 },
+  ],
+});
+
 /** 收集页面未捕获异常与 console.error（旅程中任何一条都视为失败线索） */
 const watchErrors = (page: Page): string[] => {
   const errors: string[] = [];
@@ -694,5 +714,132 @@ test('旅程17 通知确认：通知栏「确认记录」动作 → 无需点卡
   const landed = (recs as any[]).find((r) => r.recordSource === 'usage');
   expect(landed).toBeTruthy();
   expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程18 视觉三件套：24h 表盘 / 分期时间轴 / 月相挂件直达图鉴
+// ─────────────────────────────────────────────────────────────
+test('旅程18 视觉：睡眠表盘 + 分期时间轴 + 月相挂件直达图鉴', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await seed(page, [
+    mkRecordWithStages(dstr(-1, fixed)),
+    mkRecord(dstr(-2, fixed), '23:20', '06:50', 82),
+  ], NIGHT_SCHEMA);
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await expect(page.getByRole('img', { name: /睡眠表盘/ })).toBeVisible();
+  await expect(page.getByRole('img', { name: /睡眠分期时间轴/ })).toBeVisible();
+  const pill = page.getByTestId('nav-pill');
+  await expect(pill).toHaveAttribute('data-active-index', '0');
+
+  await page.getByRole('button', { name: '打开梦境旅行图鉴' }).click();
+  await expect(page.getByText('大肥鱼的漫游图鉴').first()).toBeVisible({ timeout: 8000 });
+  await expect(page.getByText('梦境旅行能量')).toBeVisible();
+  await expect(page.getByRole('img', { name: /梦境能量/ }).first()).toBeVisible();
+  await expect(pill).toHaveAttribute('data-active-index', '2');
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程19 晚间折叠 + 趋势图拖拽 scrub
+// ─────────────────────────────────────────────────────────────
+test('旅程19 晚间折叠：评分卡收为小卡 → 可展开；趋势图可拖拽', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(23, 0, 0, 0);
+  await seed(page, [
+    mkRecord(dstr(-1, fixed), '23:40', '07:10', 88),
+    mkRecord(dstr(-2, fixed), '23:10', '06:50', 80),
+  ], NIGHT_SCHEMA);
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 晚间默认折叠；展开后回到完整卡
+  await expect(page.getByRole('button', { name: '展开昨晚睡眠详情' })).toBeVisible();
+  await expect(page.getByText('总睡眠时长')).toHaveCount(0);
+  await page.getByRole('button', { name: '展开昨晚睡眠详情' }).click();
+  await expect(page.getByText('总睡眠时长')).toBeVisible();
+
+  await navTo(page, '趋势');
+  const chart = page.getByTestId('score-chart');
+  await expect(chart).toBeVisible();
+  await page.waitForTimeout(500);   // 等分区滑动落位后再取坐标
+  const box = await chart.boundingBox();
+  expect(box).toBeTruthy();
+  await page.mouse.move(box!.x + box!.width * 0.9, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width * 0.1, box!.y + box!.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('score-detail')).toContainText(dstr(-2, fixed).slice(5));
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程20 删除撤销：5 秒内恢复记录与能量账
+// ─────────────────────────────────────────────────────────────
+test('旅程20 删除撤销：恢复记录 + 能量只补实际扣掉的差额', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  const date = dstr(-1, fixed);
+  await seed(page, [mkRecord(date, '23:40', '07:10', 92)], {
+    ...NIGHT_SCHEMA,
+    somnacare_travel_state: JSON.stringify({
+      currentEnergy: 50, countedScores: { [date]: 92 },
+      unlockedCardIds: [], goldStars: {}, pendingArrival: null,
+    }),
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '趋势');
+  await page.getByRole('button', { name: /历史记录/ }).click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: new RegExp(`删除 ${date}`) }).click();
+
+  await expect(page.getByRole('button', { name: '撤销' })).toBeVisible();
+  await page.getByRole('button', { name: '撤销' }).click();
+
+  const travel = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_travel_state') || '{}'));
+  expect(travel.countedScores?.[date]).toBe(92);
+  expect(travel.currentEnergy).toBe(50);   // 删除时被 max(0) 截断，撤销不能凭空补成 92
+  const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
+  expect((recs as any[]).some((r) => r.date === date)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程21 环境光开关：默认开，偏好页可关并落库
+// ─────────────────────────────────────────────────────────────
+test('旅程21 环境光：开关默认开启，关闭后写入档案', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await seed(page, [], NIGHT_SCHEMA);
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: /界面主题/ }).click();
+  const sw = page.getByRole('button', { name: '环境光' });
+  await expect(sw).toHaveAttribute('aria-pressed', 'true');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = localStorage.getItem('somnacare_user_profile');
+    return raw ? JSON.parse(raw).ambientLightEnabled : undefined;
+  })).toBe(false);
   expect(errors).toEqual([]);
 });

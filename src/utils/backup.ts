@@ -53,7 +53,7 @@ const PROFILE_FIELDS = [
   'smartAlarmEnabled', 'smartWakeWindowMinutes', 'soundDetectionSensitivity',
   'themeColor', 'brightnessLevel', 'warmthFilter', 'eyeCare', 'chronotype',
   'bedtimeReminderEnabled',
-  'nightRescueEnabled', 'alarms', 'sleepRecordMode', 'aiConfig',
+  'nightRescueEnabled', 'alarms', 'sleepRecordMode', 'ambientLightEnabled', 'aiConfig',
 ] as const;
 const AI_CONFIG_FIELDS = [
   'provider', 'deepseekApiKey', 'deepseekModel', 'customBaseUrl',

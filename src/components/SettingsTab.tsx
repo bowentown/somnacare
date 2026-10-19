@@ -429,6 +429,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </button>
 
         {themeOpen && (
+        <>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
           {Object.values(APP_THEMES).map((t) => {
             const isSelected = (userProfile.themeColor || 'midnight') === t.id;
@@ -466,6 +467,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             );
           })}
         </div>
+
+        {/* 环境光（第 57 轮）：时段色温 + 极光缓动，不改变主题本身 */}
+        <div className={`flex items-center justify-between gap-3 ${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5`}>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-200">环境光</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">随本地时段微调色温 · 极光缓慢流动</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onUpdateProfile({ ambientLightEnabled: userProfile.ambientLightEnabled === false })}
+            aria-pressed={userProfile.ambientLightEnabled !== false}
+            aria-label="环境光"
+            className="relative inline-flex items-center cursor-pointer shrink-0"
+          >
+            <span
+              className="block w-10 h-5 rounded-full transition-colors relative"
+              style={{ background: userProfile.ambientLightEnabled !== false ? theme.accentHex : '#475569' }}
+            >
+              <span
+                className="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all"
+                style={{ left: userProfile.ambientLightEnabled !== false ? '22px' : '2px' }}
+              />
+            </span>
+          </button>
+        </div>
+        </>
         )}
       </div>
 

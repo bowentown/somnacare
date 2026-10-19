@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from '../utils/recordFilter';
 import { ThemeConfig } from '../utils/themeStyles';
@@ -37,16 +37,35 @@ interface PondHandle {
   setPaused(p: boolean): void;
   setWeather(id: 'moonlight' | 'sunny' | 'sunset' | 'overcast' | 'rain'): void;
   callTo(x: number, y: number): void;
+  celebrate(): void;
 }
 
-export const PondCard: React.FC<{ theme: ThemeConfig; records: SleepRecord[]; userProfile: UserProfile }> = ({ theme, records, userProfile }) => {
+export const PondCard: React.FC<{
+  theme: ThemeConfig;
+  records: SleepRecord[];
+  userProfile: UserProfile;
+  /** 保存记录后递增：池塘落一圈涟漪（第 57 轮） */
+  celebrateSignal?: number;
+  /** 连续达标夜数：≥3 时锦鲤聚向水面中央（第 57 轮） */
+  streak?: number;
+}> = ({ theme, records, userProfile, celebrateSignal, streak = 0 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // 深夜（22:00–06:00）只留月光：不管主题是晴日还是黄昏，入夜后统一到月夜；
+  // 这是氛围，不是数据。每分钟走一次，跨过 22 点自动渐变
+  const [nowHour, setNowHour] = useState(() => new Date().getHours());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowHour(new Date().getHours()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const isLateNight = nowHour >= 22 || nowHour < 6;
+
   // 数据联动：欠觉（近 7 夜平均时长不足目标 55%）→ 池塘转阴天；
   // 睡饱了回归主题本色。刻意的单档宽阈值——这是氛围，不是仪表盘
   const weather = useMemo<'moonlight' | 'sunny' | 'sunset' | 'overcast'>(() => {
+    if (isLateNight) return 'moonlight';
     if (sleepDebtOf(records, userProfile) >= 0.45) return 'overcast';
     return THEME_WEATHER[theme.id];
-  }, [records, userProfile, theme.id]);
+  }, [records, userProfile, theme.id, isLateNight]);
 
   const handleRef = useRef<PondHandle | null>(null);
   const inViewRef = useRef(true);
@@ -106,6 +125,23 @@ export const PondCard: React.FC<{ theme: ThemeConfig; records: SleepRecord[]; us
     handleRef.current?.setWeather(weather);
   }, [weather]);
 
+  // 保存记录 → 落涟漪 + 鱼群聚过来；只在信号递增时触发（挂载时不放）
+  const celebrateSeenRef = useRef(celebrateSignal ?? 0);
+  useEffect(() => {
+    if (!celebrateSignal || celebrateSignal === celebrateSeenRef.current) return;
+    celebrateSeenRef.current = celebrateSignal;
+    handleRef.current?.celebrate();
+  }, [celebrateSignal]);
+
+  // 连续达标 ≥3 晚：锦鲤慢慢聚到水面中央（等惰性引擎加载完再触发）
+  useEffect(() => {
+    if (streak < 3) return;
+    const t = window.setTimeout(() => {
+      handleRef.current?.callTo(W * 0.5, H * 0.64);
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [streak]);
+
   return (
     <div className={`${theme.cardBg} rounded-2xl border ${theme.cardBorder} overflow-hidden`}>
       <canvas
@@ -116,6 +152,7 @@ export const PondCard: React.FC<{ theme: ThemeConfig; records: SleepRecord[]; us
         role="img"
         aria-label="活的海：与你的锦鲤互动"
         data-weather={weather}
+        data-late-night={isLateNight ? '1' : '0'}
       />
     </div>
   );

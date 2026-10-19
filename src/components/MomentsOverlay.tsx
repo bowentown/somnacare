@@ -32,6 +32,8 @@ interface Props {
   records: SleepRecord[];
   userProfile: UserProfile;
   onClose: () => void;
+  /** 递增信号：首页月相挂件直达图鉴（第 57 轮） */
+  openCodexSignal?: number;
 }
 
 /** "今天 / 昨天 / MM-dd" */
@@ -163,7 +165,7 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
  * 文案由真实睡眠事实生成（DeepSeek API 可用时走 LLM，否则本地傲娇模板），
  * 每张卡片底部都展示生成时的事实清单——"每句话都有出处"。
  */
-export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose }) => {
+export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose, openCodexSignal }) => {
   const momentsA11y = useModalA11y(true, onClose, '大肥鱼的朋友圈');
   const [moments, setMoments] = useState<Moment[]>(() => loadMoments());
   const [busy, setBusy] = useState(false);
@@ -174,6 +176,11 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
   const [showShareCard, setShowShareCard] = useState(false);
   const [momentsCap, setMomentsCapState] = useState(() => getMomentsCap());
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 首页月相挂件 → 直接落到图鉴层，不用先找"图鉴"胶囊
+  useEffect(() => {
+    if (openCodexSignal) setShowCodex(true);
+  }, [openCodexSignal]);
 
   const travelProgress = getTravelProgress();
 

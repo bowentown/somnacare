@@ -33,6 +33,8 @@ export interface PondHandle {
   setWeather(id: WeatherPresetId): void;
   /** 点水聚鱼：坐标为内部画布坐标 */
   callTo(x: number, y: number): void;
+  /** 记录保存后的庆祝：中心聚鱼 + 三圈涟漪（第 57 轮） */
+  celebrate(): void;
   /** 离屏/页面隐藏时暂停步进（恢复时自动补正时钟） */
   setPaused(p: boolean): void;
 }
@@ -130,6 +132,13 @@ export function createPond(
     },
     callTo(x: number, y: number): void {
       school.callTo(vec(clamp(x, 0, width), clamp(y, 0, height)));
+    },
+    celebrate(): void {
+      const cy = height * 0.64;
+      school.callTo(vec(width * 0.5, cy));
+      // callTo 已在中心落一圈 touch；再补左右两圈，像三颗水漂
+      school.ripples.trigger('touch', vec(width * 0.3, cy + height * 0.06));
+      school.ripples.trigger('touch', vec(width * 0.7, cy + height * 0.06));
     },
     setPaused(p: boolean): void {
       paused = p;

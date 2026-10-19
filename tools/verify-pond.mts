@@ -50,6 +50,11 @@ ok(!card.includes('活的海 ·') || !card.match(/活的海 · \$\{/), '简约�
 ok(card.includes('THEME_WEATHER[theme.id]'), '简约：睡饱时水色回归主题驱动');
 ok(card.includes('sleepDebtOf') && card.includes("'overcast'") && card.includes('nightsOnly'),
   '联动：池塘随近 7 夜睡眠债（欠觉→阴天，睡饱→主题本色，纯视觉零文字）');
+ok(card.includes('celebrateSignal') && card.includes('celebrate()') && bootstrap.includes('celebrate(): void'),
+  '联动：保存记录 → 池塘落涟漪（第 57 轮）');
+ok(card.includes('data-late-night') && card.includes("'moonlight'") && card.includes('isLateNight'),
+  '联动：深夜（22–06）只留月光（第 57 轮）');
+ok(card.includes('streak') && card.includes('callTo(W * 0.5'), '联动：连续达标 ≥3 晚锦鲤聚向中央（第 57 轮）');
 
 // ③ 主题映射（4 主题 → 4 片不同的池塘：月夜/晴日/黄昏/阴天）
 const weather = ['moonlight', 'sunny', 'sunset', 'overcast'];

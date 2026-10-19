@@ -19,7 +19,13 @@ import { Music2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
 import { isNativePlatform, requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
 import { localDateOffset } from '../utils/dateUtils';
+import { getDayPhase } from '../utils/dayPhase';
+import { computeWeekReport } from '../utils/weekReport';
+import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../services/travelService';
 import { PondCard } from './PondCard';
+import { SleepDial } from './SleepDial';
+import { SleepStageTimeline } from './SleepStageTimeline';
+import { MoonEnergy } from './MoonEnergy';
 
 interface TodayTabProps {
   records: SleepRecord[];
@@ -35,6 +41,10 @@ interface TodayTabProps {
   theme: ThemeConfig;
   /** 早上自动记录没出卡时，带用户去偏好页跑链路自检（第 56 轮） */
   onOpenAutoCheck?: () => void;
+  /** 首页月相挂件：直达梦境旅行图鉴（第 57 轮） */
+  onOpenCodex?: () => void;
+  /** 记录保存后递增：池塘落涟漪（第 57 轮） */
+  celebrateSignal?: number;
 }
 
 // 作息目标联动工具：HH:MM ↔ 当日分钟数（跨午夜安全）
@@ -59,10 +69,25 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   startSignal,
   theme,
   onOpenAutoCheck,
+  onOpenCodex,
+  celebrateSignal,
 }) => {
   // 首页主卡只显示夜睡（小睡另有紧凑行）——旧数据无 kind 视为夜睡
   const latestRecord = nightsOnly(records)[0] || null;
   const todayNaps = napsOnly(records).filter((r) => r.date === toLocalDateString());
+  // 昼夜双布局（第 57 轮）：晚上把"开始/音景/目标"放前面，昨晚评分折叠到最后
+  const [phaseNow, setPhaseNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setPhaseNow(new Date()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const dayPhase = getDayPhase(phaseNow);
+  const isEvening = dayPhase === 'evening' || dayPhase === 'late';
+  const [sleepExpanded, setSleepExpanded] = useState(() => !isEvening);
+  useEffect(() => { setSleepExpanded(!isEvening); }, [isEvening]);
+  const travel = loadTravelState();
+  const travelProgress = getTravelProgress();
+  const streak = computeWeekReport(records).streak;
   const [goalOpen, setGoalOpen] = useState(false);
   // 睡前提醒的悬浮窗授权态：null=未检查。此前开关只翻布尔、不申请任何权限，
   // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效
@@ -92,24 +117,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
     return true;
   })();
 
-  // 得分环 + 数字 count-up（进入页面时 0 → 目标值，800ms 缓出）
-  const [displayScore, setDisplayScore] = useState(0);
-  useEffect(() => {
-    if (!latestRecord) return;
-    const target = Math.min(99, Math.max(25, latestRecord.sleepScore));
-    const start = performance.now();
-    const dur = 800;
-    let raf = 0;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / dur);
-      const eased = 1 - Math.pow(1 - t, 3);
-      setDisplayScore(Math.round(target * eased));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [latestRecord?.sleepScore, latestRecord?.id]);
-
   const getScoreColor = (score: number) => {
     if (score >= 88) return { text: theme.accentText, stroke: theme.accentHex, label: '优' };
     if (score >= 78) return { text: 'text-emerald-400', stroke: '#34d399', label: '良' };
@@ -119,9 +126,17 @@ export const TodayTab: React.FC<TodayTabProps> = ({
 
   const scoreInfo = latestRecord ? getScoreColor(latestRecord.sleepScore) : getScoreColor(85);
 
+  // 首页昼夜双布局的排序表：晚上先给"现在要做的事"，昨晚评分收到最后
+  const sectionOrder = isEvening
+    ? { tracker: 1, sound: 2, goals: 3, moon: 4, pond: 5, actions: 6, sleep: 7, nap: 8 }
+    : dayPhase === 'morning'
+      ? { tracker: 1, sleep: 2, moon: 3, pond: 4, nap: 5, actions: 6, sound: 7, goals: 8 }
+      : { tracker: 1, nap: 2, sleep: 3, moon: 4, pond: 5, actions: 6, sound: 7, goals: 8 };
+
   return (
-    <div className={`space-y-4 pb-28 ${theme.textPrimary}`}>
+    <div className={`flex flex-col gap-4 pb-28 ${theme.textPrimary}`}>
       {/* 1. Primary One-Tap Sleep Tracker */}
+      <div style={{ order: sectionOrder.tracker }} className="space-y-4">
       {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} onProposalPresenceChange={setProposalPresence} />}
 
       {autoRescue && (
@@ -140,11 +155,15 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           </span>
         </button>
       )}
+      </div>
 
       {/* 活的海：nagomi 程序化锦鲤池（主题 → 月夜/晴日/黄昏/雨），点水聚鱼 */}
-      <PondCard theme={theme} records={records} userProfile={userProfile} />
+      <div style={{ order: sectionOrder.pond }}>
+        <PondCard theme={theme} records={records} userProfile={userProfile} celebrateSignal={celebrateSignal} streak={streak} />
+      </div>
 
       {/* 当天小睡紧凑行（主卡只显示夜睡；小睡不顶掉主卡） */}
+      <div style={{ order: sectionOrder.nap }}>
       {todayNaps.length > 0 && (
         <div className={`${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-2 text-[11px]`}>
           <span>😴</span>
@@ -158,9 +177,66 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           <span className="text-slate-400 ml-auto">不计入规律度</span>
         </div>
       )}
+      </div>
+
+      {/* 梦境漫游 · 月相能量（第 57 轮）：首页小挂件，点开直达图鉴 */}
+      {onOpenCodex && (
+        <div style={{ order: sectionOrder.moon }}>
+          <button
+            type="button"
+            onClick={onOpenCodex}
+            aria-label="打开梦境旅行图鉴"
+            className={`w-full ${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
+          >
+            <MoonEnergy value={travel.currentEnergy} target={TRIP_ENERGY_TARGET} size={38} />
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-black text-white">梦境漫游</p>
+              <p className="text-[10px] font-mono text-slate-400 mt-0.5">
+                {travel.currentEnergy} / {TRIP_ENERGY_TARGET}
+              </p>
+            </div>
+            <span className={`flex items-center gap-1 text-[10px] font-black ${theme.accentText}`}>
+              图鉴 {travelProgress.unlockedCount}
+              <ChevronRight className="w-3.5 h-3.5" />
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* 2. Last Sleep Overview Card with Unified Theme Colors */}
+      <div style={{ order: sectionOrder.sleep }}>
       {latestRecord ? (
+        isEvening && !sleepExpanded ? (
+          /* 晚间折叠态：把评分收到一张小卡里，不占"准备入睡"的视线 */
+          <div className={`rounded-3xl p-4 ${theme.cardBg} border ${theme.cardBorder} shadow-xl`}>
+            <button
+              type="button"
+              onClick={() => setSleepExpanded(true)}
+              aria-label="展开昨晚睡眠详情"
+              className="w-full flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform"
+            >
+              <SleepDial
+                record={latestRecord}
+                targetBedtime={userProfile.targetBedtime}
+                targetWakeTime={userProfile.targetWakeTime}
+                accentHex={theme.accentHex}
+                scoreHex={scoreInfo.stroke}
+                scoreLabel={scoreInfo.label}
+                size={64}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-black text-xs">昨晚睡眠</span>
+                  <span className="font-mono text-slate-500 text-[10px]">{latestRecord.date}</span>
+                </div>
+                <p className="font-mono text-slate-200 text-[11px] mt-1">
+                  {formatDurationChinese(latestRecord.durationMinutes)} · {latestRecord.bedtime} → {latestRecord.wakeTime}
+                </p>
+              </div>
+              <ChevronDown className={`w-4 h-4 ${theme.accentText}`} />
+            </button>
+          </div>
+        ) : (
         <div
           role="button"
           tabIndex={0}
@@ -181,31 +257,16 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           </div>
 
           <div className="flex items-center justify-between gap-5 my-1">
-            {/* Score Ring */}
-            <div className="relative w-20 h-20 shrink-0 flex items-center justify-center">
-              <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="40" stroke="#334155" strokeWidth="8" fill="none" />
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  stroke={scoreInfo.stroke}
-                  strokeWidth="8"
-                  strokeDasharray={`${(displayScore / 100) * 251.2} 251.2`}
-                  strokeLinecap="round"
-                  fill="none"
-                  className="transition-all duration-700 ease-out"
-                />
-              </svg>
-              <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-2xl font-black font-mono text-white tabular-nums leading-none">
-                  {displayScore}
-                </span>
-                <span className={`text-[11px] font-black mt-1 ${scoreInfo.text}`}>
-                  {scoreInfo.label}
-                </span>
-              </div>
-            </div>
+            {/* 24 小时睡眠表盘（第 57 轮）：实际弧 vs 目标弧 + 此刻指针 */}
+            <SleepDial
+              record={latestRecord}
+              targetBedtime={userProfile.targetBedtime}
+              targetWakeTime={userProfile.targetWakeTime}
+              accentHex={theme.accentHex}
+              scoreHex={scoreInfo.stroke}
+              scoreLabel={scoreInfo.label}
+              size={96}
+            />
 
             {/* Metrics */}
             <div className="flex-1 space-y-2 text-xs">
@@ -258,31 +319,9 @@ export const TodayTab: React.FC<TodayTabProps> = ({
                   </div>
                 );
               })()}
-              {(() => {
-                const t = latestRecord.durationMinutes + latestRecord.awakeMinutes || 1;
-                const p = {
-                  deep: Math.round((latestRecord.deepSleepMinutes / t) * 100),
-                  light: Math.round((latestRecord.lightSleepMinutes / t) * 100),
-                  rem: Math.round((latestRecord.remSleepMinutes / t) * 100),
-                };
-                const awakeP = Math.max(0, 100 - p.deep - p.light - p.rem);
-                return (
-                  <div className="pt-1.5 space-y-1.5">
-                    <div className="flex h-2.5 rounded-full overflow-hidden gap-px">
-                      <div style={{ width: `${p.deep}%` }} className="bg-emerald-400" />
-                      <div style={{ width: `${p.light}%` }} className="bg-sky-400" />
-                      <div style={{ width: `${p.rem}%` }} className="bg-violet-400" />
-                      <div style={{ width: `${awakeP}%` }} className="bg-rose-400/70" />
-                    </div>
-                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                      <span className="text-emerald-400">深 {p.deep}%</span>
-                      <span className="text-sky-400">浅 {p.light}%</span>
-                      <span className="text-violet-400">REM {p.rem}%</span>
-                      <span className="text-rose-400/80">醒 {awakeP}%</span>
-                    </div>
-                  </div>
-                );
-              })()}
+              <div className="pt-1.5">
+                <SleepStageTimeline record={latestRecord} />
+              </div>
             </div>
           </div>
 
@@ -292,6 +331,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             </div>
           )}
         </div>
+        )
       ) : (
         <div className={`rounded-3xl p-6 ${theme.cardBg} border ${theme.cardBorder} text-center space-y-2 shadow-lg`}>
           <div className={`w-12 h-12 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center mx-auto shadow-inner`}>
@@ -300,9 +340,10 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           <h4 className="text-sm font-bold text-white pt-1">暂无睡眠记录</h4>
         </div>
       )}
+      </div>
 
       {/* 4. Action Cards for Manual Log & Bedside Monitor */}
-      <div className="grid grid-cols-2 gap-3 pt-1">
+      <div className="grid grid-cols-2 gap-3 pt-1" style={{ order: sectionOrder.actions }}>
         <button
           type="button"
           onClick={onOpenManualLog}
@@ -333,6 +374,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
       </div>
 
       {/* 4.5 助眠音景混音器（BetterSleep 式多层叠加） */}
+      <div style={{ order: sectionOrder.sound }} className="space-y-4">
       <button
         type="button"
         onClick={() => setMixerOpen(true)}
@@ -353,9 +395,10 @@ export const TodayTab: React.FC<TodayTabProps> = ({
       {mixerOpen && (
         <SoundscapePlayer theme={theme} onClose={() => setMixerOpen(false)} />
       )}
+      </div>
 
       {/* 5. 作息目标（默认折叠；编辑器内详尽） */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4`}>
+      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4`} style={{ order: sectionOrder.goals }}>
         <div
           role="button"
           tabIndex={0}

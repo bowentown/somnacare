@@ -12,7 +12,7 @@ import { TrendsTab } from './components/TrendsTab';
 import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
-import { tapTick } from './utils/haptics';
+import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
 import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
@@ -37,7 +37,7 @@ import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
-import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival } from './services/travelService';
+import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival, restoreRecordScore } from './services/travelService';
 
 /** 分区错误边界展示名（PaneErrorBoundary 文案用）。 */
 const PANE_LABELS: Record<string, string> = {
@@ -57,6 +57,21 @@ export const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   // 首页自救助手 → 偏好页链路自检（第 56 轮）：切分区并递增信号
   const [autoCheckSignal, setAutoCheckSignal] = useState(0);
+  // 首页月相挂件 → 旅行图鉴（第 57 轮）
+  const [codexSignal, setCodexSignal] = useState(0);
+  // 保存记录 → 池塘落涟漪（第 57 轮）
+  const [pondCelebrateSignal, setPondCelebrateSignal] = useState(0);
+  // 删除记录 5 秒撤销（第 57 轮）
+  const [undoDeleted, setUndoDeleted] = useState<SleepRecord | null>(null);
+  const undoTimerRef = useRef<number>(0);
+  const undoEnergyLostRef = useRef(0);
+  const undoCountedRef = useRef(false);
+  // 环境光：按本地时段给页面叠极淡色温（可关）
+  const [ambientHour, setAmbientHour] = useState(() => new Date().getHours());
+  useEffect(() => {
+    const t = window.setInterval(() => setAmbientHour(new Date().getHours()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
   // 朋友圈打开信号：递增触发 AIAdvicePanel 打开朋友圈（送达弹窗 CTA 用）
   const [momentsSignal, setMomentsSignal] = useState(0);
   // AI 聊天输入聚焦：打字时隐藏底部导航（否则导航条悬在键盘上方占一行）。
@@ -644,6 +659,7 @@ export const App: React.FC = () => {
       }
 
       if (idx !== d.idx) {
+        hapticPage(); // 翻页吸附的"到位"触感（第 57 轮）
         setActiveTab(TAB_ORDER[idx]); // 由下方 layout effect 吸附
       } else {
         applyTrack(-d.idx * d.w, true, ms);
@@ -800,6 +816,7 @@ export const App: React.FC = () => {
     if (travelRes.triggeredTrip && travelRes.newCard) {
       setPendingPostcardId(travelRes.newCard.id);
     }
+    setPondCelebrateSignal((v) => v + 1);
     showToast(`🌙 记录已保存！本次睡眠记录时长 ${newRecord.durationMinutes < 60 ? `${newRecord.durationMinutes}分钟` : `${(newRecord.durationMinutes / 60).toFixed(1)}小时`}`);
   };
 
@@ -822,6 +839,7 @@ export const App: React.FC = () => {
     if (travelRes.triggeredTrip && travelRes.newCard) {
       setPendingPostcardId(travelRes.newCard.id);
     }
+    setPondCelebrateSignal((v) => v + 1);
     showToast(`📝 睡眠记录已保存！综合健康得分 ${newRecord.sleepScore} 分`);
   };
 
@@ -829,6 +847,7 @@ export const App: React.FC = () => {
     // 破坏性操作与删除单条记录同防护级：演示数据会覆盖全部真实记录
     if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
+    setUndoDeleted(null);
     setRecords(initial);
     clearShadowOutcomes();
     pruneShadowEntries(new Set(nightsOnly(initial).map((r) => r.date)));
@@ -838,14 +857,45 @@ export const App: React.FC = () => {
   const handleDeleteRecord = (id: string) => {
     const victim = records.find((r) => r.id === id);
     if (victim) {
-      // 删除的夜/小睡不再驱动旅行能量（第 51 轮审计：账本须随真值回退）
+      // 删除的夜/小睡不再驱动旅行能量（第 51 轮审计：账本须随真值回退）。
+      // 记下实际扣掉的差额——余额不足时会被 max(0) 截断，撤销不能凭空补分
+      const stateBefore = loadTravelState();
+      const ledgerKey = victim.kind === 'nap' ? `${victim.date}|nap` : victim.date;
+      undoCountedRef.current = stateBefore.countedScores[ledgerKey] !== undefined;
+      const energyBefore = stateBefore.currentEnergy;
       processRecordRemoval(victim.date, victim.kind === 'nap');
+      undoEnergyLostRef.current = Math.max(0, energyBefore - loadTravelState().currentEnergy);
       // 夜睡删除后同步清影子诊断条目（小睡不占条目键，不动）
       if (victim.kind !== 'nap') dropShadowEntry(victim.date);
     }
     setRecords((prev) => prev.filter((r) => r.id !== id));
     showToast('已删除该条睡眠数据');
+    if (victim) {
+      // 5 秒撤销：误删不应只能靠备份找回。记录=唯一真值源，
+      // 恢复时同步补回能量账（影子诊断条目不回溯，可接受）
+      setUndoDeleted(victim);
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = window.setTimeout(() => setUndoDeleted(null), 5000);
+    }
   };
+
+  const handleUndoDelete = () => {
+    if (!undoDeleted) return;
+    hapticConfirm();
+    const restored = undoDeleted;
+    setUndoDeleted(null);
+    window.clearTimeout(undoTimerRef.current);
+    // 只有删除前真的入过账才恢复能量/账本：导入的旧记录本就不在能量账里
+    if (undoCountedRef.current) {
+      restoreRecordScore(restored.date, restored.sleepScore, restored.kind === 'nap', undoEnergyLostRef.current);
+    }
+    setRecords((prev) => mergeRecord(prev, restored).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    ));
+    showToast('已恢复这条记录');
+  };
+
+  useEffect(() => () => window.clearTimeout(undoTimerRef.current), []);
 
   // 主题类同步挂到 <html>：7 处弹窗 portal 到 document.body（在根 div 之外），
   // .theme-* 后代规则（如纯黑主题去阴影）需从 documentElement 起才能命中
@@ -860,6 +910,19 @@ export const App: React.FC = () => {
   // Obtain active theme config (card, text, page all linked)
   const currentTheme = APP_THEMES[userProfile.themeColor as keyof typeof APP_THEMES] || APP_THEMES.midnight;
 
+  // 环境光（第 57 轮）：只在主题之上叠一层极淡色温，不改任何组件配色。
+  // 清晨暖、白天冷、黄昏橙、夜里深蓝；可在偏好页关闭。
+  const ambientOn = userProfile.ambientLightEnabled !== false;
+  const ambientTint = !ambientOn
+    ? null
+    : ambientHour >= 5 && ambientHour < 9
+      ? 'rgba(255,138,76,0.055)'
+      : ambientHour >= 9 && ambientHour < 17
+        ? 'rgba(80,170,255,0.035)'
+        : ambientHour >= 17 && ambientHour < 20
+          ? 'rgba(255,110,70,0.05)'
+          : 'rgba(40,80,200,0.06)';
+
   return (
     <div
       className={`app-shell w-full theme-${currentTheme.id} ${currentTheme.pageBg} ${currentTheme.textPrimary} ${currentTheme.selectionBg} relative flex flex-col overflow-hidden transition-colors duration-300`}
@@ -867,10 +930,18 @@ export const App: React.FC = () => {
       {/* 品牌氛围：页首背后的主题色极光带（呼应开屏动画） */}
       <div aria-hidden className="pointer-events-none absolute top-0 left-0 right-0 h-44 overflow-hidden">
         <div
-          className="absolute -top-28 left-[-15%] w-[130%] h-56 blur-3xl opacity-[0.2]"
+          className={`absolute -top-28 left-[-15%] w-[130%] h-56 blur-3xl opacity-[0.2] ${ambientOn ? 'animate-aurora-drift will-change-transform' : ''}`}
           style={{ background: `linear-gradient(100deg, transparent 12%, ${currentTheme.accentHex} 38%, transparent 52%, #8b5cf6 66%, transparent 84%)` }}
         />
       </div>
+      {/* 环境光色温层：在内容之下、背景之上，不干扰任何对比度 */}
+      {ambientTint && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 z-[1]"
+          style={{ background: ambientTint, mixBlendMode: 'soft-light' }}
+        />
+      )}
       <LaunchSplash theme={currentTheme} />
       {/* 首次引导：z 在开屏(200)之下——开屏播完自然露出，两步可全跳过 */}
       {onboardingOpen && (
@@ -954,9 +1025,26 @@ export const App: React.FC = () => {
           <span>{toastMessage}</span>
         </div>
       )}
+      {/* 删除撤销（第 57 轮）：5 秒内可反悔，避免误删只能靠备份 */}
+      {undoDeleted && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-24 left-0 right-0 mx-auto w-fit z-[340] px-4 py-2.5 rounded-2xl bg-slate-900 border border-slate-700 text-xs text-slate-200 shadow-2xl flex items-center gap-3 animate-fadeIn"
+        >
+          <span>已删除 {undoDeleted.date} 的记录</span>
+          <button
+            type="button"
+            onClick={handleUndoDelete}
+            className={`px-2 py-1 rounded-lg font-black ${currentTheme.accentText} cursor-pointer active:scale-95 transition-transform`}
+          >
+            撤销
+          </button>
+        </div>
+      )}
 
       {/* Main Content Area: Natural Vertical Page Scroll (Header flows with content) */}
-      <div className="w-full flex-1 max-w-lg mx-auto flex flex-col min-h-0">
+      <div className="relative z-[2] w-full flex-1 max-w-lg mx-auto flex flex-col min-h-0">
         {/* Scrollable Mobile Header */}
         <header className={`px-5 pt-5 pb-3.5 flex items-center justify-between border-b ${currentTheme.cardBorder} shrink-0`}>
           <div className="flex items-center gap-2.5">
@@ -1009,6 +1097,11 @@ export const App: React.FC = () => {
                         setActiveTab('settings');
                         setAutoCheckSignal((v) => v + 1);
                       }}
+                      onOpenCodex={() => {
+                        setActiveTab('coach');
+                        setCodexSignal((v) => v + 1);
+                      }}
+                      celebrateSignal={pondCelebrateSignal}
                     />
                   )}
 
@@ -1022,7 +1115,7 @@ export const App: React.FC = () => {
                   )}
 
                   {id === 'coach' && (
-                    <AIAdvicePanel records={records} userProfile={userProfile} theme={currentTheme} openMomentsSignal={momentsSignal} onChatFocusChange={handleChatFocusChange} />
+                    <AIAdvicePanel records={records} userProfile={userProfile} theme={currentTheme} openMomentsSignal={momentsSignal} openCodexSignal={codexSignal} onChatFocusChange={handleChatFocusChange} />
                   )}
 
                   {id === 'eyecare' && (
@@ -1052,6 +1145,7 @@ export const App: React.FC = () => {
             if (!window.confirm(`导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条），继续？`)) {
               return;
             }
+                        setUndoDeleted(null);
                         setRecords(sorted);
                         // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
                         clearShadowOutcomes();

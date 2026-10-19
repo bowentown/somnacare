@@ -14,6 +14,7 @@ import { ALL_POSTCARDS, ART_READY_CONTINENTS, TRIP_POOL, thumbUrlOf } from '../.
 import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../../services/travelService';
 import { useModalA11y } from '../../utils/modalA11y';
 import { PostcardCard } from './PostcardCard';
+import { MoonEnergy } from '../MoonEnergy';
 
 interface Props {
   onClose: () => void;
@@ -111,9 +112,16 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
         className="shrink-0 p-4 border-b border-slate-800/60 space-y-3"
         style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.6), transparent)' }}
       >
-        {/* 能量条 */}
-        <div className="bg-slate-900/80 border border-[#1e293b] rounded-2xl p-3 flex items-center justify-between gap-3">
-          <div className="space-y-1 flex-1">
+        {/* 月相能量（第 57 轮）：由缺到圆，满月出发——比普通进度条更像"旅途在长" */}
+        <div className="bg-slate-900/80 border border-[#1e293b] rounded-2xl p-3 flex items-center gap-3">
+          <MoonEnergy
+            value={travelState.currentEnergy}
+            target={TRIP_ENERGY_TARGET}
+            size={52}
+            litColor="#fcd34d"
+            darkColor="#1e293b"
+          />
+          <div className="space-y-1 flex-1 min-w-0">
             <div className="flex items-center justify-between text-[10px]">
               <span className="font-bold text-[#7dd3fc] flex items-center gap-1">
                 <Compass className="w-3.5 h-3.5 text-[#38bdf8]" />
@@ -123,15 +131,9 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
                 <strong className="text-[#7dd3fc] text-xs">{travelState.currentEnergy}</strong> / {TRIP_ENERGY_TARGET} 分
               </span>
             </div>
-            <div className="h-2 rounded-full bg-[#1e293b] overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(100, Math.round((travelState.currentEnergy / TRIP_ENERGY_TARGET) * 100))}%`,
-                  background: 'linear-gradient(90deg, #0ea5e9, #6366f1, #a855f7)',
-                }}
-              />
-            </div>
+            <p className="text-[9px] text-[#94a3b8]">
+              {travelState.currentEnergy >= TRIP_ENERGY_TARGET ? '满月 · 今晚出发' : `再攒 ${Math.max(0, TRIP_ENERGY_TARGET - travelState.currentEnergy)} 分满月`}
+            </p>
           </div>
           <div className="shrink-0 text-right pl-2 border-l border-[#1e293b]">
             <p className="text-[9px] text-[#94a3b8]">旅行出发</p>

@@ -268,6 +268,16 @@ html {
   animation: cta-breathe 3.4s ease-in-out infinite;
 }
 
+/* ===== 顶部极光缓慢流动（第 57 轮环境光） =====
+   只动 transform/opacity，走合成器；减少动态时由全局规则静止 */
+@keyframes aurora-drift {
+  0%, 100% { transform: translate3d(-1.5%, 0, 0) scaleX(1); opacity: 0.18; }
+  50% { transform: translate3d(1.5%, 0.5%, 0) scaleX(1.08); opacity: 0.26; }
+}
+.animate-aurora-drift {
+  animation: aurora-drift 26s ease-in-out infinite;
+}
+
 /* ===== 分区滑动轨道 =====
    轨道上刻意不设 touch-action。设 pan-y 会沿祖先链禁掉子元素的横向滚动
    （AI 顾问的提示词行就滑不动了），设 pan-x 则页面无法纵向滚动。

@@ -41,6 +41,25 @@ export function processRecordRemoval(date: string, nap?: boolean): UserTravelSta
   return state;
 }
 
+/**
+ * 恢复一条被删除的记录（第 57 轮撤销）：
+ * 删除时能量被扣回并可能被 max(0) 截断，直接把原分加回去会凭空多出能量
+ * （例：余额 50、删 92 分夜 → 0；再加 92 变 92）。这里只补"实际扣掉的
+ * 差额"，同时恢复 counted 账本。影子诊断条目不回溯（可接受）。
+ */
+export function restoreRecordScore(
+  date: string,
+  sleepScore: number,
+  nap?: boolean,
+  energyLost = 0,
+): UserTravelState {
+  const state = loadTravelState();
+  state.currentEnergy = Math.max(0, state.currentEnergy + Math.max(0, energyLost));
+  state.countedScores[napKey(date, nap)] = Math.max(0, Math.min(100, Math.round(sleepScore)));
+  saveTravelState(state);
+  return state;
+}
+
 /** 清洗 {cardId: 星级} / {date: 已计分} 形态的映射：只保留有限数值（防坏值串型累加） */
 function sanitizeScoreMap(v: unknown): Record<string, number> {
   const out: Record<string, number> = {};
