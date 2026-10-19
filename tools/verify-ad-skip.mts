@@ -34,12 +34,23 @@ ok('排除：本应用 / 系统 UI / 系统设置',
   service.includes('getPackageName()')
   && service.includes('com.android.systemui')
   && service.includes('com.android.settings'));
-ok('匹配：只认「跳过」类完整文案',
-  service.includes('Pattern.compile("^跳过')
-  && service.includes('跳过广告')
-  && service.includes('点击跳过'));
-ok('克制：节点上限 / 点击冷却 / 事件节流',
-  service.includes('MAX_NODES')
+ok('匹配：文字含跳过 / viewId 含 skip / 描述含跳过',
+  service.includes('v.contains("跳过")')
+  && service.includes('v.contains("skip")')
+  && service.includes('getViewIdResourceName()')
+  && service.includes('getContentDescription()'));
+ok('排除：片头/片尾/视频/空白/帮助/取消/设置等误触词',
+  service.includes('TEXT_EXCLUDES')
+  && service.includes('"片头"')
+  && service.includes('"视频"')
+  && service.includes('"帮助"')
+  && service.includes('"设置"')
+  && service.includes('VIEW_ID_EXCLUDES'));
+ok('克制：启动 12s 窗口 / 每次启动最多 2 次 / 节点上限 / 冷却 / 节流',
+  service.includes('LAUNCH_WINDOW_MS')
+  && service.includes('MAX_CLICKS_PER_LAUNCH')
+  && service.includes('clicksThisLaunch')
+  && service.includes('MAX_NODES')
   && service.includes('CLICK_COOLDOWN_MS')
   && service.includes('EVENT_THROTTLE_MS'));
 ok('隐私：服务内无任何网络代码', !/java\.net|HttpURLConnection|new URL\(/.test(service));

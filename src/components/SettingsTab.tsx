@@ -671,7 +671,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         )}
 
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          只匹配「跳过 / 跳过广告」文字，不读取输入内容，数据不离开本机。
+          只匹配「跳过」类文字或 skip 控件，不读取输入内容，数据不离开本机。
         </p>
       </div>
 
