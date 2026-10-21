@@ -231,13 +231,16 @@ somnacare/
 npm install --legacy-peer-deps
 npm run dev          # http://localhost:3000
 
-npm run verify       # 26 条静态护栏（313 断言）
+npm run verify       # 31 条静态护栏
 npm run build        # Web 产物（PWA 可直接部署 dist/）
-npx playwright test  # 20 条浏览器 e2e
+npx playwright test  # 53 条浏览器 e2e
 
 # Android APK（需 Android SDK / JDK 21）
 npm run build && npx cap add android && npx cap sync android
 cd android && ./gradlew assembleDebug
+
+# 重新生成开屏广告规则（可选；需要 GKD_subscription 的 dist/gkd.json5）
+npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5
 ```
 
 不想配环境？推送 `main` 自动构建（Actions 页下载需登录）；**打 `v*` 标签**自动发布到公开 [Releases](../../releases)，任何人无需登录即可下载。
