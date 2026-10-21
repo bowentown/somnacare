@@ -1131,6 +1131,8 @@ export const App: React.FC = () => {
                       onDeleteRecord={handleDeleteRecord}
                       theme={currentTheme}
                       chronotype={userProfile.chronotype ?? 'night'}
+                      targetBedtime={userProfile.targetBedtime}
+                      targetWakeTime={userProfile.targetWakeTime}
                     />
                   )}
 

@@ -50,11 +50,35 @@ interface TrendsTabProps {
   theme: ThemeConfig;
   /** 作息类型：使用信号按作息窗口采样，查询必须带上（否则拿夜窗数据当白窗用） */
   chronotype?: 'night' | 'day' | 'irregular';
+  /** 目标作息窗（起卧图的参照带）；缺省时退回近 7 晚均值 */
+  targetBedtime?: string;
+  targetWakeTime?: string;
 }
 
 type MetricViewMode = 'quality' | 'stages' | 'circadian';
 
-export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, theme, chronotype = 'night' }) => {
+const STAGE_COLORS = {
+  deep: '#00d492',
+  light: '#00bcff',
+  rem: '#a684ff',
+  awake: '#ff637e',
+} as const;
+
+const STAGE_LABELS = {
+  deep: '深睡',
+  light: '浅睡',
+  rem: 'REM',
+  awake: '清醒',
+} as const;
+
+export const TrendsTab: React.FC<TrendsTabProps> = ({
+  records,
+  onDeleteRecord,
+  theme,
+  chronotype = 'night',
+  targetBedtime,
+  targetWakeTime,
+}) => {
   const innerBg = theme?.cardInnerBg || 'bg-[#0a0f1d]';
   const innerBorder = theme?.cardInnerBorder || 'border-slate-700/80';
   const accentText = theme?.accentText || 'text-indigo-400';
@@ -99,15 +123,48 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
   // 数据点、折线、参考线【全部】走这一个函数，避免各写一份后漂移。
   const CHART_W = 280;
   const CHART_H = 80;
+  const PLOT_LEFT = 24;
+  const PLOT_RIGHT = 250;
+  const PLOT_W = PLOT_RIGHT - PLOT_LEFT;
   const SCORE_MIN = 50;
   const SCORE_MAX = 100;
+  const CHART_GRID = 'rgba(255,255,255,0.08)';
+  const CHART_AXIS_TEXT = 'rgba(255,255,255,0.52)';
   const scoreToY = (rawScore: number) => {
     const score = Math.max(SCORE_MIN, Math.min(SCORE_MAX, rawScore));
     return CHART_H - ((score - SCORE_MIN) / (SCORE_MAX - SCORE_MIN)) * (CHART_H - 20) - 10;
   };
   // 单条记录时居中，避免点贴在左边缘
   const scoreToX = (i: number) =>
-    last7Records.length <= 1 ? CHART_W / 2 : i * (CHART_W / (last7Records.length - 1));
+    last7Records.length <= 1
+      ? PLOT_LEFT + PLOT_W / 2
+      : PLOT_LEFT + i * (PLOT_W / (last7Records.length - 1));
+
+  const dayGap = (a: string, b: string): number => {
+    const ta = new Date(`${a}T00:00:00`).getTime();
+    const tb = new Date(`${b}T00:00:00`).getTime();
+    if (!Number.isFinite(ta) || !Number.isFinite(tb)) return 1;
+    return Math.round(Math.abs(tb - ta) / 86400000);
+  };
+  // 缺记录的日期不连线：连续日期成段，缺口处断开（不制造“天天都睡了”的假象）
+  const scoreSegments: SleepRecord[][] = [];
+  for (const r of last7Records) {
+    const current = scoreSegments[scoreSegments.length - 1];
+    if (current && dayGap(current[current.length - 1].date, r.date) > 1) {
+      scoreSegments.push([r]);
+    } else if (current) {
+      current.push(r);
+    } else {
+      scoreSegments.push([r]);
+    }
+  }
+  const avgScore = last7Records.length
+    ? Math.round(last7Records.reduce((sum, r) => sum + r.sleepScore, 0) / last7Records.length)
+    : null;
+  const scorePoint = (r: SleepRecord): string => {
+    const index = last7Records.findIndex((item) => item.id === r.id);
+    return `${scoreToX(index)},${scoreToY(r.sleepScore)}`;
+  };
 
   // 拖拽 scrub（第 57 轮）：按住曲线横向滑动，十字线跟随、跨点轻触。
   // 图表区标 data-no-swipe——否则横向手势会被五分区翻页层接管
@@ -161,28 +218,84 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
     { score: 75, dash: '2 3',  tone: 'text-rose-300',    label: '75 警戒' },
   ] as const;
 
-  // Helper for SVG smooth trend line points
-  const getScoreCoordinates = () => {
-    if (last7Records.length === 0) return '';
-    return last7Records.map((r, i) => `${scoreToX(i)},${scoreToY(r.sleepScore)}`).join(' ');
-  };
-
   // 周报卡已删除（与近期小结重复）；连胜仍保留为小结里的一行
   const weekReport = computeWeekReport(records);
+
+  const shortMinutes = (minutes: number): string =>
+    minutes >= 60
+      ? `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
+      : `${minutes}m`;
+
+  // 分期横带：分母必须是卧床总长（纯睡眠 + 清醒），否则四段和会超过 100%
+  const stageRows = last7Records.map((record) => {
+    const total = Math.max(1, record.durationMinutes + record.awakeMinutes);
+    return {
+      record,
+      total,
+      deep: (record.deepSleepMinutes / total) * 100,
+      light: (record.lightSleepMinutes / total) * 100,
+      rem: (record.remSleepMinutes / total) * 100,
+      awake: (record.awakeMinutes / total) * 100,
+    };
+  });
+  const stageAvg = stageRows.length
+    ? (() => {
+        const count = stageRows.length;
+        const deep = Math.round(stageRows.reduce((sum, row) => sum + row.deep, 0) / count);
+        const light = Math.round(stageRows.reduce((sum, row) => sum + row.light, 0) / count);
+        const rem = Math.round(stageRows.reduce((sum, row) => sum + row.rem, 0) / count);
+        return { deep, light, rem, awake: Math.max(0, 100 - deep - light - rem) };
+      })()
+    : null;
+  const activeStage = stageRows.find((row) => row.record.id === activeRecord?.id)
+    ?? stageRows[stageRows.length - 1]
+    ?? null;
+
+  // 起卧图统一时间窗：21:00 → 次日 10:00
+  const RANGE_START = 21 * 60;
+  const RANGE_MINUTES = 13 * 60;
+  const clockToMinutes = (time: string): number => {
+    const [hour, minute] = time.split(':').map(Number);
+    return (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0);
+  };
+  const toRangeMinutes = (time: string): number => {
+    const minutes = clockToMinutes(time);
+    return minutes < RANGE_START ? minutes + 24 * 60 : minutes;
+  };
+  const sleepRows = last7Records.map((record) => {
+    const start = toRangeMinutes(record.bedtime);
+    let end = toRangeMinutes(record.wakeTime);
+    if (end <= start) end += 24 * 60;
+    return { record, start, end };
+  });
+  const avgStart = sleepRows.length
+    ? Math.round(sleepRows.reduce((sum, row) => sum + row.start, 0) / sleepRows.length)
+    : null;
+  const avgEnd = sleepRows.length
+    ? Math.round(sleepRows.reduce((sum, row) => sum + row.end, 0) / sleepRows.length)
+    : null;
+  const targetStart = targetBedtime ? toRangeMinutes(targetBedtime) : avgStart;
+  let targetEnd = targetWakeTime ? toRangeMinutes(targetWakeTime) : avgEnd;
+  if (targetStart !== null && targetEnd !== null && targetEnd <= targetStart) targetEnd += 24 * 60;
+  const targetLabel = targetBedtime && targetWakeTime
+    ? `目标 ${targetBedtime}–${targetWakeTime}`
+    : '近 7 晚均值窗口';
+  const rangePct = (minutes: number): number =>
+    Math.max(0, Math.min(100, ((minutes - RANGE_START) / RANGE_MINUTES) * 100));
 
   return (
     <div className={`space-y-3 pb-28 ${theme.textPrimary}`}>
       {/* Visual Trends Container */}
       <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} space-y-3`}>
         {/* Toggle Switch */}
-        <div className={`flex items-center justify-between pb-2 border-b ${innerBorder}`}>
-          <span className="text-xs font-bold text-white">趋势与结构</span>
+        <div className={`flex items-center justify-between gap-2 pb-2 border-b ${innerBorder}`}>
+          <span className="text-xs font-bold text-white shrink-0">趋势与结构</span>
 
-          <div className={`flex ${innerBg} p-1 rounded-xl border ${innerBorder} text-[11px]`}>
+          <div className={`flex ${innerBg} p-0.5 rounded-xl border ${innerBorder} text-[10px]`}>
             <button
               type="button"
               onClick={() => setViewMode('quality')}
-              className={`px-3 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+              className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
                 viewMode === 'quality'
                   ? accentBg + ' ' + accentFg + ' shadow'
                   : `${textMuted} hover:text-white`
@@ -193,7 +306,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             <button
               type="button"
               onClick={() => setViewMode('stages')}
-              className={`px-3 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+              className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
                 viewMode === 'stages'
                   ? accentBg + ' ' + accentFg + ' shadow'
                   : `${textMuted} hover:text-white`
@@ -204,7 +317,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
             <button
               type="button"
               onClick={() => setViewMode('circadian')}
-              className={`px-3 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+              className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
                 viewMode === 'circadian'
                   ? accentBg + ' ' + accentFg + ' shadow'
                   : `${textMuted} hover:text-white`
@@ -229,40 +342,34 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
         {/* View Mode 1: Quality Score Trend */}
         {viewMode === 'quality' && (
           <div className="space-y-2 animate-tab-fade-in">
-            <div data-no-swipe className={`relative h-40 ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} flex flex-col justify-between`}>
-              {/* ── 顶部：当前点数据 + 图例（与参考线读同一份 REF_LINES）── */}
-              <div className="flex items-center justify-between gap-3 text-[9px] font-mono shrink-0 leading-none">
+            <div data-no-swipe className={`relative ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-1.5`}>
+              {/* 顶部：当前点 + 7 晚均值（比图内叠字更稳） */}
+              <div className="flex items-center justify-between gap-3 text-[10px] font-mono shrink-0 leading-none">
                 <span data-testid="score-detail" className="text-slate-400 truncate">
                   {activeRecord ? (
                     <>
                       <span className="text-slate-300">{activeRecord.date.slice(5)}</span>
                       <span className="mx-1 text-slate-600">·</span>
-                      <span className="text-white font-bold">{activeRecord.sleepScore} 分</span>
+                      <span className="text-white font-bold tabular-nums">{activeRecord.sleepScore} 分</span>
                       <span className="mx-1 text-slate-600">·</span>
                       {formatDurationChinese(activeRecord.durationMinutes)}
                     </>
                   ) : null}
                 </span>
-                <span className="flex items-center gap-3 shrink-0">
-                {REF_LINES.map((l) => (
-                  <span key={l.score} className={`flex items-center gap-1 ${l.tone}`}>
-                    <svg width="14" height="6" viewBox="0 0 14 6" aria-hidden="true" focusable="false">
-                      <line
-                        x1="0" y1="3" x2="14" y2="3"
-                        stroke="currentColor" strokeWidth="1" strokeDasharray={l.dash}
-                      />
-                    </svg>
-                    {l.label}
+                {avgScore !== null && (
+                  <span className="text-slate-400 shrink-0">
+                    均值 <span className="text-white font-bold tabular-nums">{avgScore}</span>
                   </span>
-                ))}
-                </span>
+                )}
               </div>
 
               <svg
                 ref={svgRef}
                 data-testid="score-chart"
                 className="w-full h-24 overflow-visible"
-                viewBox="0 0 280 80"
+                viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+                role="group"
+                aria-label="近 7 晚睡眠评分趋势图，可左右拖动查看每一晚"
                 style={{ touchAction: 'pan-y' }}
                 onPointerDown={onChartPointerDown}
                 onPointerMove={onChartPointerMove}
@@ -271,47 +378,102 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
               >
                 <defs>
                   <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={theme.accentHex} stopOpacity="0.35" />
+                    <stop offset="0%" stopColor={theme.accentHex} stopOpacity="0.30" />
                     <stop offset="100%" stopColor={theme.accentHex} stopOpacity="0.0" />
                   </linearGradient>
                 </defs>
 
-                {/* ── 参考线：与数据点共用 scoreToY，绝不另写坐标 ── */}
+                {/* 75–100 目标带：先给“好区间”一个底色，再读曲线 */}
+                <rect
+                  x={PLOT_LEFT}
+                  y={scoreToY(100)}
+                  width={PLOT_W}
+                  height={scoreToY(75) - scoreToY(100)}
+                  fill={theme.accentHex}
+                  opacity="0.06"
+                  rx="2"
+                />
+
+                {/* Y 轴刻度 + 网格：50 / 75 / 90 / 100 */}
+                {[100, 90, 75, 50].map((value) => (
+                  <g key={`grid-${value}`}>
+                    <line
+                      x1={PLOT_LEFT} y1={scoreToY(value)}
+                      x2={PLOT_RIGHT} y2={scoreToY(value)}
+                      stroke={CHART_GRID}
+                      strokeWidth="0.75"
+                    />
+                    <text
+                      x={PLOT_LEFT - 4}
+                      y={scoreToY(value) + 2.5}
+                      textAnchor="end"
+                      fontSize="9"
+                      fill={CHART_AXIS_TEXT}
+                      style={{ fontVariantNumeric: 'tabular-nums' }}
+                      pointerEvents="none"
+                    >
+                      {value}
+                    </text>
+                  </g>
+                ))}
+
+                {/* 参考线：与数据点共用 scoreToY；右端直接标 90/75 */}
                 {REF_LINES.map((l) => (
-                  <line
-                    key={l.score}
-                    x1="0" y1={scoreToY(l.score)} x2={CHART_W} y2={scoreToY(l.score)}
-                    stroke="currentColor"
-                    strokeWidth="1" strokeDasharray={l.dash}
-                    className={l.tone}
-                  />
+                  <g key={l.score}>
+                    <line
+                      x1={PLOT_LEFT} y1={scoreToY(l.score)}
+                      x2={PLOT_RIGHT} y2={scoreToY(l.score)}
+                      stroke="currentColor"
+                      strokeWidth="1"
+                      strokeDasharray={l.dash}
+                      className={l.tone}
+                    />
+                    <text
+                      x={PLOT_RIGHT + 4}
+                      y={scoreToY(l.score) + 2.5}
+                      fontSize="9"
+                      fill="currentColor"
+                      className={l.tone}
+                      pointerEvents="none"
+                    >
+                      {l.score}
+                    </text>
+                  </g>
                 ))}
 
                 {/* 拖拽十字线：只在用户真的拖动/悬停时出现 */}
                 {hoveredRecord && activeIndex >= 0 && (
                   <line
-                    x1={scoreToX(activeIndex)} y1={0} x2={scoreToX(activeIndex)} y2={CHART_H}
-                    stroke="rgba(255,255,255,0.45)"
+                    x1={scoreToX(activeIndex)} y1={scoreToY(100)} x2={scoreToX(activeIndex)} y2={CHART_H}
+                    stroke="rgba(255,255,255,0.40)"
                     strokeWidth={1}
                     strokeDasharray="2 2"
                   />
                 )}
 
-                {last7Records.length > 1 && (
-                  <polygon
-                    points={`0,80 ${getScoreCoordinates()} 280,80`}
-                    fill="url(#scoreGrad)"
-                  />
-                )}
-
-                <polyline
-                  fill="none"
-                  stroke={theme.accentHex}
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  points={getScoreCoordinates()}
-                />
+                {/* 缺记录处断开：连续日期才画面积/折线 */}
+                {scoreSegments.map((segment, index) => {
+                  if (segment.length < 2) return null;
+                  const start = last7Records.findIndex((r) => r.id === segment[0].id);
+                  const end = last7Records.findIndex((r) => r.id === segment[segment.length - 1].id);
+                  const points = segment.map(scorePoint).join(' ');
+                  return (
+                    <g key={`segment-${index}`}>
+                      <polygon
+                        points={`${scoreToX(start)},${CHART_H} ${points} ${scoreToX(end)},${CHART_H}`}
+                        fill="url(#scoreGrad)"
+                      />
+                      <polyline
+                        fill="none"
+                        stroke={theme.accentHex}
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={points}
+                      />
+                    </g>
+                  );
+                })}
 
                 {last7Records.map((r, i) => {
                   const x = scoreToX(i);
@@ -332,113 +494,139 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                     >
                       {/* 隐形命中区：r=4 的点直径只有 8px，手指根本点不中 */}
                       <circle cx={x} cy={y} r={16} fill="transparent" pointerEvents="all" />
-                      {/* 数值只在上方摘要里出现：图内再叠白字会压住曲线与网格 */}
                       {isHovered && (
-                        <circle cx={x} cy={y} r={9} fill="none" stroke={theme.accentHex} strokeOpacity="0.35" strokeWidth="1.5" />
+                        <circle cx={x} cy={y} r={8} fill="none" stroke={theme.accentHex} strokeOpacity="0.35" strokeWidth="1.5" />
                       )}
                       <circle
                         cx={x}
                         cy={y}
-                        r={isHovered ? 5 : 4}
+                        r={isHovered ? 4.5 : 3.5}
                         fill={isHovered ? '#ffffff' : theme.accentHex}
                         stroke={theme.accentHex}
                         strokeWidth="2"
                       />
+                      <text
+                        x={x}
+                        y={CHART_H - 1}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fill={isHovered ? theme.accentHex : CHART_AXIS_TEXT}
+                        fontWeight={isHovered ? 700 : 400}
+                        style={{ fontVariantNumeric: 'tabular-nums' }}
+                        pointerEvents="none"
+                      >
+                        {r.date.slice(5)}
+                      </text>
                     </g>
                   );
                 })}
               </svg>
 
-              <div className={`flex ${last7Records.length === 1 ? 'justify-center' : 'justify-between'} text-[10px] ${textMuted} font-mono pt-1 border-t ${innerBorder}`}>
-                {last7Records.map((r) => (
-                  <span
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`查看 ${r.date} 的睡眠详情`}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHoveredRecord(r); } }}
-                    onClick={() => setHoveredRecord(r)}
-                    className={`cursor-pointer focus:outline-none ${
-                      activeRecord?.id === r.id ? accentText + ' font-bold' : 'hover:text-white'
-                    }`}
-                  >
-                    {r.date.slice(5)}
-                  </span>
-                ))}
+              <div className={`flex items-center justify-between text-[9px] ${textMuted} leading-none`}>
+                <span>
+                  虚线 <span className="text-emerald-300">90 达标</span>
+                  <span className="mx-1 text-slate-600">·</span>
+                  <span className="text-rose-300">75 警戒</span>
+                </span>
+                <span className="text-slate-500">点按曲线查看</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* View Mode 2: Sleep Stages */}
+        {/* View Mode 2: Sleep Stages（100% 横带，逐晚一行） */}
         {viewMode === 'stages' && (
           <div className="space-y-2 animate-tab-fade-in">
-            <div className={`h-40 ${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} flex flex-col justify-between`}>
-              <div className="flex items-end justify-between gap-2 h-28 px-1">
-                {last7Records.map((r) => {
-                  // 四段堆叠的分母必须是卧床总长（duration 纯睡眠 + awake）：
-                  // 旧实现拿纯睡眠当分母，四段和 >100%，awake 段被 overflow 裁掉
-                  const total = Math.max(1, r.durationMinutes + r.awakeMinutes);
-                  const deepPct = (r.deepSleepMinutes / total) * 100;
-                  const remPct = (r.remSleepMinutes / total) * 100;
-                  const lightPct = (r.lightSleepMinutes / total) * 100;
-                  const awakePct = (r.awakeMinutes / total) * 100;
-                  const isHovered = activeRecord?.id === r.id;
-
-                  return (
-                    <div
-                      key={r.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`查看 ${r.date} 的睡眠详情`}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHoveredRecord(r); } }}
-                      onClick={() => setHoveredRecord(r)}
-                      className="flex-1 flex flex-col items-center h-full justify-end cursor-pointer group"
-                    >
-                      <div
-                        className={`w-full max-w-[24px] h-20 rounded-md overflow-hidden flex flex-col-reverse ${
-                          isHovered ? `ring-2 ${theme.accentRing} shadow` : ''
-                        }`}
-                      >
-                        <div style={{ height: `${deepPct}%` }} className="bg-emerald-400" />
-                        <div style={{ height: `${lightPct}%` }} className="bg-sky-400" />
-                        <div style={{ height: `${remPct}%` }} className="bg-violet-400" />
-                        <div style={{ height: `${awakePct}%` }} className="bg-rose-400" />
-                      </div>
-
-                      <span
-                        className={`text-[9px] font-mono mt-1 ${
-                          isHovered ? accentText + ' font-bold' : textMuted
-                        }`}
-                      >
-                        {r.date.slice(5)}
+            <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2.5`}>
+              <div className="flex items-start justify-between gap-2 text-[10px]">
+                <span className="text-slate-300 font-mono min-w-0 leading-tight">
+                  {activeStage ? (
+                    <>
+                      <span className="text-slate-400">{activeStage.record.date.slice(5)}</span>
+                      <span className="block text-[9px] text-slate-400 tabular-nums">
+                        深 {activeStage.record.deepSleepMinutes}m · 浅 {activeStage.record.lightSleepMinutes}m · REM {activeStage.record.remSleepMinutes}m · 醒 {activeStage.record.awakeMinutes}m
                       </span>
-                    </div>
+                    </>
+                  ) : '点按任一晚查看明细'}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                {stageRows.map((row) => {
+                  const isHovered = activeRecord?.id === row.record.id;
+                  const segments = [
+                    { key: 'deep', value: row.deep, minutes: row.record.deepSleepMinutes, label: '深睡' },
+                    { key: 'light', value: row.light, minutes: row.record.lightSleepMinutes, label: '浅睡' },
+                    { key: 'rem', value: row.rem, minutes: row.record.remSleepMinutes, label: 'REM' },
+                    { key: 'awake', value: row.awake, minutes: row.record.awakeMinutes, label: '醒' },
+                  ] as const;
+                  return (
+                    <button
+                      key={row.record.id}
+                      type="button"
+                      onClick={() => setHoveredRecord(row.record)}
+                      aria-label={`${row.record.date} 睡眠分期：深睡 ${row.record.deepSleepMinutes} 分钟，浅睡 ${row.record.lightSleepMinutes} 分钟，REM ${row.record.remSleepMinutes} 分钟，清醒 ${row.record.awakeMinutes} 分钟`}
+                      className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-9"
+                    >
+                      <span className={`w-9 text-[10px] font-mono shrink-0 tabular-nums ${
+                        isHovered ? accentText + ' font-bold' : textMuted
+                      }`}>
+                        {row.record.date.slice(5)}
+                      </span>
+                      <span className={`flex-1 h-6 rounded-md overflow-hidden flex ${
+                        isHovered ? `ring-1 ${theme.accentRing}` : ''
+                      }`}>
+                        {segments.map((segment) => {
+                          const width = Math.max(0, segment.value);
+                          const shortLabel = segment.key === 'rem' ? 'R' : segment.label.slice(0, 1);
+                          const label = width >= 22
+                            ? `${segment.label} ${Math.round(width)}`
+                            : width >= 9
+                              ? `${Math.round(width)}%`
+                              : width >= 5
+                                ? shortLabel
+                                : '';
+                          return (
+                            <span
+                              key={segment.key}
+                              title={`${segment.label} ${shortMinutes(segment.minutes)}（${Math.round(width)}%）`}
+                              style={{ width: `${width}%`, background: STAGE_COLORS[segment.key] }}
+                              className="h-full flex items-center justify-center overflow-hidden whitespace-nowrap text-[8px] font-black text-[#06121f] tabular-nums"
+                            >
+                              {label}
+                            </span>
+                          );
+                        })}
+                      </span>
+                      <span className={`w-11 text-right text-[10px] font-mono shrink-0 tabular-nums ${
+                        isHovered ? accentText + ' font-bold' : textMuted
+                      }`}>
+                        {shortMinutes(row.record.durationMinutes)}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
 
-              <div className={`flex flex-col items-center gap-1 pt-1 border-t ${innerBorder} text-[10px] ${textSecondary}`}>
-                <div className="flex justify-center gap-3">
-                  <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />深睡
+              <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 border-t ${innerBorder} text-[9px] ${textMuted}`}>
+                {stageAvg && ([
+                  ['deep', '深睡'],
+                  ['light', '浅睡'],
+                  ['rem', 'REM'],
+                  ['awake', '清醒'],
+                ] as const).map(([key, label]) => (
+                  <span key={key} className="flex items-center gap-1 tabular-nums">
+                    <span className="w-2 h-2 rounded-sm" style={{ background: STAGE_COLORS[key] }} />
+                    {label} {stageAvg[key]}%
                   </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-sky-400" />浅睡
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-violet-400" />REM
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-rose-400" />清醒
-                  </span>
-                </div>
+                ))}
+                <span className="ml-auto text-slate-500">近 7 晚平均</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* View Mode 3: Circadian Gantt */}
+        {/* View Mode 3: Circadian（哑铃/区间图） */}
         {viewMode === 'circadian' && (
           <div className="space-y-2 animate-tab-fade-in">
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2`}>
@@ -450,53 +638,103 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({ records, onDeleteRecord, t
                 <span>09:00</span>
               </div>
 
-              {last7Records.map((r) => {
-                const [bh, bm] = r.bedtime.split(':').map(Number);
-                const [wh, wm] = r.wakeTime.split(':').map(Number);
-                const startM = (bh < 12 ? bh + 24 : bh) * 60 + bm;
-                const endM = (wh < 12 ? wh + 24 : wh) * 60 + wm;
+              <div className="flex items-center justify-between gap-2 text-[9px]">
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span
+                    className="w-3 h-2 rounded-sm border"
+                    style={{ background: `${theme.accentHex}18`, borderColor: `${theme.accentHex}55` }}
+                  />
+                  {targetLabel}
+                </span>
+                <span className="text-slate-500">点按任一行查看</span>
+              </div>
 
-                const rangeStart = 21 * 60;
-                const totalRange = 13 * 60;
-                const leftPercent = Math.max(0, Math.min(100, ((startM - rangeStart) / totalRange) * 100));
-                const widthPercent = Math.max(6, Math.min(100 - leftPercent, ((endM - startM) / totalRange) * 100));
-
-                const isHovered = activeRecord?.id === r.id;
-
-                return (
-                  <div
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`查看 ${r.date} 的睡眠详情`}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHoveredRecord(r); } }}
-                    onClick={() => setHoveredRecord(r)}
-                    className="flex items-center gap-2 cursor-pointer group"
-                  >
-                    <span
-                      className={`w-9 text-[10px] font-mono shrink-0 ${
-                        isHovered ? accentText + ' font-bold' : textMuted
-                      }`}
+              <div className="space-y-1.5">
+                {sleepRows.map(({ record, start, end }) => {
+                  const isHovered = activeRecord?.id === record.id;
+                  const left = rangePct(start);
+                  const right = rangePct(end);
+                  const width = Math.max(1.5, right - left);
+                  const dotLeft = Math.min(99, Math.max(1, left));
+                  const dotRight = Math.min(99, Math.max(1, right));
+                  return (
+                    <button
+                      key={record.id}
+                      type="button"
+                      onClick={() => setHoveredRecord(record)}
+                      aria-label={`${record.date} 就寝 ${record.bedtime}，醒来 ${record.wakeTime}`}
+                      className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-9"
                     >
-                      {r.date.slice(5)}
-                    </span>
+                      <span className={`w-9 text-[10px] font-mono shrink-0 tabular-nums ${
+                        isHovered ? accentText + ' font-bold' : textMuted
+                      }`}>
+                        {record.date.slice(5)}
+                      </span>
 
-                    <div className={`flex-1 h-5 bg-slate-950 rounded-lg relative overflow-hidden border ${innerBorder}`}>
-                      <div
-                        style={{
-                          left: `${leftPercent}%`,
-                          width: `${widthPercent}%`,
-                          backgroundColor: isHovered ? theme.accentHex : `${theme.accentHex}99`,
-                        }}
-                        className="absolute top-0.5 bottom-0.5 rounded flex items-center justify-between px-1.5"
-                      >
-                        <span className="text-[9px] font-mono text-white">{r.bedtime}</span>
-                        <span className="text-[9px] font-mono text-white">{r.wakeTime}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                      <span className={`flex-1 h-6 rounded-md relative overflow-hidden border ${innerBorder} ${
+                        isHovered ? `ring-1 ${theme.accentRing}` : ''
+                      }`} style={{ background: 'rgba(2,6,23,0.55)' }}>
+                        {/* 目标/均值窗口 */}
+                        {targetStart !== null && targetEnd !== null && (
+                          <span
+                            className="absolute inset-y-0 pointer-events-none"
+                            style={{
+                              left: `${rangePct(targetStart)}%`,
+                              width: `${Math.max(0, rangePct(targetEnd) - rangePct(targetStart))}%`,
+                              background: `${theme.accentHex}14`,
+                              borderLeft: `1px dashed ${theme.accentHex}55`,
+                              borderRight: `1px dashed ${theme.accentHex}55`,
+                            }}
+                          />
+                        )}
+                        {/* 时间网格 */}
+                        {[0, 3, 6, 9].map((hour) => (
+                          <span
+                            key={`grid-${hour}`}
+                            className="absolute inset-y-0 w-px pointer-events-none"
+                            style={{
+                              left: `${rangePct((hour + 24) * 60)}%`,
+                              background: 'rgba(255,255,255,0.07)',
+                            }}
+                          />
+                        ))}
+                        {/* 起卧连接线 + 两个端点 */}
+                        <span
+                          className="absolute top-1/2 h-[2px] -translate-y-1/2 rounded-full pointer-events-none"
+                          style={{
+                            left: `${left}%`,
+                            width: `${width}%`,
+                            background: `${theme.accentHex}${isHovered ? 'dd' : '99'}`,
+                          }}
+                        />
+                        <span
+                          className="absolute top-1/2 w-[7px] h-[7px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                          style={{
+                            left: `${dotLeft}%`,
+                            background: theme.accentHex,
+                            boxShadow: `0 0 0 2px rgba(2,6,23,0.9)`,
+                          }}
+                        />
+                        <span
+                          className="absolute top-1/2 w-[7px] h-[7px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                          style={{
+                            left: `${dotRight}%`,
+                            background: '#ffffff',
+                            border: `2px solid ${theme.accentHex}`,
+                            boxShadow: `0 0 0 2px rgba(2,6,23,0.9)`,
+                          }}
+                        />
+                      </span>
+
+                      <span className={`w-[74px] text-right text-[9px] font-mono shrink-0 tabular-nums ${
+                        isHovered ? accentText + ' font-bold' : textMuted
+                      }`}>
+                        {record.bedtime}→{record.wakeTime}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

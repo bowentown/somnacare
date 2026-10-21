@@ -958,3 +958,45 @@ test('旅程23 应用更新：显式检查 GitHub Release，网页版只展示�
   await expect(page.getByRole('button', { name: /下载并安装/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────
+// 旅程24 趋势图可读性：Y 轴刻度 / 分期横带 / 起卧目标窗口
+// ─────────────────────────────────────────────────────────────
+test('旅程24 趋势图可读性：坐标刻度、分期横带、起卧目标窗口', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await seed(page, [
+    mkRecord(dstr(-1, fixed), '23:10', '07:10', 88),
+    mkRecord(dstr(-2, fixed), '00:20', '08:10', 84),
+    mkRecord(dstr(-3, fixed), '23:45', '07:20', 91),
+    mkRecord(dstr(-4, fixed), '00:55', '08:40', 73),
+    mkRecord(dstr(-5, fixed), '23:20', '07:05', 86),
+    mkRecord(dstr(-6, fixed), '23:35', '07:35', 93),
+    mkRecord(dstr(-7, fixed), '00:10', '07:50', 82),
+  ], {
+    ...NIGHT_SCHEMA,
+    somnacare_user_profile: JSON.stringify({ targetBedtime: '23:30', targetWakeTime: '07:30' }),
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '趋势');
+  const chart = page.getByTestId('score-chart');
+  await expect(chart).toBeVisible();
+  const axisText = await chart.locator('text').allTextContents();
+  expect(axisText).toEqual(expect.arrayContaining(['100', '90', '75', '50']));
+  await expect(page.getByText(/均值 \d+/)).toBeVisible();
+
+  await page.getByRole('button', { name: '分期比例' }).click();
+  await expect(page.getByText('近 7 晚平均')).toBeVisible();
+  await expect(page.getByText(/深睡 \d+%/)).toBeVisible();
+
+  await page.getByRole('button', { name: '起卧时段' }).click();
+  const trendCard = page.getByText('趋势与结构').locator('xpath=ancestor::div[contains(@class,"rounded-3xl")][1]');
+  await expect(trendCard.getByText('目标 23:30–07:30')).toBeVisible();
+  await expect(trendCard.getByText('点按任一行查看')).toBeVisible();
+  expect(errors).toEqual([]);
+});
