@@ -997,6 +997,6 @@ test('旅程24 趋势图可读性：坐标刻度、分期横带、起卧目标�
   await page.getByRole('button', { name: '起卧时段' }).click();
   const trendCard = page.getByText('趋势与结构').locator('xpath=ancestor::div[contains(@class,"rounded-3xl")][1]');
   await expect(trendCard.getByText('目标 23:30–07:30')).toBeVisible();
-  await expect(trendCard.getByText('点按任一行查看')).toBeVisible();
+  await expect(trendCard.getByText(/\d{2}:\d{2}→\d{2}:\d{2}/).first()).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -5,6 +5,7 @@ import { ThemeConfig } from '../utils/themeStyles';
 import { SleepRecord } from '../types/sleep';
 import { renderClinicalSummary } from '../utils/clinicalSummaryCard';
 import { useModalA11y } from '../utils/modalA11y';
+import { setPetOverlayVisible } from '../utils/petOverlay';
 import { tapTick } from '../utils/haptics';
 
 interface Props {
@@ -20,7 +21,19 @@ interface Props {
  */
 export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, theme }) => {
   const a11y = useModalA11y(open, onClose, '就诊摘要');
+  // 原生桌宠是系统悬浮窗，会压在 WebView 弹窗上方；打开摘要时临时收起，
+  // 关闭后恢复（不改变桌宠开关）。Web/PWA 下该桥接为空操作。
+  useEffect(() => {
+    if (!open) return;
+    void setPetOverlayVisible(false);
+    return () => { void setPetOverlayVisible(true); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setZoomed(false);
+  }, [open]);
   const [includeTimes, setIncludeTimes] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -33,7 +46,7 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
     setNote(null);
     void (async () => {
       try {
-        const out = await renderClinicalSummary({ records, includeTimes, accentHex: theme.accentHex });
+        const out = await renderClinicalSummary({ records, includeTimes, theme });
         if (cancelled) return;
         const url = URL.createObjectURL(out.blob);
         if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
@@ -46,7 +59,7 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
       }
     })();
     return () => { cancelled = true; };
-  }, [open, includeTimes, records, theme.accentHex]);
+  }, [open, includeTimes, records, theme]);
 
   useEffect(() => () => {
     if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
@@ -56,7 +69,7 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
     tapTick();
     setBusy(true);
     try {
-      const out = await renderClinicalSummary({ records, includeTimes, accentHex: theme.accentHex });
+      const out = await renderClinicalSummary({ records, includeTimes, theme });
       const cap = (window as any).Capacitor;
       if (cap?.isNativePlatform?.()) {
         const b64 = out.dataUrl.split(',')[1];
@@ -116,11 +129,21 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
               <Loader2 className="w-4 h-4 animate-spin" /> 正在绘制…
             </div>
           ) : preview ? (
-            <img src={preview} alt="就诊摘要预览" className="w-full" />
+            <button
+              type="button"
+              onClick={() => setZoomed(true)}
+              aria-label="放大查看就诊摘要"
+              className="w-full cursor-zoom-in"
+            >
+              <img src={preview} alt="就诊摘要预览" className="w-full" />
+            </button>
           ) : (
             <div className="text-slate-400 text-xs py-10 px-6 text-center">{note ?? '暂无可生成的内容'}</div>
           )}
         </div>
+        {preview && (
+          <p className="text-[9px] text-slate-500 text-center -mt-2">点按预览可放大查看</p>
+        )}
 
         <button
           type="button"
@@ -151,6 +174,23 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
           {busy ? '处理中…' : '保存 / 分享'}
         </button>
       </div>
+
+      {zoomed && preview && (
+        <div
+          className="fixed inset-0 z-[120] bg-black/95 overflow-auto"
+          role="dialog"
+          aria-label="就诊摘要大图"
+          onClick={() => setZoomed(false)}
+        >
+          <img
+            src={preview}
+            alt="就诊摘要大图"
+            draggable={false}
+            className="w-[720px] max-w-none mx-auto my-6"
+          />
+          <p className="text-center text-slate-400 text-xs pb-6">点按任意处关闭</p>
+        </div>
+      )}
     </div>,
     document.body,
   );

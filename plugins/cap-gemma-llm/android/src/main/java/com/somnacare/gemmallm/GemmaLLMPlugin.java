@@ -643,6 +643,14 @@ public class GemmaLLMPlugin extends Plugin {
         call.resolve();
     }
 
+    /** 全屏弹窗打开/关闭时临时隐藏桌宠悬浮窗（不改变开关状态）。 */
+    @PluginMethod
+    public void petSetVisible(PluginCall call) {
+        boolean visible = !Boolean.FALSE.equals(call.getBoolean("visible", true));
+        PetOverlayService.setAppVisible(visible);
+        call.resolve();
+    }
+
     /** 读取 App 上次退出前留在 SharedPreferences 的目标分区（桌宠点击行时写入）。 */
     @PluginMethod
     public void petConsumePendingTab(PluginCall call) {

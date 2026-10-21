@@ -80,6 +80,9 @@ public class PetOverlayService extends Service {
     private WhaleGirlView whale;
     /** 在跑的桌宠视图（getPetState 查询用）：同进程同包静态可达，随 whale 生命周期同步置空。 */
     static volatile WhaleGirlView sActiveView;
+    /** 当前服务实例：全屏 Web 弹窗打开时临时隐藏悬浮窗（不改变桌宠开关）。 */
+    private static volatile PetOverlayService sInstance;
+    private static volatile boolean sAppVisible = true;
     private WindowManager.LayoutParams petParams;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -165,6 +168,7 @@ public class PetOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        sInstance = this;
         wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         ensureChannel();
@@ -183,6 +187,29 @@ public class PetOverlayService extends Service {
         } else {
             registerReceiver(screenReceiver, f);
         }
+    }
+
+    /**
+     * 全屏 Web 弹窗（就诊摘要/分享卡预览）打开时临时隐藏悬浮窗。
+     * 只改 View 可见性，不动 SharedPreferences 里的桌宠开关；关闭弹窗后恢复。
+     */
+    static void setAppVisible(boolean visible) {
+        sAppVisible = visible;
+        final PetOverlayService svc = sInstance;
+        if (svc == null) return;
+        svc.main.post(() -> {
+            try {
+                if (!visible) {
+                    svc.hideBubble();
+                    svc.hideFan();
+                    svc.hideZonePicker();
+                }
+                if (svc.petRoot != null) {
+                    svc.petRoot.setVisibility(visible ? View.VISIBLE : View.GONE);
+                }
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     @Override
@@ -267,6 +294,7 @@ public class PetOverlayService extends Service {
 
             OverlayGuard.apply(petRoot);   // A5：可点击悬浮窗防 tapjacking
             wm.addView(petRoot, petParams);
+            if (!sAppVisible) petRoot.setVisibility(View.GONE);
             whale.start();   // 窗口上屏成功才启动 33ms 自循环——失败路径才能完整回收
             main.post(drowsyTick);
         } catch (Throwable e) {
@@ -1185,6 +1213,8 @@ public class PetOverlayService extends Service {
 
     @Override
     public void onDestroy() {
+        if (sInstance == this) sInstance = null;
+        sAppVisible = true;
         main.removeCallbacks(drowsyTick);
         main.removeCallbacks(eyeFeedback);
         main.removeCallbacks(longPressBuzz);

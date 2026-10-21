@@ -6,6 +6,7 @@ import { ThemeConfig } from '../utils/themeStyles';
 import { SleepRecord } from '../types/sleep';
 import { renderWeeklyCard } from '../utils/sleepShareCard';
 import { useModalA11y } from '../utils/modalA11y';
+import { setPetOverlayVisible } from '../utils/petOverlay';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 
 interface Props {
@@ -24,6 +25,12 @@ export const ShareCardModal: React.FC<Props> = ({ open, onClose, records, theme 
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    void setPetOverlayVisible(false);
+    return () => { void setPetOverlayVisible(true); };
+  }, [open]);
 
   // 生成（主题色/开关变化即重绘）
   useEffect(() => {

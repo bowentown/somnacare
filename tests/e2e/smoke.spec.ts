@@ -47,10 +47,10 @@ test('得分曲线几何自洽：100 分点在 90 分绿线上方', async ({ pag
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '趋势' }).click();
   await page.waitForTimeout(600);
   const geo = await page.evaluate(() => {
-    // 90 分参考线（emerald）与 100 分数据点（cy 最小的 circle）。
+    // 90 分参考线（emerald stroke）与 100 分数据点（cy 最小的 circle）。
     // cy 缺失的圆点必须过滤——Number(null)===0 曾让断言对着一堆
     // 无坐标圆点假绿（复审 45 轮 D5）
-    const line = document.querySelector('svg line.text-emerald-300') as SVGLineElement | null;
+    const line = document.querySelector('svg line[stroke="#5ee9b5"]') as SVGLineElement | null;
     const circles = [...document.querySelectorAll('svg circle')]
       .map((c) => c.getAttribute('cy'))
       .filter((v): v is string => v !== null)

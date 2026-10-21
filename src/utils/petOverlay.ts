@@ -247,6 +247,18 @@ export async function stopPet(): Promise<void> {
 }
 
 /**
+ * 全屏弹窗（就诊摘要/分享卡）打开时临时隐藏原生桌宠悬浮窗。
+ * 只改窗口可见性，不动 localStorage 里的开关；关闭后恢复。
+ */
+export async function setPetOverlayVisible(visible: boolean): Promise<void> {
+  const g = gemma();
+  if (!g?.petSetVisible) return;
+  try {
+    await g.petSetVisible({ visible });
+  } catch { /* 旧版 APK 没有该桥接：忽略，不影响弹窗 */ }
+}
+
+/**
  * 读取桌宠写入的"目标分区"并清除（预留入口，当前按钮不跳转）。
  */
 export async function consumePendingTab(): Promise<string | null> {

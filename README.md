@@ -79,6 +79,7 @@ npm run dev          # http://localhost:3000
 - **7 天得分曲线**：Y 轴 50/75/90/100 刻度、75–100 目标带、90/75 参考线、7 晚均值与缺数据断点；
 - **分期比例**：每晚一条 100% 横带，深睡/浅睡/REM/清醒直接标注，附 7 晚平均；
 - **起卧时段**：哑铃区间图 + 目标作息窗口 + 精确起卧时刻，一眼看出作息漂移；
+- **就诊摘要**：1080×1440 Canvas 报告，底色与强调色跟随当前主题，可切换是否包含具体时刻；导出图不含梦境/心情/习惯。
 - **本周睡眠小结**：平均评分、日均时长、场均深睡、**就寝波动 ±Xm**（作息一致性，绿色=稳 / 红色=波动大）；
 - **本周达标战报**：按"已度过天数 − 有记录天数"如实统计，没记录的夜晚不会被凭空消失；
 - **手机使用对照**：每天的放下手机/拿起时刻与夜间亮屏次数（仅聚合数据，基于屏幕亮灭，非睡眠监测），带日期标注。
@@ -195,6 +196,7 @@ npm run dev          # http://localhost:3000
 ## 🧬 技术栈
 
 - **前端**：React 19 + TypeScript + Vite + Tailwind CSS；Web Audio API 实时合成 9 种音效；品牌视觉（图标/开屏/启动屏）由 `tools/` 下的手写 PNG/SVG 生成器产出
+- **图表**：评分趋势使用 [Recharts](https://github.com/recharts/recharts)（MIT，React 19）；图表语法参考 shadcn/ui Charts / Tremor / Observable Plot，分期与起卧图使用自定义 SVG
 - **原生封装**：Capacitor 8（minSdk 24），GitHub Actions 全自动出包
 - **端侧 LLM**：Web 路径 [wllama](https://github.com/transformersjs/wllama)（llama.cpp WASM）+ Qwen3-0.6B；原生路径自定义插件封装 Google MediaPipe LLM Inference（Gemma 3 1B int4，mmap 加载、断点续传、停滞看门狗、流式生成）
 - **全局滤镜**：前台服务 + `TYPE_APPLICATION_OVERLAY` 双悬浮层，窗口级 alpha 按 Android 12+ 非信任触摸豁免规范控制，真实物理分辨率全屏覆盖
@@ -203,8 +205,8 @@ npm run dev          # http://localhost:3000
 
 这个项目把"验证体系"当作与功能同等重要的部分来建设：
 
-- **32 条静态护栏**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
-- **20 条 Playwright e2e**：五分区渲染、自动提议全链路（含 LLM 端点 mock 的"编数字拒收"）、授权即时生效、备份往返、主题持久、全分区漫游零未捕获异常看门狗；
+- **33 条静态护栏**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
+- **53 条 Playwright e2e**：五分区渲染、自动提议全链路（含 LLM 端点 mock 的"编数字拒收"）、授权即时生效、备份往返、主题持久、全分区漫游零未捕获异常看门狗；
 - **变异测试方法论**：对护栏本身做变异测试（破坏代码看护栏会不会红），按结果把"验字符串"升级为"验代码形态与调用点"；
 - **服务端冒烟**：鉴权结构不变量、fail-open 部署折中的可发现性锁、兜底回复数据完整性。
 
@@ -220,7 +222,7 @@ somnacare/
 ├── plugins/cap-gemma-llm/ # 本地插件（MediaPipe Gemma、护眼服务、到点提醒、
 │   │                      # 桌宠行为系统、图标切换）
 ├── plugins/cap-usage-signal/ # 使用行为信号（亮屏事件聚合，自动提议数据源）
-├── tools/                 # 图标/启动屏生成器、manifest 注入、32 条静态护栏
+├── tools/                 # 图标/启动屏生成器、manifest 注入、33 条静态护栏
 ├── native-resources/      # 全密度图标、四主题图标、自适应前景、铃声
 ├── docs/screenshots/      # README 截图
 ├── tests/e2e/             # Playwright：smoke / 提议链路 / 全应用流程 / 朋友圈
@@ -233,7 +235,7 @@ somnacare/
 npm install --legacy-peer-deps
 npm run dev          # http://localhost:3000
 
-npm run verify       # 32 条静态护栏
+npm run verify       # 33 条静态护栏
 npm run build        # Web 产物（PWA 可直接部署 dist/）
 npx playwright test  # 53 条浏览器 e2e
 

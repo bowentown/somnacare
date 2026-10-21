@@ -1,17 +1,16 @@
 /**
- * 就诊摘要卡（第 61 轮再设计）：暖纸 + 深墨封面的编辑式睡眠报告。
+ * 就诊摘要卡（第 61 轮再设计，第 64 轮主题化）：编辑式睡眠报告。
  *
- * 上一版是"白底 + 四个圆角盒子 + 青色条"，干净但像生成的仪表盘。
- * 这一版按纸质报告/杂志跨页的逻辑排：
- *  - 深墨封面带承载标题与"平均睡眠"主数字，底部同色页脚收口；
- *  - 统计区不用四个盒子，改为细线分隔的四栏，减少 AI 味；
- *  - 作息带加"平均窗口"底纹、隔行纸色、胶囊条与金色刻度；
- *  - 标题使用衬线体（Noto Serif/Songti），数据用无衬线，层级更明确；
- *  - 所有文本先测量再落笔：超宽降字号/拆行/截断，绝不越界。
+ * 第 64 轮用户反馈：固定暖白纸面在暗色主题里像一张突兀的白纸，
+ * 所以改为跟随 App 主题的深色报告：
+ *  - 页面/面板/封面从 theme.pageBg/cardBg/cardInnerBg 解析；
+ *  - 主数字、胶囊、平均窗口、图表条全部用 theme.accentHex；
+ *  - 标题保留衬线体，数据无衬线；所有文本先测量再落笔。
  *
  * 隐私边界不变：默认不打印具体时刻；不含梦境、心情、习惯。
  */
 import { SleepRecord } from '../types/sleep';
+import type { ThemeConfig } from './themeStyles';
 import { nightsOnly } from './recordFilter';
 import { clockMinutes, circularDev } from './clockMath';
 import { toLocalDateString } from './dateUtils';
@@ -21,18 +20,6 @@ export const CLINICAL_H = 1440;
 export const CLINICAL_NIGHTS = 14;
 
 const M = 72;
-const PAPER = '#F5F0E6';
-const PAPER_DEEP = '#EDE5D7';
-const PANEL = '#FFFDF8';
-const INK = '#15212B';
-const MUTED = '#5F6B76';
-const FAINT = '#8A949D';
-const LINE = '#DED4C3';
-const COVER = '#0D1D2A';
-const COVER_2 = '#153648';
-const GOLD = '#C8A464';
-const ACCENT = '#0F5C55';
-const MINT = '#58D6C2';
 const SERIF = '"Noto Serif SC", "Songti SC", "Source Han Serif SC", serif';
 const SANS = 'system-ui, -apple-system, "PingFang SC", sans-serif';
 const MONO = 'ui-monospace, "SF Mono", monospace';
@@ -40,8 +27,52 @@ const MONO = 'ui-monospace, "SF Mono", monospace';
 export interface ClinicalSummaryInput {
   records: SleepRecord[];
   includeTimes: boolean;
-  accentHex?: string;   // 兼容接口：报告使用固定医疗配色，不跟 App 主题
+  /** App 主题：报告底色/强调色跟随当前主题 */
+  theme?: ThemeConfig;
+  accentHex?: string;   // 兼容旧调用：没有 theme 时退回强调色
   now?: Date;
+}
+
+function hexFromClass(value: string | undefined, fallback: string): string {
+  const match = value?.match(/#([0-9a-fA-F]{6})/);
+  return match ? `#${match[1]}` : fallback;
+}
+
+function rgbaHex(hex: string, alpha: number): string {
+  const n = Number.parseInt(hex.replace('#', ''), 16);
+  if (!Number.isFinite(n)) return `rgba(255,255,255,${alpha})`;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+function mixHex(hex: string, target: string, amount: number): string {
+  const a = Number.parseInt(hex.replace('#', ''), 16);
+  const b = Number.parseInt(target.replace('#', ''), 16);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return hex;
+  const mix = (x: number, y: number): number => Math.round(x + (y - x) * amount);
+  const r = mix((a >> 16) & 255, (b >> 16) & 255);
+  const g = mix((a >> 8) & 255, (b >> 8) & 255);
+  const bl = mix(a & 255, b & 255);
+  return `#${((r << 16) | (g << 8) | bl).toString(16).padStart(6, '0')}`;
+}
+
+function paletteFor(theme: ThemeConfig | undefined, accentHex?: string) {
+  const accent = theme?.accentHex || accentHex || '#818cf8';
+  return {
+    paper: hexFromClass(theme?.pageBg, '#090d1a'),
+    paperDeep: hexFromClass(theme?.cardBg, '#1a2338'),
+    panel: hexFromClass(theme?.cardInnerBg, '#0c1222'),
+    ink: '#F8FAFC',
+    muted: '#CBD5E1',
+    faint: '#94A3B8',
+    line: 'rgba(148,163,184,0.18)',
+    cover: hexFromClass(theme?.pageBg, '#090d1a'),
+    cover2: hexFromClass(theme?.cardBg, '#1a2338'),
+    accent,
+    accentSoft: rgbaHex(accent, 0.12),
+    accentLine: rgbaHex(accent, 0.45),
+    accentBar: mixHex(accent, '#FFFFFF', 0.35),
+    chipBg: 'rgba(255,255,255,0.045)',
+  };
 }
 
 export interface ClinicalSummaryData {
@@ -142,8 +173,26 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D 不可用');
 
-  // ── 暖纸底 ──
-  ctx.fillStyle = PAPER;
+  // 主题色板：暗色报告，不再固定暖白纸
+  const P = paletteFor(input.theme, input.accentHex);
+  const PAPER = P.paper;
+  const PAPER_DEEP = P.paperDeep;
+  const PANEL = P.panel;
+  const INK = P.ink;
+  const MUTED = P.muted;
+  const FAINT = P.faint;
+  const LINE = P.line;
+  const COVER = P.cover;
+  const COVER_2 = P.cover2;
+  const GOLD = P.accent;
+  const ACCENT = P.accent;
+  const MINT = P.accentBar;
+
+  // ── 主题页面底色 ──
+  const pageGrad = ctx.createLinearGradient(0, 0, 0, CLINICAL_H);
+  pageGrad.addColorStop(0, PAPER);
+  pageGrad.addColorStop(1, PAPER_DEEP);
+  ctx.fillStyle = pageGrad;
   ctx.fillRect(0, 0, CLINICAL_W, CLINICAL_H);
 
   // ── 封面带 ──
@@ -156,9 +205,9 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
 
   // 右上极光：一层低透明度径向光，不做花哨渐变球
   const glow = ctx.createRadialGradient(880, 70, 20, 880, 70, 420);
-  glow.addColorStop(0, 'rgba(88,214,194,0.20)');
-  glow.addColorStop(0.55, 'rgba(88,214,194,0.06)');
-  glow.addColorStop(1, 'rgba(88,214,194,0)');
+  glow.addColorStop(0, rgbaHex(GOLD, 0.20));
+  glow.addColorStop(0.55, rgbaHex(GOLD, 0.06));
+  glow.addColorStop(1, rgbaHex(GOLD, 0));
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, CLINICAL_W, coverH);
 
@@ -182,36 +231,36 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   // 品牌行
   ctx.textAlign = 'left';
   ctx.fillStyle = GOLD;
-  ctx.font = `600 20px ${SANS}`;
+  ctx.font = `600 22px ${SANS}`;
   ctx.fillText('SomnaCare', M, 88);
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.font = `400 19px ${SANS}`;
+  ctx.font = `400 20px ${SANS}`;
   ctx.fillText('极光睡眠', M + 124, 88);
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,0.42)';
-  ctx.font = `500 15px ${MONO}`;
+  ctx.font = `500 17px ${MONO}`;
   ctx.fillText('SLEEP REPORT', CLINICAL_W - M, 88);
 
   // 标题（衬线）
   ctx.textAlign = 'left';
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = `600 56px ${SERIF}`;
+  ctx.font = `600 60px ${SERIF}`;
   ctx.fillText('睡眠就诊摘要', M, 192);
   ctx.fillStyle = 'rgba(255,255,255,0.62)';
-  ctx.font = `400 22px ${SANS}`;
+  ctx.font = `400 24px ${SANS}`;
   ctx.fillText(`${rangeLabel}  ·  ${nights.length} 晚`, M, 236);
 
   // 主数字：平均睡眠
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = `500 17px ${SANS}`;
+  ctx.font = `500 19px ${SANS}`;
   ctx.fillText('平均睡眠', CLINICAL_W - M, 166);
   ctx.fillStyle = GOLD;
-  ctx.font = `600 54px ${SERIF}`;
+  ctx.font = `600 58px ${SERIF}`;
   ctx.fillText(avgDuration !== null ? hm(avgDuration) : '—', CLINICAL_W - M, 236);
 
   // 封面下缘金线
-  ctx.strokeStyle = 'rgba(200,164,100,0.55)';
+  ctx.strokeStyle = rgbaHex(GOLD, 0.55);
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(M, coverH - 30);
@@ -246,9 +295,9 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     }
     ctx.textAlign = 'left';
     ctx.fillStyle = MUTED;
-    ctx.font = `500 17px ${SANS}`;
+    ctx.font = `500 20px ${SANS}`;
     ctx.fillText(s.label, x, statsTop + 24);
-    drawFitted(ctx, s.value, x, statsTop + 82, colW - 48, (v) => `600 ${v}px ${SANS}`, 42, INK);
+    drawFitted(ctx, s.value, x, statsTop + 82, colW - 48, (v) => `600 ${v}px ${SANS}`, 44, INK);
   });
   ctx.strokeStyle = LINE;
   ctx.lineWidth = 1;
@@ -265,13 +314,13 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     { label: '起床波动', value: `±${wakeDev} 分` },
   ];
   let chipX = M;
-  ctx.font = `500 17px ${SANS}`;
+  ctx.font = `500 19px ${SANS}`;
   for (const chip of chips) {
     const labelW = ctx.measureText(chip.label).width;
-    ctx.font = `600 21px ${SANS}`;
+    ctx.font = `600 23px ${SANS}`;
     const valueW = ctx.measureText(chip.value).width;
     const w = labelW + valueW + 44;
-    ctx.fillStyle = 'rgba(255,253,248,0.7)';
+    ctx.fillStyle = P.chipBg;
     roundedPath(ctx, chipX, chipY, w, chipH, chipH / 2);
     ctx.fill();
     ctx.strokeStyle = LINE;
@@ -279,10 +328,10 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     ctx.stroke();
     ctx.textAlign = 'left';
     ctx.fillStyle = MUTED;
-    ctx.font = `500 17px ${SANS}`;
+    ctx.font = `500 19px ${SANS}`;
     ctx.fillText(chip.label, chipX + 20, chipY + 28);
     ctx.fillStyle = ACCENT;
-    ctx.font = `600 21px ${SANS}`;
+    ctx.font = `600 23px ${SANS}`;
     ctx.fillText(chip.value, chipX + 20 + labelW + 10, chipY + 29);
     chipX += w + 14;
   }
@@ -293,7 +342,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   const panelH = CLINICAL_H - 104 - panelTop - 20;
   const panelW = CLINICAL_W - M * 2;
   ctx.save();
-  ctx.shadowColor = 'rgba(21,33,43,0.07)';
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowBlur = 24;
   ctx.shadowOffsetY = 10;
   ctx.fillStyle = PANEL;
@@ -307,10 +356,10 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
 
   ctx.textAlign = 'left';
   ctx.fillStyle = INK;
-  ctx.font = `600 27px ${SERIF}`;
+  ctx.font = `600 32px ${SERIF}`;
   ctx.fillText(`近 ${chrono.length} 晚作息`, M + 30, panelTop + 50);
   ctx.fillStyle = FAINT;
-  ctx.font = `400 14px ${MONO}`;
+  ctx.font = `400 18px ${MONO}`;
   const fmtClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const avgLabel = avgBed !== null && avgWakeClock !== null
     ? `  ·  平均 ${fmtClock(avgBed)}–${fmtClock(avgWakeClock)}`
@@ -324,10 +373,10 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   roundedPath(ctx, legendX, legendY - 8, 20, 9, 4.5);
   ctx.fill();
   ctx.fillStyle = MUTED;
-  ctx.font = `400 14px ${SANS}`;
+  ctx.font = `400 17px ${SANS}`;
   ctx.fillText('睡眠窗口', legendX + 28, legendY);
   legendX += 110;
-  ctx.fillStyle = 'rgba(15,92,85,0.10)';
+  ctx.fillStyle = rgbaHex(ACCENT, 0.12);
   roundedPath(ctx, legendX, legendY - 8, 20, 9, 4.5);
   ctx.fill();
   ctx.fillStyle = MUTED;
@@ -357,7 +406,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     );
     const x1 = xOf(bandStart);
     const x2 = Math.max(x1 + 6, xOf(bandEnd));
-    ctx.fillStyle = 'rgba(15,92,85,0.065)';
+    ctx.fillStyle = rgbaHex(ACCENT, 0.10);
     roundedPath(ctx, x1, plotTop - 14, x2 - x1, rowsH + 28, 12);
     ctx.fill();
   }
@@ -367,12 +416,12 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     ['20:00', 20 * 60], ['23:00', 23 * 60], ['02:00', 26 * 60], ['05:00', 29 * 60], ['08:00', 32 * 60],
   ];
   ctx.textAlign = 'center';
-  ctx.font = `500 15px ${MONO}`;
+  ctx.font = `500 19px ${MONO}`;
   for (const [label, minute] of ticks) {
     const x = axisX0 + ((minute - rangeStart) / rangeMin) * (axisX1 - axisX0);
     ctx.fillStyle = FAINT;
     ctx.fillText(label, x, panelTop + 104);
-    ctx.strokeStyle = '#EEE7DA';
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(x, plotTop - 10);
@@ -383,7 +432,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   // 隔行纸色
   chrono.forEach((_, i) => {
     if (i % 2 === 0) return;
-    ctx.fillStyle = 'rgba(237,229,215,0.45)';
+    ctx.fillStyle = 'rgba(255,255,255,0.025)';
     ctx.fillRect(axisX0, plotTop + i * rowH, axisX1 - axisX0, rowH);
   });
 
@@ -395,7 +444,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     const y = plotTop + i * rowH + rowH / 2;
     ctx.textAlign = 'right';
     ctx.fillStyle = MUTED;
-    ctx.font = `400 15px ${MONO}`;
+    ctx.font = `400 19px ${MONO}`;
     ctx.fillText(r.date.slice(5), axisX0 - 16, y + 5);
 
     const bed = clockOnTimeline(r.bedtime);
@@ -409,10 +458,10 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
 
     ctx.textAlign = 'left';
     ctx.fillStyle = MUTED;
-    ctx.font = `400 15px ${MONO}`;
+    ctx.font = `400 19px ${MONO}`;
     const right = input.includeTimes ? `${r.bedtime} → ${r.wakeTime}` : hm(r.durationMinutes);
     drawFitted(ctx, right, axisX1 + 20, y + 5, CLINICAL_W - M - (axisX1 + 20) - 8,
-      (v) => `400 ${v}px ${MONO}`, 15, MUTED);
+      (v) => `400 ${v}px ${MONO}`, 19, MUTED);
   });
 
   ctx.strokeStyle = LINE;
@@ -429,7 +478,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   footer.addColorStop(1, COVER_2);
   ctx.fillStyle = footer;
   ctx.fillRect(0, footerTop, CLINICAL_W, CLINICAL_H - footerTop);
-  ctx.strokeStyle = 'rgba(200,164,100,0.45)';
+  ctx.strokeStyle = rgbaHex(GOLD, 0.45);
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, footerTop);
@@ -438,14 +487,14 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
 
   ctx.textAlign = 'left';
   ctx.fillStyle = GOLD;
-  ctx.font = `600 16px ${SANS}`;
+  ctx.font = `600 19px ${SANS}`;
   ctx.fillText('SomnaCare · 极光睡眠', M, footerTop + 42);
   ctx.fillStyle = 'rgba(255,255,255,0.42)';
-  ctx.font = `400 14px ${SANS}`;
+  ctx.font = `400 17px ${SANS}`;
   ctx.fillText('自报数据 · 非临床检测', M, footerTop + 68);
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,0.38)';
-  ctx.font = `400 14px ${MONO}`;
+  ctx.font = `400 17px ${MONO}`;
   ctx.fillText(`EXPORT ${toLocalDateString(now)}`, CLINICAL_W - M, footerTop + 54);
 
   const blob = await new Promise<Blob>((resolve, reject) =>
