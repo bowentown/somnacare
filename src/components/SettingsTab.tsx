@@ -105,6 +105,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   autoCheckSignal,
 }) => {
   const [themeOpen, setThemeOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [petOpen, setPetOpen] = useState(false);
   const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
   // 模型诊断默认折叠：逐夜行对普通用户意义有限，保留三项摘要即可
   const [modelDiagOpen, setModelDiagOpen] = useState(false);
@@ -116,6 +118,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const adSkipNative = isNativePlatform();
   const [adSkip, setAdSkip] = useState<AdSkipStatus>({ enabled: false, serviceEnabled: false, hits: 0 });
   const [adSkipBusy, setAdSkipBusy] = useState(false);
+  const [adSkipOpen, setAdSkipOpen] = useState(false);
   const adSkipPollRef = useRef<number | null>(null);
   // Shizuku 守护：只做状态展示与用户显式触发的修复，不自动改系统设置
   const [shizuku, setShizuku] = useState<ShizukuStatus>({
@@ -163,6 +166,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       const st = await setAdSkipEnabled(next);
       setAdSkip(st);
       if (next && !st.serviceEnabled) {
+        setAdSkipOpen(true);
         await openAdSkipAccessibilitySettings();
         if (adSkipPollRef.current !== null) window.clearInterval(adSkipPollRef.current);
         let tries = 0;
@@ -556,6 +560,20 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     reader.readAsText(file);
   };
 
+  const shizukuStatusText = !shizuku.installed
+    ? '未安装（可选）'
+    : !shizuku.running
+      ? '未运行'
+      : shizuku.granted
+        ? '已授权'
+        : '待授权';
+
+  const backupDays = lastBackupAt ? Math.floor((Date.now() - lastBackupAt) / 86400000) : null;
+  const backupWarn = backupDays === null ? records.length >= 7 : backupDays > 30;
+  const backupSummary = `${records.length} 条 · ${
+    backupDays === null ? '未备份' : backupDays === 0 ? '今天已备份' : `${backupDays} 天前备份`
+  }`;
+
   return (
     <div className={`space-y-4 pb-28 ${theme.textPrimary}`}>
       {/* 1. Theme Color Palette Section（默认折叠，点头部展开） */}
@@ -655,7 +673,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </div>
           <div>
             <h3 className="text-sm font-black text-white">我的作息</h3>
-            <p className="text-[10px] text-slate-400">决定自动记录的判定基准（哪段算主睡）；选"不规律"就不做自动提议</p>
+            <p className="text-[10px] text-slate-400">决定自动记录的主睡时段</p>
           </div>
         </div>
         <div className="flex gap-1.5">
@@ -695,14 +713,14 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
         {(userProfile.chronotype ?? 'night') === 'irregular' && (
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            已关闭自动提议：作息不规律时，自动推断更容易出错。手动补录不受影响。
+            已关闭自动提议；手动补录不受影响。
           </p>
         )}
       </div>
 
-      {/* 摇一摇/开屏广告跳过（第 59 轮）：默认关闭，依赖系统无障碍权限 */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
-        <div className="flex items-center justify-between gap-3">
+      {/* 摇一摇/开屏广告跳过（第 59 轮；第 63 轮折叠化） */}
+      <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
+        <div className="flex items-center justify-between gap-3 p-5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
               <MousePointerClick className="w-5 h-5" />
@@ -736,124 +754,112 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           )}
         </div>
 
+        {adSkipNative && (
+          <div className="px-5 pb-4 -mt-1 flex items-center justify-between gap-2 text-[10px]">
+            <span className={adSkip.enabled && adSkip.serviceEnabled ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+              {adSkip.enabled
+                ? (adSkip.serviceEnabled ? '已生效' : '待授权')
+                : '已关闭'}
+              <span className="text-slate-500 font-mono font-normal"> · 已跳过 {adSkip.hits} 次</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setAdSkipOpen((v) => !v)}
+              aria-expanded={adSkipOpen}
+              className="flex items-center gap-1 text-slate-400 font-bold cursor-pointer shrink-0"
+            >
+              设置
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${adSkipOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+        )}
+
+        {!adSkipNative && (
+          <p className="px-5 pb-4 -mt-1 text-[10px] text-slate-400">安装 APK 后可用</p>
+        )}
+
         {adSkipNative && adSkip.enabled && !adSkip.serviceEnabled && (
           <button
             type="button"
             onClick={() => void openAdSkipAccessibilitySettings()}
-            className="w-full py-2.5 rounded-xl border border-amber-400/50 bg-amber-500/10 text-amber-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
+            className="mx-5 mb-4 w-[calc(100%-2.5rem)] py-2.5 rounded-xl border border-amber-400/50 bg-amber-500/10 text-amber-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
           >
-            无障碍服务未开启 · 点此重新开启
+            无障碍服务未开启 · 点此开启
           </button>
         )}
 
-        {adSkipNative && (
-          <div className="flex items-center justify-between gap-2 text-[10px]">
-            <span className={adSkip.enabled && adSkip.serviceEnabled ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
-              {adSkip.enabled
-                ? (adSkip.serviceEnabled ? '已生效' : '待授权（在系统设置里开启本应用的无障碍服务）')
-                : '已关闭'}
-            </span>
-            <span className="text-slate-500 font-mono shrink-0">已跳过 {adSkip.hits} 次</span>
-          </div>
-        )}
-
-        <p className="text-[10px] text-slate-400 leading-relaxed">
-          只匹配「跳过」类文字或 skip 控件，不读取输入内容，数据不离开本机。
-        </p>
-
-        {adSkipNative && (
-          <details className="rounded-xl bg-black/15 border border-slate-700/50 p-3">
-            <summary className="text-[10px] font-bold text-slate-300 cursor-pointer select-none">
-              服务被系统关闭了？看这里
-            </summary>
-            <div className="mt-2 space-y-2 text-[10px] text-slate-400 leading-relaxed">
-              <p>
-                重启、系统更新或省电清理后，Android 可能自动关闭无障碍服务；重新打开上方开关即可恢复。
-              </p>
-              <p>
-                想让它更稳：在系统设置里允许本应用自启动、关闭电池优化，并在最近任务里锁定本应用。
-              </p>
-              <p>
-                如果无障碍开关是灰的：应用信息 → 右上角菜单 → 允许受限设置。
-              </p>
-              <div className="flex gap-2 pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => void handleBatteryRequest()}
-                  className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                >
-                  电池优化白名单
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void openAdSkipAccessibilitySettings()}
-                  className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                >
-                  无障碍设置
-                </button>
-              </div>
-              {batteryIgnored !== null && (
-                <p className={batteryIgnored ? 'text-emerald-400' : 'text-slate-500'}>
-                  电池优化：{batteryIgnored ? '已豁免' : '未豁免'}
-                </p>
-              )}
-
-              <div className="mt-1 pt-2 border-t border-slate-700/50 space-y-2">
-                <p className="font-bold text-slate-300">Shizuku 守护（可选）</p>
-                {!shizuku.installed ? (
-                  <p>
-                    未检测到 Shizuku。它能让本应用以 shell 身份把被系统关掉的无障碍开关写回来；
-                    不装也不影响手动开启。
-                  </p>
-                ) : (
-                  <>
-                    <p>
-                      {!shizuku.running
-                        ? 'Shizuku 已安装但服务未运行，请先打开 Shizuku 启动服务。'
-                        : shizuku.granted
-                          ? 'Shizuku 已运行并授权，被系统关掉后可一键修回。'
-                          : 'Shizuku 已运行，尚未授权。'}
-                    </p>
-                    <div className="flex gap-2">
-                      {!shizuku.running && (
-                        <button
-                          type="button"
-                          onClick={() => { tapTick(); void openShizukuApp(); }}
-                          className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                        >
-                          打开 Shizuku
-                        </button>
-                      )}
-                      {shizuku.running && !shizuku.granted && (
-                        <button
-                          type="button"
-                          onClick={() => void handleShizukuAuthorize()}
-                          disabled={shizukuBusy}
-                          className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform disabled:opacity-50"
-                        >
-                          {shizukuBusy ? '等待授权…' : '授权 Shizuku'}
-                        </button>
-                      )}
-                      {shizuku.running && shizuku.granted && (
-                        <button
-                          type="button"
-                          onClick={() => void handleShizukuRepair()}
-                          disabled={shizukuBusy}
-                          className="flex-1 py-2 rounded-lg bg-emerald-600/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform disabled:opacity-50"
-                        >
-                          {shizukuBusy ? '修复中…' : '用 Shizuku 修复无障碍'}
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-                {shizukuMsg && <p className="text-amber-300">{shizukuMsg}</p>}
-                <p className="text-slate-500">
-                  Shizuku 自己也必须在运行；手机重启后若 Shizuku 未自动启动，本功能不可用。
-                </p>
-              </div>
+        {adSkipNative && adSkipOpen && (
+          <div className="px-5 pb-5 pt-3 border-t border-slate-700/60 space-y-2.5">
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              只识别「跳过」控件，不读取输入内容。
+            </p>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              重启/更新/省电清理后可能被关；点上方开关或下方按钮恢复。
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleBatteryRequest()}
+                className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+              >
+                电池优化白名单
+              </button>
+              <button
+                type="button"
+                onClick={() => void openAdSkipAccessibilitySettings()}
+                className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+              >
+                无障碍设置
+              </button>
             </div>
-          </details>
+            {batteryIgnored !== null && (
+              <p className={`text-[10px] ${batteryIgnored ? 'text-emerald-400' : 'text-slate-500'}`}>
+                电池优化：{batteryIgnored ? '已豁免' : '未豁免'}
+              </p>
+            )}
+
+            <div className="pt-2 border-t border-slate-700/50 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-300">
+                    Shizuku 守护
+                    <span className="ml-1 font-normal text-slate-500">可选</span>
+                  </p>
+                  <p className={`text-[10px] ${shizuku.granted ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {shizukuStatusText}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={shizukuBusy}
+                  onClick={() => {
+                    tapTick();
+                    if (!shizuku.installed || !shizuku.running) {
+                      void openShizukuApp();
+                    } else if (!shizuku.granted) {
+                      void handleShizukuAuthorize();
+                    } else {
+                      void handleShizukuRepair();
+                    }
+                  }}
+                  className={`shrink-0 px-3 py-2 rounded-lg text-[10px] font-bold cursor-pointer active:scale-95 transition-transform disabled:opacity-50 ${
+                    shizuku.granted
+                      ? 'bg-emerald-600/20 border border-emerald-400/40 text-emerald-200'
+                      : 'bg-slate-800/80 border border-slate-600 text-slate-200'
+                  }`}
+                >
+                  {shizukuBusy ? '处理中…' : !shizuku.installed ? '了解' : !shizuku.running ? '打开' : !shizuku.granted ? '授权' : '修复'}
+                </button>
+              </div>
+              {shizukuMsg && <p className="text-[10px] text-amber-300 leading-relaxed">{shizukuMsg}</p>}
+              <p className="text-[9px] text-slate-500 leading-relaxed">
+                需保持 Shizuku 运行；重启后未启动则不可用。
+              </p>
+            </div>
+            <p className="text-[9px] text-slate-500 leading-relaxed">
+              更稳：允许自启动 + 锁定最近任务；开关变灰需在应用信息里允许受限设置。
+            </p>
+          </div>
         )}
       </div>
 
@@ -962,27 +968,33 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         })()}
       </div>
 
-{/* 4. 大肥鱼桌宠悬浮窗（配色跟主题走——纯黑主题下是天蓝会很刺眼） */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+      {/* 4. 大肥鱼桌宠悬浮窗（第 63 轮折叠化） */}
+      <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
+        <div className="flex items-center justify-between gap-3 p-5">
+          <button
+            type="button"
+            onClick={() => setPetOpen((v) => !v)}
+            aria-expanded={petOpen}
+            className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer"
+          >
             <div
-              className={`w-9 h-9 rounded-2xl ${theme.accentText} flex items-center justify-center border ${theme.accentBorder}`}
+              className={`w-9 h-9 rounded-2xl ${theme.accentText} flex items-center justify-center border ${theme.accentBorder} shrink-0`}
               style={{ background: `${theme.accentHex}1f` }}
             >
               <Fish className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <h3 className="text-sm font-black text-white">大肥鱼桌宠</h3>
-              <p className="text-[10px] text-slate-400" aria-live="polite">
+              <p className="text-[10px] text-slate-400 truncate" aria-live="polite">
                 {petNative
                   ? petOn
                     ? '常驻桌面 · 点她看消息或开护眼'
-                    : '开启后常驻在其他应用之上'
+                    : '已关闭'
                   : '网页预览不可用，安装 APK 后生效'}
               </p>
             </div>
-          </div>
+            <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ${petOpen ? 'rotate-180' : ''}`} />
+          </button>
           {petNative && (
             <label className="relative inline-flex items-center cursor-pointer shrink-0">
               <input
@@ -1006,87 +1018,86 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
 
         {petHint && (
-          <p role="status" className="text-[10px] text-amber-300/90 leading-relaxed">{petHint}</p>
+          <p role="status" className="px-5 pb-3 text-[10px] text-amber-300/90 leading-relaxed">{petHint}</p>
         )}
 
-        {/* 播报词预览：折叠 */}
-        <details className="rounded-2xl bg-slate-900/60 border border-slate-700/60 p-3.5">
-          <summary className={`text-[10px] font-bold ${theme.accentText} cursor-pointer select-none`}>
-            傲娇播报预览（{petSay.length} 条）
-          </summary>
-          <div className="space-y-1.5 pt-2">
-            {petSay.slice(0, 4).map((line: string, i: number) => (
-              <p key={i} className="text-[11px] text-slate-300 leading-relaxed">{line}</p>
-            ))}
-          </div>
-        </details>
+        {petOpen && (
+          <div className="px-5 pb-5 pt-3 border-t border-slate-700/60 space-y-3">
+            {/* 播报词预览：折叠 */}
+            <details className="rounded-2xl bg-slate-900/60 border border-slate-700/60 p-3.5">
+              <summary className={`text-[10px] font-bold ${theme.accentText} cursor-pointer select-none`}>
+                傲娇播报预览（{petSay.length} 条）
+              </summary>
+              <div className="space-y-1.5 pt-2">
+                {petSay.slice(0, 4).map((line: string, i: number) => (
+                  <p key={i} className="text-[11px] text-slate-300 leading-relaxed">{line}</p>
+                ))}
+              </div>
+            </details>
 
-        {/* 换装 */}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-bold text-white">大肥鱼服装</p>
-          </div>
-          <div className="flex gap-1.5 shrink-0">
-            {['default', 'sakura'].map((s) => (
+            {/* 换装 */}
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-bold text-white">大肥鱼服装</p>
+              <div className="flex gap-1.5 shrink-0">
+                {['default', 'sakura'].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => handlePetSkinChange(s)}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer active:scale-95 ${
+                      petSkin === s
+                        ? `${theme.accentText} border ${theme.accentBorder}`
+                        : 'bg-slate-800 border-slate-600 text-slate-400'
+                    }`}
+                    style={petSkin === s ? { background: `${theme.accentHex}14` } : undefined}
+                  >
+                    {s === 'default' ? '常服' : '樱花'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 播报频率 */}
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-white">傲娇播报频率</p>
+                <p className="text-[10px] text-slate-400">每 {petEvery} 次点击播报一次</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  aria-label="减少播报频率"
+                  onClick={() => handlePetEveryChange(petEvery - 1)}
+                  disabled={petEvery <= 1}
+                  className="w-10 h-10 rounded-lg bg-slate-700/70 text-slate-200 text-sm font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                >
+                  −
+                </button>
+                <span className={`w-6 text-center text-xs font-black ${theme.accentText}`}>{petEvery}</span>
+                <button
+                  type="button"
+                  aria-label="增加播报频率"
+                  onClick={() => handlePetEveryChange(petEvery + 1)}
+                  disabled={petEvery >= 20}
+                  className="w-10 h-10 rounded-lg bg-slate-700/70 text-slate-200 text-sm font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                >
+                  ＋
+                </button>
+              </div>
+            </div>
+
+            {petNative && !petGranted && (
               <button
-                key={s}
                 type="button"
-                onClick={() => handlePetSkinChange(s)}
-                className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer active:scale-95 ${
-                  petSkin === s
-                    ? `${theme.accentText} border ${theme.accentBorder}`
-                    : 'bg-slate-800 border-slate-600 text-slate-400'
-                }`}
-                style={petSkin === s ? { background: `${theme.accentHex}14` } : undefined}
+                onClick={() => void petOpenPermissionSettings()}
+                className={`w-full py-2.5 rounded-xl ${theme.accentText} border ${theme.accentBorder} text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform`}
+                style={{ background: `${theme.accentHex}1a` }}
               >
-                {s === 'default' ? '常服' : '樱花'}
+                需要悬浮窗权限 · 前往系统设置授权
               </button>
-            ))}
+            )}
           </div>
-        </div>
-
-        {/* 播报频率：每 N 次点击大肥鱼，她自动傲娇播报一次 */}
-        <div className="flex items-center justify-between">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold text-white">傲娇播报频率</p>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              每 {petEvery} 次点她，大肥鱼会自动傲娇播报一次，其余点击弹出「消息 / 护眼」按钮
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              aria-label="减少播报频率"
-              onClick={() => handlePetEveryChange(petEvery - 1)}
-              disabled={petEvery <= 1}
-              className="w-10 h-10 rounded-lg bg-slate-700/70 text-slate-200 text-sm font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
-            >
-              −
-            </button>
-            <span className={`w-6 text-center text-xs font-black ${theme.accentText}`}>{petEvery}</span>
-            <button
-              type="button"
-              aria-label="增加播报频率"
-              onClick={() => handlePetEveryChange(petEvery + 1)}
-              disabled={petEvery >= 20}
-              className="w-10 h-10 rounded-lg bg-slate-700/70 text-slate-200 text-sm font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
-            >
-              ＋
-            </button>
-          </div>
-        </div>
-
-        {petNative && !petGranted && (
-          <button
-            type="button"
-            onClick={() => void petOpenPermissionSettings()}
-            className={`w-full py-2.5 rounded-xl ${theme.accentText} border ${theme.accentBorder} text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform`}
-            style={{ background: `${theme.accentHex}1a` }}
-          >
-            需要悬浮窗权限 · 前往系统设置授权
-          </button>
         )}
-
       </div>
 
       {/* 2. Custom Alarm Clocks (Hardware Web Audio) */}
@@ -1144,57 +1155,60 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       {/* 应用更新（第 61 轮）：显式点击才联网，安装前原生四重校验 */}
       <AppUpdateCard theme={theme} />
 
-      {/* 5. Data Backup, Export & Reset Management */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
-        <div className="flex items-center justify-between pb-2 border-b border-slate-700/60">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span className="text-sm font-bold text-white">数据备份</span>
-          </div>
-          <span className={`text-[10px] ${theme.textMuted} font-mono`}>共 {records.length} 条记录</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            onClick={handleExportJSON}
-            className={`py-2.5 px-3 rounded-xl ${theme.cardInnerBg} hover:opacity-90 border ${theme.cardBorder} text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow`}
-          >
-            <Download className="w-4 h-4 text-emerald-400" />
-            <span>导出 JSON 备份</span>
-          </button>
-
-          <label className={`py-2.5 px-3 rounded-xl ${theme.cardInnerBg} hover:opacity-90 border ${theme.cardBorder} text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow`}>
-            <Upload className={`w-4 h-4 ${theme.accentText}`} />
-            <span>导入备份文件</span>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImportFile}
-              className="hidden"
-            />
-          </label>
-        </div>
-
-        {(() => {
-          const days = lastBackupAt ? Math.floor((Date.now() - lastBackupAt) / 86400000) : null;
-          const warn = days === null ? records.length >= 7 : days > 30;
-          return (
-            <p className={`text-[10px] font-mono px-0.5 ${warn ? 'text-amber-400' : 'text-slate-500'}`}>
-              {days === null ? '还没有备份过' : days === 0 ? '上次备份：今天' : `上次备份：${days} 天前`}
-              {warn ? ' · 建议导出一份' : ''}
-            </p>
-          );
-        })()}
-
+      {/* 5. Data Backup, Export & Reset Management（第 63 轮折叠化） */}
+      <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
         <button
           type="button"
-          onClick={onResetDemoData}
-          className={`w-full py-2.5 rounded-xl ${theme.cardInnerBg} hover:opacity-80 border ${theme.cardInnerBorder} ${theme.textMuted} hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
+          onClick={() => setBackupOpen((v) => !v)}
+          aria-expanded={backupOpen}
+          className="w-full flex items-center justify-between gap-3 p-5 cursor-pointer text-left"
         >
-          <RotateCcw className="w-3.5 h-3.5 opacity-60" />
-          <span>恢复示例数据（7天演示）</span>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white">数据备份</p>
+              <p className={`text-[10px] truncate ${backupWarn ? 'text-amber-400' : 'text-slate-400'}`}>
+                {backupSummary}{backupWarn ? ' · 建议导出一份' : ''}
+              </p>
+            </div>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ${backupOpen ? 'rotate-180' : ''}`} />
         </button>
+
+        {backupOpen && (
+          <div className="px-5 pb-5 pt-3 border-t border-slate-700/60 space-y-3">
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className={`py-2.5 px-3 rounded-xl ${theme.cardInnerBg} hover:opacity-90 border ${theme.cardBorder} text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow`}
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>导出 JSON 备份</span>
+              </button>
+
+              <label className={`py-2.5 px-3 rounded-xl ${theme.cardInnerBg} hover:opacity-90 border ${theme.cardBorder} text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow`}>
+                <Upload className={`w-4 h-4 ${theme.accentText}`} />
+                <span>导入备份文件</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportFile}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            <button
+              type="button"
+              onClick={onResetDemoData}
+              className={`w-full py-2.5 rounded-xl ${theme.cardInnerBg} hover:opacity-80 border ${theme.cardInnerBorder} ${theme.textMuted} hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
+            >
+              <RotateCcw className="w-3.5 h-3.5 opacity-60" />
+              <span>恢复示例数据（7天演示）</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Custom AI Config Modal：fixed 弹窗必须 portal 到 body——外层滑动容器带

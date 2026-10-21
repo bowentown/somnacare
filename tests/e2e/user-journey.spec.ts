@@ -309,6 +309,7 @@ test('旅程6 导入旧备份：records-only 自动迁移为夜归属', async ({
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
   await navTo(page, '偏好');
+  await page.getByRole('button', { name: /数据备份/ }).click();
   // 直接调用隐藏 file input 的 setInputFiles
   const payload = JSON.stringify([
     mkRecord(dstr(-1, fixed), '00:30', '07:30', 88),
@@ -381,7 +382,8 @@ test('旅程7 设置面：主题四套、分享卡生成、护眼持久、闹钟
     expect(alarms.length).toBeLessThanOrEqual(1);
   }
 
-  // 桌宠傲娇播报预览在场
+  // 桌宠傲娇播报预览在场（第 63 轮折叠：先展开）
+  await page.getByRole('button', { name: /大肥鱼桌宠/ }).click();
   await expect(page.getByText(/傲娇播报预览/)).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -640,7 +642,8 @@ test('旅程16 备份提醒：导出后记录时间戳并显示「今天」', as
   await page.waitForTimeout(4200);
 
   await navTo(page, '偏好');
-  await expect(page.getByText(/还没有备份过/)).toBeVisible();
+  await expect(page.getByText(/未备份/)).toBeVisible();
+  await page.getByRole('button', { name: /数据备份/ }).click();
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -648,7 +651,7 @@ test('旅程16 备份提醒：导出后记录时间戳并显示「今天」', as
   ]);
   expect(download.suggestedFilename()).toContain('full-backup');
   expect(await page.evaluate(() => Number(localStorage.getItem('somnacare_last_backup_at')))).toBeGreaterThan(0);
-  await expect(page.getByText('上次备份：今天')).toBeVisible();
+  await expect(page.getByText(/今天已备份/)).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -888,10 +891,10 @@ test('旅程22 广告跳过：偏好页开关默认关闭，开启走原生 + �
   await navTo(page, '偏好');
   const sw = page.getByRole('button', { name: '摇一摇广告跳过' });
   await expect(sw).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.getByText(/不读取输入内容/)).toBeVisible();
 
   await sw.click();
   await expect(sw).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/不读取输入内容/)).toBeVisible();
   await expect(page.getByText(/待授权/)).toBeVisible();
   const calls = await page.evaluate(() => (window as any).__adSkipCalls || []);
   expect(calls.some((c: any) => c.type === 'set' && c.enabled === true)).toBe(true);
@@ -945,12 +948,13 @@ test('旅程23 应用更新：显式检查 GitHub Release，网页版只展示�
   const heading = page.getByRole('heading', { name: '应用更新' });
   await heading.scrollIntoViewIfNeeded();
   await expect(heading).toBeVisible();
-  await expect(page.getByText(/不会后台上传任何睡眠数据/)).toBeVisible();
 
-  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  // 第 63 轮折叠：点卡片头即展开并检查（显式联网）
+  await page.getByRole('button', { name: /应用更新/ }).click();
   await expect(page.getByText('发现新版本 v9.9.9')).toBeVisible();
-  await expect(page.getByText(/SomnaCare-v9\.9\.9\.apk/)).toBeVisible();
-  await expect(page.getByRole('button', { name: /前往 Release 页面/ })).toBeVisible();
+  await expect(page.getByText(/11\.8 MB/)).toBeVisible();
+  await expect(page.getByText(/只在打开此卡时访问 GitHub/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Release 页面/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /下载并安装/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

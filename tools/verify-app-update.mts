@@ -65,13 +65,13 @@ ok('启动路径不自动检查更新',
   !app.includes('fetchLatestRelease')
   && !app.includes('RELEASES_API')
   && !app.includes('appUpdate'));
-ok('检查更新由按钮显式触发',
-  card.includes('onClick={() => void handleCheck()}')
-  && card.includes('只在点击时访问 GitHub'));
+ok('检查更新由用户展开卡片显式触发（不在启动/前台自动请求）',
+  card.includes('const handleToggle')
+  && card.includes("if (next && phase === 'idle') void handleCheck()")
+  && card.includes('只在打开此卡时访问 GitHub'));
 ok('测试构建不可比较版本时不自动下载（避免低构建号覆盖失败）',
   card.includes('comparable')
-  && card.includes('测试构建')
-  && card.includes('无法与'));
+  && card.includes('测试构建版本号无法比较'));
 ok('设置页接入更新卡',
   settings.includes('<AppUpdateCard theme={theme} />'));
 

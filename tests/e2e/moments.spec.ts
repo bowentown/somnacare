@@ -136,7 +136,8 @@ test('语录时间纪律：缓存里写死钟点的台词被过滤（用户实�
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
-  // 预览在 <details> 折叠面板里——innerText 不含折叠内容，先展开再断言
+  // 桌宠卡与播报预览都折叠了——先展开桌宠，再展开 <details>
+  await page.getByRole('button', { name: /大肥鱼桌宠/ }).click();
   await page.getByText(/傲娇播报预览/).click();
   await page.waitForTimeout(400);
   const text = await page.evaluate(() => document.body.innerText);

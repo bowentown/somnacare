@@ -194,6 +194,9 @@ jobs:
           grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml
           grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
           grep -q 'rikka.shizuku.ShizukuProvider' plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml
+          # 开屏规则表必须随插件 assets 打进 APK；缺失时服务会静默退回通用规则
+          test -s plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json
+          grep -q 'GKD_subscription' plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json
           # A2 断言：备份通道必须确实关闭，静默失配 = 产出可被 adb backup 的 APK
           grep -q 'android:allowBackup="false"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
@@ -292,6 +295,11 @@ jobs:
           else
             ./gradlew assembleDebug --no-daemon
           fi
+          APK_FILE=$(find app/build/outputs/apk -name '*.apk' | head -n 1)
+          [ -n "$APK_FILE" ] || { echo "::error::未找到 APK 产物"; exit 1; }
+          unzip -l "$APK_FILE" | grep -q 'assets/ad_skip_rules.json' || {
+            echo "::error::APK 内缺少开屏规则表 assets/ad_skip_rules.json"; exit 1;
+          }
 
       - name: Upload Standalone Offline APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

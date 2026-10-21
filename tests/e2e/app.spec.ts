@@ -194,6 +194,7 @@ test('备份往返：导出 JSON → 导入恢复 → 记录无损', async ({ pa
   await seed(page, recs3);
   await open(page);
   await navTo(page, '偏好');
+  await page.getByRole('button', { name: /数据备份/ }).click();
 
   const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
   await page.getByRole('button', { name: /导出 JSON 备份/ }).click();
