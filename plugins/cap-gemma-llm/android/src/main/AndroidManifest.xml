@@ -1,2 +1,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 应用更新：只下载自己 Release 的 APK；安装仍由系统安装器二次确认 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 与“自动点击宝”一致的常驻差异：申请电池优化白名单（用户可见系统弹窗） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application>
+        <!-- FileProvider 由 Capacitor 模板提供（authority=${applicationId}.fileprovider）；
+             更新下载目录在 CI 注入到模板的 res/xml/file_paths.xml，避免重复 provider
+             与元数据冲突（第 62 轮 CI 实测）。 -->
+
+        <!-- 可选 Shizuku 守护：授权后由 shell 身份修复 enabled_accessibility_services -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    </application>
 </manifest>

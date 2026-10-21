@@ -30,6 +30,8 @@ import java.net.URI;
 import java.net.URL;
 import java.util.concurrent.Future;
 
+import rikka.shizuku.Shizuku;
+
 /**
  * 原生端侧大模型插件：MediaPipe LLM Inference (Gemma .task)。
  *
@@ -58,6 +60,26 @@ public class GemmaLLMPlugin extends Plugin {
     private volatile boolean downloadCancelled = false;
     private static final java.util.concurrent.ExecutorService BACKGROUND =
             java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** Shizuku 授权结果监听（第 61 轮）：仅用于把结果广播给 JS，不做任何自动修复。 */
+    private Shizuku.OnRequestPermissionResultListener shizukuPermissionListener;
+
+    @Override
+    public void load() {
+        super.load();
+        try {
+            shizukuPermissionListener = (requestCode, grantResult) -> {
+                if (requestCode == ShizukuGuard.REQUEST_CODE) {
+                    JSObject ret = ShizukuGuard.status(getContext());
+                    ret.put("granted", grantResult == PackageManager.PERMISSION_GRANTED);
+                    notifyListeners("shizukuPermission", ret);
+                }
+            };
+            Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
+        } catch (Throwable ignored) {
+            // 未安装 Shizuku / Shizuku 版本过旧：状态接口会如实返回 running=false
+        }
+    }
 
     // ==== 通知动作冷启动读取（第 56 轮） ====
 
@@ -147,6 +169,110 @@ public class GemmaLLMPlugin extends Plugin {
 
     private boolean isAdSkipServiceEnabled() {
         return AdSkipService.isAccessibilityEnabled(getContext());
+    }
+
+    // ==== 应用更新（第 61 轮） ====
+
+    @PluginMethod
+    public void appUpdateVersion(PluginCall call) {
+        call.resolve(AppUpdateManager.versionInfo(getContext()));
+    }
+
+    @PluginMethod
+    public void appUpdateCanInstall(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("allowed", AppUpdateManager.canInstall(getContext()));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void appUpdateOpenUnknownSources(PluginCall call) {
+        AppUpdateManager.openUnknownSourcesSettings(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void appUpdateDownload(PluginCall call) {
+        String url = call.getData().optString("url", "");
+        String sha256 = call.getData().optString("sha256", "");
+        call.resolve(AppUpdateManager.enqueue(getContext(), url, sha256));
+    }
+
+    @PluginMethod
+    public void appUpdateDownloadStatus(PluginCall call) {
+        long id = call.getData().optLong("downloadId", -1L);
+        call.resolve(AppUpdateManager.status(getContext(), id));
+    }
+
+    @PluginMethod
+    public void appUpdatePending(PluginCall call) {
+        call.resolve(AppUpdateManager.pending(getContext()));
+    }
+
+    @PluginMethod
+    public void appUpdateInstall(PluginCall call) {
+        long id = call.getData().optLong("downloadId", -1L);
+        call.resolve(AppUpdateManager.install(getContext(), id));
+    }
+
+    @PluginMethod
+    public void appUpdateOpenRelease(PluginCall call) {
+        String url = call.getData().optString("url", "");
+        try {
+            AppUpdateManager.openReleasePage(getContext(), url);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(e.getMessage() == null ? "无法打开链接" : e.getMessage());
+        }
+    }
+
+    // ==== 电池优化白名单（第 61 轮） ====
+
+    @PluginMethod
+    public void batteryOptimizationStatus(PluginCall call) {
+        call.resolve(AppUpdateManager.batteryStatus(getContext()));
+    }
+
+    @PluginMethod
+    public void batteryOptimizationRequest(PluginCall call) {
+        call.resolve(AppUpdateManager.requestBatteryExemption(getContext()));
+    }
+
+    // ==== Shizuku 守护（第 61 轮，可选） ====
+
+    @PluginMethod
+    public void shizukuStatus(PluginCall call) {
+        call.resolve(ShizukuGuard.status(getContext()));
+    }
+
+    @PluginMethod
+    public void shizukuRequestPermission(PluginCall call) {
+        JSObject ret = ShizukuGuard.status(getContext());
+        boolean requested = false;
+        if (ret.optBoolean("running", false) && !ret.optBoolean("granted", false)) {
+            Context ctx = getContext();
+            Runnable request = () -> ShizukuGuard.requestPermission();
+            if (ctx instanceof android.app.Activity) {
+                ((android.app.Activity) ctx).runOnUiThread(request);
+            } else {
+                request.run();
+            }
+            requested = true;
+        }
+        ret.put("requested", requested);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void shizukuRepairAccessibility(PluginCall call) {
+        final Context ctx = getContext();
+        new Thread(() -> call.resolve(ShizukuGuard.repairAccessibility(ctx)), "shizuku-repair").start();
+    }
+
+    @PluginMethod
+    public void shizukuOpenApp(PluginCall call) {
+        ShizukuGuard.openApp(getContext());
+        call.resolve();
     }
 
     // ==== 主题联动桌面图标（activity-alias） ====
@@ -1375,6 +1501,13 @@ public class GemmaLLMPlugin extends Plugin {
     protected void handleOnDestroy() {
         // 应用销毁时释放原生资源
         unloadInternal();
+        try {
+            if (shizukuPermissionListener != null) {
+                Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
+                shizukuPermissionListener = null;
+            }
+        } catch (Throwable ignored) {
+        }
         super.handleOnDestroy();
     }
 }

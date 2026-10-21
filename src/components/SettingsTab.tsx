@@ -32,10 +32,18 @@ import { getLastResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import {
   getAdSkipStatus,
+  getShizukuStatus,
+  isBatteryOptimizationIgnored,
   openAdSkipAccessibilitySettings,
+  openShizukuApp,
+  repairAdSkipWithShizuku,
+  requestBatteryOptimizationExemption,
+  requestShizukuPermission,
   setAdSkipEnabled,
   type AdSkipStatus,
+  type ShizukuStatus,
 } from '../utils/adSkip';
+import { AppUpdateCard } from './AppUpdateCard';
 import { tapTick } from '../utils/haptics';
 
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
@@ -109,16 +117,35 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [adSkip, setAdSkip] = useState<AdSkipStatus>({ enabled: false, serviceEnabled: false, hits: 0 });
   const [adSkipBusy, setAdSkipBusy] = useState(false);
   const adSkipPollRef = useRef<number | null>(null);
+  // Shizuku 守护：只做状态展示与用户显式触发的修复，不自动改系统设置
+  const [shizuku, setShizuku] = useState<ShizukuStatus>({
+    installed: false, running: false, granted: false, version: 0,
+  });
+  const [shizukuBusy, setShizukuBusy] = useState(false);
+  const [shizukuMsg, setShizukuMsg] = useState<string | null>(null);
+  const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
   const refreshAdSkip = async () => {
     const st = await getAdSkipStatus();
     setAdSkip(st);
     return st;
   };
+  const refreshSystemGuard = async () => {
+    const [sh, battery] = await Promise.all([
+      getShizukuStatus(),
+      isBatteryOptimizationIgnored(),
+    ]);
+    setShizuku(sh);
+    setBatteryIgnored(battery);
+  };
   useEffect(() => {
     if (!adSkipNative) return;
     void refreshAdSkip();
+    void refreshSystemGuard();
     const onVis = () => {
-      if (document.visibilityState === 'visible') void refreshAdSkip();
+      if (document.visibilityState === 'visible') {
+        void refreshAdSkip();
+        void refreshSystemGuard();
+      }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => {
@@ -152,6 +179,66 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     } finally {
       setAdSkipBusy(false);
     }
+  };
+
+  const handleShizukuAuthorize = async () => {
+    if (shizukuBusy) return;
+    tapTick();
+    setShizukuBusy(true);
+    setShizukuMsg(null);
+    try {
+      const requested = await requestShizukuPermission();
+      if (!requested) {
+        setShizuku(await getShizukuStatus());
+        setShizukuMsg('Shizuku 服务未运行：请先打开 Shizuku 并启动服务');
+        return;
+      }
+      let current = await getShizukuStatus();
+      for (let i = 0; i < 20 && !current.granted; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        current = await getShizukuStatus();
+      }
+      setShizuku(current);
+      setShizukuMsg(current.granted
+        ? '已获得 Shizuku 授权'
+        : '尚未授权：请在弹出的系统对话框里选择允许');
+    } finally {
+      setShizukuBusy(false);
+    }
+  };
+
+  const handleShizukuRepair = async () => {
+    if (shizukuBusy) return;
+    tapTick();
+    setShizukuBusy(true);
+    setShizukuMsg(null);
+    try {
+      const result = await repairAdSkipWithShizuku();
+      setShizukuMsg(result.ok
+        ? '已通过 Shizuku 重新开启无障碍服务'
+        : (result.reason ?? '修复失败'));
+      setShizuku(await getShizukuStatus());
+      // 写入 secure settings 后系统需要一点时间重新绑定服务：短暂轮询，
+      // 避免 UI 在服务刚被写回时仍显示“待授权”
+      let status = await getAdSkipStatus();
+      for (let i = 0; i < 6 && result.ok && !status.serviceEnabled; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        status = await getAdSkipStatus();
+      }
+      setAdSkip(status);
+    } finally {
+      setShizukuBusy(false);
+    }
+  };
+
+  const handleBatteryRequest = async () => {
+    tapTick();
+    const ignoring = await requestBatteryOptimizationExemption();
+    setBatteryIgnored(ignoring);
+    // 系统对话框允许后回到应用：延迟再读一次真实状态
+    window.setTimeout(async () => {
+      setBatteryIgnored(await isBatteryOptimizationIgnored());
+    }, 1200);
   };
 
   // ── 提议链路自检（第 42 轮）：自动记录"已开启却永远不出卡"此前完全静默，
@@ -692,14 +779,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <div className="flex gap-2 pt-0.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    try {
-                      void (window as any).Capacitor?.Plugins?.GemmaLLM?.openBatteryOptimizationSettings?.();
-                    } catch { /* ignore */ }
-                  }}
+                  onClick={() => void handleBatteryRequest()}
                   className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
                 >
-                  电池优化设置
+                  电池优化白名单
                 </button>
                 <button
                   type="button"
@@ -708,6 +791,66 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 >
                   无障碍设置
                 </button>
+              </div>
+              {batteryIgnored !== null && (
+                <p className={batteryIgnored ? 'text-emerald-400' : 'text-slate-500'}>
+                  电池优化：{batteryIgnored ? '已豁免' : '未豁免'}
+                </p>
+              )}
+
+              <div className="mt-1 pt-2 border-t border-slate-700/50 space-y-2">
+                <p className="font-bold text-slate-300">Shizuku 守护（可选）</p>
+                {!shizuku.installed ? (
+                  <p>
+                    未检测到 Shizuku。它能让本应用以 shell 身份把被系统关掉的无障碍开关写回来；
+                    不装也不影响手动开启。
+                  </p>
+                ) : (
+                  <>
+                    <p>
+                      {!shizuku.running
+                        ? 'Shizuku 已安装但服务未运行，请先打开 Shizuku 启动服务。'
+                        : shizuku.granted
+                          ? 'Shizuku 已运行并授权，被系统关掉后可一键修回。'
+                          : 'Shizuku 已运行，尚未授权。'}
+                    </p>
+                    <div className="flex gap-2">
+                      {!shizuku.running && (
+                        <button
+                          type="button"
+                          onClick={() => { tapTick(); void openShizukuApp(); }}
+                          className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+                        >
+                          打开 Shizuku
+                        </button>
+                      )}
+                      {shizuku.running && !shizuku.granted && (
+                        <button
+                          type="button"
+                          onClick={() => void handleShizukuAuthorize()}
+                          disabled={shizukuBusy}
+                          className="flex-1 py-2 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform disabled:opacity-50"
+                        >
+                          {shizukuBusy ? '等待授权…' : '授权 Shizuku'}
+                        </button>
+                      )}
+                      {shizuku.running && shizuku.granted && (
+                        <button
+                          type="button"
+                          onClick={() => void handleShizukuRepair()}
+                          disabled={shizukuBusy}
+                          className="flex-1 py-2 rounded-lg bg-emerald-600/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold cursor-pointer active:scale-95 transition-transform disabled:opacity-50"
+                        >
+                          {shizukuBusy ? '修复中…' : '用 Shizuku 修复无障碍'}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+                {shizukuMsg && <p className="text-amber-300">{shizukuMsg}</p>}
+                <p className="text-slate-500">
+                  Shizuku 自己也必须在运行；手机重启后若 Shizuku 未自动启动，本功能不可用。
+                </p>
               </div>
             </div>
           </details>
@@ -997,6 +1140,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </p>
       </div>
 
+
+      {/* 应用更新（第 61 轮）：显式点击才联网，安装前原生四重校验 */}
+      <AppUpdateCard theme={theme} />
 
       {/* 5. Data Backup, Export & Reset Management */}
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>

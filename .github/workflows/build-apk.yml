@@ -120,7 +120,14 @@ jobs:
       - name: Configure Android SDK, Permissions & Gradle
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          
+
+          # 应用内更新：模板已声明 FileProvider（authority=${applicationId}.fileprovider），
+          # 但不能在插件里重复声明（元数据冲突会让 mergeReleaseResources 失败）。
+          # 这里把下载目录追加到模板自己的 res/xml/file_paths.xml，保留原有
+          # external/cache 路径，避免影响 Filesystem/Share。
+          sed -i 's|</paths>|    <external-files-path name="somnacare_updates" path="Download/" />\n</paths>|' android/app/src/main/res/xml/file_paths.xml
+          grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
+
           # 注入 AndroidManifest 核心闹钟与通知权限 (Android 12/13/14 必需，进程级息屏唤醒)
           # RECORD_AUDIO 供 WebView getUserMedia 做枕边环境声级采样（Capacitor 桥接运行时授权）
           sed -i '/<application/i \
@@ -134,10 +141,15 @@ jobs:
           <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\
           <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\
           <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\
+          <uses-permission android:name="android.permission.INTERNET" />\
+          <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\
+          <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\
           <uses-permission android:name="android.permission.VIBRATE" />' android/app/src/main/AndroidManifest.xml
 
-          # 摇一摇/开屏广告跳过：无障碍服务（第 59 轮）；配置 XML 在插件 res/xml 合并
-          sed -i 's|</application>|<service android:name="com.somnacare.gemmallm.AdSkipService" android:exported="false" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"><intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter><meta-data android:name="android.accessibilityservice" android:resource="@xml/ad_skip_accessibility" /></service></application>|' android/app/src/main/AndroidManifest.xml
+          # 摇一摇/开屏广告跳过：无障碍服务（第 59 轮）；配置 XML 在插件 res/xml 合并。
+          # exported 必须为 true：无障碍服务由 system_server 跨进程绑定；targetSdk 35
+          # 下设为 false 在部分 OEM 的权限页会被过滤/无法重绑（第 61 轮对照“自动点击宝”）。
+          sed -i 's|</application>|<service android:name="com.somnacare.gemmallm.AdSkipService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"><intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter><meta-data android:name="android.accessibilityservice" android:resource="@xml/ad_skip_accessibility" /></service></application>|' android/app/src/main/AndroidManifest.xml
 
           # 护眼滤镜前台服务 + 作息到点提醒 + 鲸鱼娘桌宠悬浮窗（服务/接收器，specialUse 类型 API 34+ 需属性）
           sed -i 's|</application>|<service android:name="com.somnacare.gemmallm.EyeCareService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="eye_care_overlay_filter"/></service><service android:name="com.somnacare.gemmallm.BedtimeOverlayService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="bedtime_reminder_overlay"/></service><service android:name="com.somnacare.gemmallm.PetOverlayService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="desktop_pet_overlay"/></service><receiver android:name="com.somnacare.gemmallm.NightRescueReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.USER_PRESENT" /></intent-filter></receiver><receiver android:name="com.somnacare.gemmallm.BedtimeAlarmReceiver" android:exported="false" /><service android:name="com.somnacare.gemmallm.NightRescueService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="night_rescue_overlay"/></service><receiver android:name="com.somnacare.gemmallm.AlarmRingReceiver" android:exported="false" /><service android:name="com.somnacare.gemmallm.AlarmRingService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="alarm_ring_loop"/></service><receiver android:name="com.somnacare.gemmallm.BootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.TIME_SET" /><action android:name="android.intent.action.TIMEZONE_CHANGED" /></intent-filter></receiver><service android:name="com.somnacare.gemmallm.EyeCareTileService" android:label="护眼滤镜" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true"><intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter></service></application>|' android/app/src/main/AndroidManifest.xml
@@ -173,7 +185,15 @@ jobs:
           grep -q 'com.somnacare.gemmallm.AlarmRingService' android/app/src/main/AndroidManifest.xml
           grep -q 'com.somnacare.gemmallm.BootReceiver' android/app/src/main/AndroidManifest.xml
           grep -q 'com.somnacare.gemmallm.AdSkipService' android/app/src/main/AndroidManifest.xml
+          grep -q 'com.somnacare.gemmallm.AdSkipService" android:exported="true"' android/app/src/main/AndroidManifest.xml
           grep -q 'android.intent.action.TIME_SET' android/app/src/main/AndroidManifest.xml
+          # 第 61 轮：应用内更新 + 电池白名单 + Shizuku 守护的清单入口
+          grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -q 'REQUEST_INSTALL_PACKAGES' android/app/src/main/AndroidManifest.xml
+          grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' android/app/src/main/AndroidManifest.xml
+          grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml
+          grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
+          grep -q 'rikka.shizuku.ShizukuProvider' plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml
           # A2 断言：备份通道必须确实关闭，静默失配 = 产出可被 adb backup 的 APK
           grep -q 'android:allowBackup="false"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
@@ -323,6 +343,7 @@ jobs:
           - 📊 趋势图表与 90 分钟睡眠周期推演（模型估算值，非医疗诊断）
           - ✨ AI 睡眠顾问（DeepSeek / 端侧 Gemma / 纯离线规则引擎）
           - 👁 全局护眼滤镜（暖色减蓝 + 减光，四场景 + 自定义色，定时开关）
+          - 🔄 应用内更新（偏好页显式检查 GitHub Release；下载后校验签名/包名/版本）
           - ⚙️ 四套主题（桌面图标联动换色）+ 原生精确闹钟 + 数据备份
 
           ### 🔒 隐私

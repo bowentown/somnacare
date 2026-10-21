@@ -314,10 +314,12 @@ test('旅程6 导入旧备份：records-only 自动迁移为夜归属', async ({
     mkRecord(dstr(-1, fixed), '00:30', '07:30', 88),
     mkRecord(dstr(-2, fixed), '23:50', '08:00', 84),
   ]);
+  // 必须先挂 dialog 监听再触发文件选择：FileReader.onload 里的 confirm
+  // 可能在 setInputFiles 返回前就弹出，晚注册会被 Playwright 默认驳回
+  page.once('dialog', (d) => void d.accept());
   await page.locator('input[type="file"]').setInputFiles({
     name: 'old-records.json', mimeType: 'application/json', buffer: Buffer.from(payload),
   });
-  page.once('dialog', (d) => void d.accept());
   await page.waitForTimeout(800);
   const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
   // 醒来日口径 → 夜归属：00:30 凌晨觉归前一天；23:50 前夜觉也归前一天
@@ -894,5 +896,61 @@ test('旅程22 广告跳过：偏好页开关默认关闭，开启走原生 + �
   const calls = await page.evaluate(() => (window as any).__adSkipCalls || []);
   expect(calls.some((c: any) => c.type === 'set' && c.enabled === true)).toBe(true);
   expect(calls.some((c: any) => c.type === 'open')).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程23 应用更新：显式点击才请求 GitHub；网页版只展示 Release，不提供安装
+// ─────────────────────────────────────────────────────────────
+test('旅程23 应用更新：显式检查 GitHub Release，网页版只展示不安装', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await page.addInitScript(() => {
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  });
+  await page.route('https://api.github.com/repos/bowentown/somnacare/releases/latest', async (route) => {
+    const cors = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, OPTIONS',
+      'access-control-allow-headers': 'Accept, X-GitHub-Api-Version',
+    };
+    if (route.request().method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { ...cors, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tag_name: 'v9.9.9',
+        published_at: '2026-10-19T00:00:00Z',
+        html_url: 'https://github.com/bowentown/somnacare/releases/tag/v9.9.9',
+        body: '## 更新\n- 修复了更新检查\n- **签名校验**更严格',
+        assets: [{
+          name: 'SomnaCare-v9.9.9.apk',
+          browser_download_url: 'https://github.com/bowentown/somnacare/releases/download/v9.9.9/SomnaCare-v9.9.9.apk',
+          size: 12345678,
+          digest: `sha256:${'a'.repeat(64)}`,
+        }],
+      }),
+    });
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  await navTo(page, '偏好');
+  const heading = page.getByRole('heading', { name: '应用更新' });
+  await heading.scrollIntoViewIfNeeded();
+  await expect(heading).toBeVisible();
+  await expect(page.getByText(/不会后台上传任何睡眠数据/)).toBeVisible();
+
+  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  await expect(page.getByText('发现新版本 v9.9.9')).toBeVisible();
+  await expect(page.getByText(/SomnaCare-v9\.9\.9\.apk/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /前往 Release 页面/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /下载并安装/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

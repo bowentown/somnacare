@@ -22,6 +22,7 @@ const service = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/
 const xml = read('plugins/cap-gemma-llm/android/src/main/res/xml/ad_skip_accessibility.xml');
 const strings = read('plugins/cap-gemma-llm/android/src/main/res/values/ad_skip_strings.xml');
 const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
+const shizuku = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/ShizukuGuard.java');
 const boot = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BootReceiver.java');
 const js = read('src/utils/adSkip.ts');
 const settings = read('src/components/SettingsTab.tsx');
@@ -80,7 +81,18 @@ ok('UI：开关 + 隐私告知 + 保持开启引导',
   && settings.includes('不读取输入内容')
   && settings.includes('setAdSkipEnabled')
   && settings.includes('服务被系统关闭了')
-  && settings.includes('openBatteryOptimizationSettings'));
+  && settings.includes('requestBatteryOptimizationExemption'));
+ok('Shizuku：状态 / 授权 / 显式修复，且不后台自动写系统设置',
+  shizuku.includes('repairAccessibility')
+  && shizuku.includes('settings put secure enabled_accessibility_services')
+  && shizuku.includes('COMPONENT.matcher')
+  && shizuku.includes('getDeclaredMethod')
+  && shizuku.includes('setAccessible(true)')
+  && plugin.includes('public void shizukuStatus')
+  && plugin.includes('public void shizukuRepairAccessibility')
+  && js.includes('getShizukuStatus')
+  && js.includes('repairAdSkipWithShizuku')
+  && settings.includes('Shizuku 守护'));
 ok('保持开启：开机/时间变更时若服务被关闭 → 通知可点回',
   boot.includes('postAdSkipReminder')
   && boot.includes('ad_skip_enabled')
@@ -89,6 +101,7 @@ ok('CI：服务注入 + 权限/配置 meta-data + 命中断言',
   workflow.includes('com.somnacare.gemmallm.AdSkipService')
   && workflow.includes('BIND_ACCESSIBILITY_SERVICE')
   && workflow.includes('@xml/ad_skip_accessibility')
+  && workflow.includes('AdSkipService" android:exported="true"')
   && workflow.includes("grep -q 'com.somnacare.gemmallm.AdSkipService'"));
 
 // 反向自检：去掉"排除自身"这一行，护栏必须能识别出缺失

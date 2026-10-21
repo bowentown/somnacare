@@ -46,6 +46,12 @@ repositories {
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation project(':capacitor-android')
+    // FileProvider（APK 安装授权）：Capacitor 以 implementation 引入 AndroidX，
+    // 不会传递到插件编译类路径，这里必须显式声明
+    implementation 'androidx.core:core:1.17.0'
     // MediaPipe LLM Inference：预编译 AAR（含原生 .so），无需 NDK 构建
     implementation 'com.google.mediapipe:tasks-genai:0.10.32'
+    // Shizuku（可选守护）：仅用于用户显式点击后把无障碍组件写回 secure settings
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
 }
