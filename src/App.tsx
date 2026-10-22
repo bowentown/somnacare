@@ -36,7 +36,7 @@ import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
-import { maybeMigrateRecordDates, migrateRecordDatesToNightKey } from './utils/recordDateMigration';
+import { maybeMigrateRecordDates, migrateRecordDatesToNightKey, markRecordDateMigrationDone } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { TravelCodexModal } from './components/travel/TravelCodexModal';
 import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival, restoreRecordScore } from './services/travelService';
@@ -835,7 +835,11 @@ export const App: React.FC = () => {
     });
     // 注入梦境旅行能量（攒满 TRIP_ENERGY_TARGET 触发大肥鱼出发旅行）；带日期去重，
     // 同一晚重跑/补录只按更高分计一次
-    const travelRes = processDailySleepScore(newRecord.sleepScore, newRecord.date);
+    // 本次写入的是当前口径（夜归属）数据：置迁移标记，防止下次启动把
+    // 全新安装产生的记录再当旧口径迁一遍（第 66 轮审计；标记只能随“写入”
+    // 置位，不能在空库加载时置位——否则升级用户的首载迁移会被跳过）
+    markRecordDateMigrationDone();
+    const travelRes = processDailySleepScore(newRecord.sleepScore, newRecord.date, newRecord.kind === 'nap');
     if (travelRes.triggeredTrip && travelRes.newCard) {
       setPendingPostcardId(travelRes.newCard.id);
     }
@@ -858,7 +862,11 @@ export const App: React.FC = () => {
     });
     // 注入梦境旅行能量（攒满 TRIP_ENERGY_TARGET 触发大肥鱼出发旅行）；带日期去重，
     // 同一晚重跑/补录只按更高分计一次
-    const travelRes = processDailySleepScore(newRecord.sleepScore, newRecord.date);
+    // 本次写入的是当前口径（夜归属）数据：置迁移标记，防止下次启动把
+    // 全新安装产生的记录再当旧口径迁一遍（第 66 轮审计；标记只能随“写入”
+    // 置位，不能在空库加载时置位——否则升级用户的首载迁移会被跳过）
+    markRecordDateMigrationDone();
+    const travelRes = processDailySleepScore(newRecord.sleepScore, newRecord.date, newRecord.kind === 'nap');
     if (travelRes.triggeredTrip && travelRes.newCard) {
       setPendingPostcardId(travelRes.newCard.id);
     }
@@ -870,6 +878,8 @@ export const App: React.FC = () => {
     // 破坏性操作与删除单条记录同防护级：演示数据会覆盖全部真实记录
     if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
+    // 演示数据也是当前口径写入：与保存路径同样置迁移标记（第 66 轮审计）
+    markRecordDateMigrationDone();
     setUndoDeleted(null);
     setRecords(initial);
     clearShadowOutcomes();
@@ -1167,7 +1177,10 @@ export const App: React.FC = () => {
             if (!window.confirm(`导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条），继续？`)) {
               return;
             }
-                        setUndoDeleted(null);
+            // records-only 导入已就地迁移为新口径：置位标记，防止下次启动对
+            // 这些数据再迁一遍（第 66 轮审计；整包备份恢复在 backup.ts 里置位）
+            markRecordDateMigrationDone();
+            setUndoDeleted(null);
                         setRecords(sorted);
                         // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
                         clearShadowOutcomes();

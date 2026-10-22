@@ -48,6 +48,12 @@ ok('semver：1.2.0 > 1.1.9，1.1.0 == v1.1.0',
   && !isNewerVersion('1.1.0', 'v1.1.0')
   && !isNewerVersion('1.0.9', '1.1.0')
   && compareVersions('2.0.0', '1.9.9') === 1);
+ok('semver：预发布段参与比较（beta 能收到正式/更新 beta）',
+  compareVersions('1.2.3', '1.2.3-beta.1') === 1
+  && compareVersions('1.2.3-beta.2', '1.2.3-beta.1') === 1
+  && compareVersions('1.2.3-beta.1', '1.2.3') === -1
+  && compareVersions('1.2.3-beta.1', '1.2.3-beta.1') === 0
+  && compareVersions('1.2.3-beta.10', '1.2.3-beta.9') === 1);
 ok('Release 正文：Markdown 标记被清理', plainReleaseNotes('## 更新\n- **修复** [链接](https://x)\n') === '更新\n· 修复 链接');
 
 // ── 显式联网 / 离线优先 ──

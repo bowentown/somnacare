@@ -99,7 +99,37 @@ export function compareVersions(latest: string, current: string): number | null 
   for (let i = 0; i < 3; i += 1) {
     if (a[i] !== b[i]) return a[i] - b[i];
   }
+  // 主版本号相同时按 semver 预发布规则比较：无 prerelease > 有 prerelease
+  // （此前 1.2.3-beta.1 会被判成与 1.2.3 相同，测试版永远收不到更新提示）
+  const preA = prereleaseOf(latest);
+  const preB = prereleaseOf(current);
+  if (!preA && !preB) return 0;
+  if (!preA) return 1;
+  if (!preB) return -1;
+  const as = preA.split('.');
+  const bs = preB.split('.');
+  for (let i = 0; i < Math.max(as.length, bs.length); i += 1) {
+    const x = as[i];
+    const y = bs[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum) {
+      const diff = Number(x) - Number(y);
+      if (diff !== 0) return diff;
+    } else if (xNum !== yNum) {
+      return xNum ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
+}
+
+function prereleaseOf(value: string): string | null {
+  const m = /^v?\d+\.\d+\.\d+-([0-9A-Za-z.-]+)/.exec(value.trim());
+  return m ? m[1] : null;
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {

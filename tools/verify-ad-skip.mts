@@ -64,8 +64,11 @@ function hasRuleStructure(pred: RulePredicate | undefined): boolean {
 
 const STRONG_RULE_CONTEXT = [
   '跳过', '跳過', '广告', '廣告', 'skip', 'close', '关闭', '關閉',
-  '互动广告', '摇一摇', '扭动', '第三方应用', '点击或上滑', '省钱好物',
+  '互动广告', '摇一摇', '扭动', '扭一扭', '扭动手机', '第三方应用', '点击或上滑', '省钱好物',
   'splash', 'ksad', 'sdk_view', 'sdk',
+  // 应用内卡片/浮窗广告的关闭按钮没有文字，锚点是旁边的下载/详情 CTA
+  '立即下载', '立即打开', '立即体验', '查看详情', '了解更多', '进入小程序',
+  '领取优惠', '下载应用', '去逛逛', '去微信看看', '反馈', 'dislike',
 ];
 function hasStrongRuleContext(ctx: string[] | undefined): boolean {
   if (!ctx || ctx.length === 0) return false;
@@ -103,16 +106,31 @@ ok('克制：15s 通用窗口 / 30s 硬上限 / 每次最多 3 次 / 节点上�
   && service.includes('MAX_NODES')
   && service.includes('CLICK_COOLDOWN_MS')
   && service.includes('EVENT_THROTTLE_MS'));
+ok('应用内广告：inApp/常驻规则 + 滚动窗口限次 + 前台会话上限',
+  service.includes('IN_APP_ROLLING_WINDOW_MS')
+  && service.includes('IN_APP_ROLLING_MAX')
+  && service.includes('IN_APP_SESSION_MAX')
+  && service.includes('inAppBudgetOk')
+  && service.includes('hasInAppRules')
+  && service.includes('inAppClickTimes.clear()'));
+ok('常驻规则收紧：应用内目标尺寸上限更小（≤40%×25%）',
+  service.includes('priority >= 2 && !inApp ? 0.55f : 0.40f')
+  && service.includes('priority >= 2 && !inApp ? 0.30f : 0.25f'));
+ok('多窗口：广告 SDK 独立悬浮窗也在扫描范围（上限 2 个）',
+  service.includes('scanSiblingWindows')
+  && service.includes('MAX_SIBLING_WINDOWS')
+  && service.includes('AccessibilityWindowInfo'));
 ok('倒计时：跳过 3/跳过 3s 不受 15s 通用窗口限制',
   service.includes('COUNTDOWN')
   && service.includes('isCountdown')
   && service.includes('countdown && elapsed <= APP_RULE_HARD_LIMIT_MS'));
-ok('规则：GKD 开屏规则表在场（>100KB，含来源/全局/应用/排除）',
-  ruleJson.length > 100_000
+ok('规则：GKD 广告规则表在场（>1MB，含来源/全局/应用/排除）',
+  ruleJson.length > 1_000_000
   && ruleJson.includes('Lin-arm/GKD_subscription')
   && ruleJson.includes('"selectors"')
   && ruleJson.includes('"excludes"')
-  && ruleJson.includes('"profiles"'));
+  && ruleJson.includes('"profiles"')
+  && ruleJson.includes('"when"'));
 ok('规则引擎：JSON AST 加载 + 包名/Activity/时限求值',
   ruleStore.includes('ASSET_NAME = "ad_skip_rules.json"')
   && ruleStore.includes('static Store load(Context context)')
@@ -132,13 +150,18 @@ ok('规则生成：关系型选择器只提取安全目标，弱上下文丢弃'
   const data = JSON.parse(ruleJson) as any;
   const appKeys = Object.keys(data.apps ?? {});
   const selectors: any[] = [];
+  const appProfiles: any[] = [];
   for (const app of Object.values(data.apps ?? {}) as any[]) {
     for (const profile of app.profiles ?? []) {
+      appProfiles.push(profile);
       for (const selector of profile.selectors ?? []) selectors.push(selector);
     }
   }
-  ok('规则覆盖：≥150 个应用 / ≥200 条应用级选择器',
-    appKeys.length >= 150 && selectors.length >= 200);
+  const globalSelectors = (data.global?.selectors ?? []) as any[];
+  ok('规则覆盖：≥500 个应用 / ≥1200 条应用级选择器 / 应用内广告生效',
+    appKeys.length >= 500 && selectors.length >= 1200
+    && appProfiles.some((p) => p.when === 'inApp')
+    && globalSelectors.some((s) => s.when === 'always'));
   const weak = selectors.filter((s) => !hasRuleIdentity(s.expr) && !hasRuleStructure(s.expr));
   ok('规则安全：不存在“只有 clickable/尺寸”的弱目标', weak.length === 0);
   const weakCtx = selectors.filter((s) => {

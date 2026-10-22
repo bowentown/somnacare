@@ -1,17 +1,22 @@
 /**
- * 从 GKD_subscription 的 dist/gkd.json5 提取“开屏广告”规则，生成
+ * 从 GKD_subscription 的 dist/gkd.json5 提取广告规则，生成
  * cap-gemma-llm 原生侧使用的安全子集规则表。
  *
  * 用法：
- *   npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5
+ *   npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5 [selector-library.json]
  *
- * 说明（第 63 轮）：
+ * 说明（第 63/66 轮）：
  *  - 用户明确要求参考 GKD_subscription，并自行承担版权责任；
- *  - 这里只提取「开屏广告」组，不导入更新提示/青少年模式等其它规则；
+ *  - 应用组导入「开屏广告」（启动窗口内）与「全屏广告」「局部广告」
+ *    （应用内弹窗/卡片广告，前台期间持续生效）；分段广告是多步交互流
+ *    （点 X → 选理由），单次点击走不完，不导入；
+ *  - 第二个参数可选：dist/gkd-667-selector-library.json（全局选择器库），
+ *    其中开屏类作为全局开屏规则，SDK 卡片关闭规则（字节/腾讯/京东/快手）
+ *    作为全局常驻规则（when=always，任何前台应用的小关闭按钮）；
  *  - GKD 选择器 DSL 被归一化为 JSON AST，原生侧不解析 DSL；
  *  - 关系型选择器（@ / > / + / - / <）只提取 @ 目标或最后一个可识别节点，
- *    并附加上下文关键词；执行时仍受“启动 15s 内 + 小尺寸 + 可点击”约束；
- *  - 纯结构选择器（无 text/desc/vid/name 谓词）直接跳过，避免误点。
+ *    并附加上下文关键词；执行时仍受“小尺寸 + 可点击 + 冷却/上限”约束；
+ *  - 纯结构选择器（无 text/desc/vid/name 谓词）必须带广告强上下文才保留。
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -44,10 +49,14 @@ interface Selector {
   expr: Predicate;
   ancestor?: boolean;
   ctx?: string[];
+  /** 全局规则生效期：splash=启动窗口内；always=前台常驻（SDK 卡片关闭规则） */
+  when?: 'splash' | 'always';
 }
 
 interface Profile {
   activityIds: string[];
+  /** splash=应用启动窗口内执行；inApp=该应用前台期间持续执行（应用内广告） */
+  when: 'splash' | 'inApp';
   matchTime: number;
   actionMaximum: number;
   selectors: Selector[];
@@ -332,8 +341,11 @@ function hasStructuralConstraint(pred: Predicate): boolean {
 
 const STRONG_CONTEXT = [
   '跳过', '跳過', '广告', '廣告', 'skip', 'close', '关闭', '關閉',
-  '互动广告', '摇一摇', '扭动', '第三方应用', '点击或上滑', '省钱好物',
+  '互动广告', '摇一摇', '扭动', '扭一扭', '扭动手机', '第三方应用', '点击或上滑', '省钱好物',
   'splash', 'ksad', 'sdk_view', 'sdk',
+  // 应用内卡片/浮窗广告的关闭按钮没有文字，锚点是旁边的下载/详情 CTA
+  '立即下载', '立即打开', '立即体验', '查看详情', '了解更多', '进入小程序',
+  '领取优惠', '下载应用', '去逛逛', '去微信看看', '反馈', 'dislike',
 ];
 
 function hasStrongContext(values: string[]): boolean {
@@ -585,25 +597,44 @@ function uniqSelectors(list: Selector[]): Selector[] {
   return out;
 }
 
+/** GKD 组名前缀 → 生效期；不在表内的组不导入（更新/评价/权限/分段等非单步点击流） */
+const APP_CATEGORIES: Array<{ prefix: string; when: 'splash' | 'inApp' }> = [
+  { prefix: '开屏广告', when: 'splash' },
+  { prefix: '全屏广告', when: 'inApp' },
+  { prefix: '局部广告', when: 'inApp' },
+];
+
+/** 全局选择器库里点名导入的前缀（库里还有更新提示/青少年模式，不导入） */
+const GLOBAL_LIBRARY_PREFIXES = [
+  '开屏广告', '字节开屏', '互动开屏', '字节SDK', '腾讯SDK', '京东SDK',
+  '快手SDK', '卡片', 'dislike', '字节卡片',
+];
+
+/** 只执行点击类动作；longClick / back 等动作风险高，丢弃 */
+function isClickAction(rule: Json): boolean {
+  const action = typeof rule?.action === 'string' ? rule.action : 'click';
+  return action === 'click' || action === 'clickNode' || action === 'clickCenter';
+}
+
 function main(): void {
   const inputArg = process.argv[2];
   if (!inputArg) {
-    console.error('用法: npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5');
+    console.error('用法: npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5 [selector-library.json]');
     process.exit(1);
   }
-  const inputPath = resolve(inputArg);
-  const dist = JSON5.parse(readFileSync(inputPath, 'utf-8')) as Json;
+  const dist = JSON5.parse(readFileSync(resolve(inputArg), 'utf-8')) as Json;
 
+  // ── 全局开屏组（dist.globalGroups） ──
   const globalGroup = (dist.globalGroups ?? []).find((g: Json) => String(g?.name ?? '').includes('开屏'));
   if (!globalGroup) throw new Error('GKD 数据里找不到“开屏广告-全局”组');
 
   const globalSelectors: Selector[] = [];
   const globalExcludes: Selector[] = [];
   for (const rule of globalGroup.rules ?? []) {
-    if (!rule || typeof rule !== 'object') continue;
+    if (!rule || typeof rule !== 'object' || !isClickAction(rule)) continue;
     for (const raw of [...textList(rule.matches), ...textList(rule.anyMatches)]) {
       const parsed = parseSelector(raw);
-      if (parsed) globalSelectors.push(parsed);
+      if (parsed) globalSelectors.push({ ...parsed, when: 'splash' });
       else if (process.env.DEBUG_GKD) console.error('GLOBAL SKIP', raw.slice(0, 220));
     }
     for (const raw of textList(rule.excludeMatches)) {
@@ -613,6 +644,35 @@ function main(): void {
     }
   }
 
+  // ── 全局选择器库（可选；v667 起的 SDK 级卡片关闭规则） ──
+  const libraryArg = process.argv[3];
+  let librarySplash = 0;
+  let libraryAlways = 0;
+  if (libraryArg) {
+    const lib = JSON.parse(readFileSync(resolve(libraryArg), 'utf-8')) as Json;
+    for (const item of lib.items ?? []) {
+      if (!item || typeof item !== 'object' || item.scope !== 'global') continue;
+      const name = String(item.name ?? '');
+      const selector = typeof item.selector === 'string' ? item.selector : '';
+      if (!selector) continue;
+      if (name.startsWith('开屏排除')) {
+        const parsed = parseSelector(selector);
+        if (parsed) globalExcludes.push(parsed);
+        continue;
+      }
+      if (!GLOBAL_LIBRARY_PREFIXES.some((p) => name.startsWith(p))) continue;
+      const parsed = parseSelector(selector);
+      if (!parsed) {
+        if (process.env.DEBUG_GKD) console.error('LIBRARY SKIP', name, selector.slice(0, 160));
+        continue;
+      }
+      const isSplash = name.startsWith('开屏广告') || name.startsWith('字节开屏') || name.startsWith('互动开屏');
+      globalSelectors.push({ ...parsed, when: isSplash ? 'splash' : 'always' });
+      if (isSplash) librarySplash += 1; else libraryAlways += 1;
+    }
+  }
+
+  // ── 应用级规则 ──
   const apps: Record<string, AppRules> = {};
   let importedApps = 0;
   let skippedGroups = 0;
@@ -621,10 +681,14 @@ function main(): void {
     if (!pkg) continue;
     const profiles: Profile[] = [];
     for (const group of app.groups ?? []) {
-      if (!String(group?.name ?? '').includes('开屏')) continue;
+      const category = APP_CATEGORIES.find((c) => String(group?.name ?? '').startsWith(c.prefix));
+      if (!category) continue;
       if (group.enable === false) continue;
+      const when = category.when;
       const baseActivities = normalizeActivities(group.activityIds);
-      const matchTime = Math.min(15000, Math.max(8000, Number(group.matchTime) || 10000));
+      const matchTime = when === 'splash'
+        ? Math.min(15000, Math.max(8000, Number(group.matchTime) || 10000))
+        : 15000;
       const actionMaximum = Math.min(3, Math.max(1, Number(group.actionMaximum) || 2));
 
       // 每个 activity 组合一个 profile；规则级 activityIds 优先于组级
@@ -633,14 +697,14 @@ function main(): void {
         const key = activities.join('|');
         let profile = byActivity.get(key);
         if (!profile) {
-          profile = { activityIds: activities, matchTime, actionMaximum, selectors: [], excludes: [] };
+          profile = { activityIds: activities, when, matchTime, actionMaximum, selectors: [], excludes: [] };
           byActivity.set(key, profile);
         }
         return profile;
       };
 
-      for (const rule of group.rules ?? []) {
-        if (!rule || typeof rule !== 'object' || rule.enable === false) continue;
+      for (const rule of (Array.isArray(group.rules) ? group.rules : [])) {
+        if (!rule || typeof rule !== 'object' || rule.enable === false || !isClickAction(rule)) continue;
         const activities = normalizeActivities(rule.activityIds);
         const profile = profileFor(activities.length > 0 ? activities : baseActivities);
         for (const raw of [...textList(rule.matches), ...textList(rule.anyMatches)]) {
@@ -659,6 +723,7 @@ function main(): void {
         added += profile.selectors.length;
         profiles.push({
           activityIds: profile.activityIds,
+          when,
           matchTime,
           actionMaximum,
           selectors: uniqSelectors(profile.selectors),
@@ -674,12 +739,12 @@ function main(): void {
   }
 
   const output = {
-    schema: 1,
+    schema: 2,
     source: {
       repo: 'Lin-arm/GKD_subscription',
       version: dist.version ?? null,
       importedAt: new Date().toISOString(),
-      note: 'Derived from 开屏广告 groups; selectors normalized to a safe subset.',
+      note: 'Derived from 开屏/全屏/局部广告 groups and the global selector library; selectors normalized to a safe subset.',
     },
     global: {
       matchTime: 12000,
@@ -700,8 +765,10 @@ function main(): void {
   mkdirSync(dirname(OUTPUT), { recursive: true });
   writeFileSync(OUTPUT, JSON.stringify(output, null, 2) + '\n', 'utf-8');
   const selectors = Object.values(apps).reduce((n, a) => n + a.profiles.reduce((m, p) => m + p.selectors.length, 0), 0);
-  console.log(`✓ 导入 ${importedApps} 个应用 / ${selectors} 条应用级选择器 / ${output.global.selectors.length} 条全局选择器`);
-  console.log(`  跳过 ${skippedGroups} 个无法安全解析的开屏组`);
+  const inAppSelectors = Object.values(apps).reduce((n, a) => n + a.profiles.reduce((m, p) => m + (p.when === 'inApp' ? p.selectors.length : 0), 0), 0);
+  console.log(`✓ 导入 ${importedApps} 个应用 / ${selectors} 条应用级选择器（其中应用内广告 ${inAppSelectors} 条）/ ${output.global.selectors.length} 条全局选择器`);
+  console.log(`  全局库：开屏 ${librarySplash} 条 / 常驻卡片关闭 ${libraryAlways} 条`);
+  console.log(`  跳过 ${skippedGroups} 个无法安全解析的组`);
   console.log(`  → ${OUTPUT}`);
 }
 

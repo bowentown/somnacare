@@ -694,7 +694,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                   // 里，那条路会弹"导入将替换当前的 N 条记录"确认框——用户
                   // 取消时 profile 已切换而数据没重分类，两边永久不一致
                   const reclassified = reclassifyForChronotype(records, opt.key);
-                  const changed = JSON.stringify(reclassified.map((r) => r.kind)) !== JSON.stringify(records.map((r) => r.kind));
+                  // 必须比较整条记录：重归类除了 kind 还会重写 date（夜归属↔自然日
+                  // 差 1 天）。只比 kind 会漏掉 night→day 下 kind 全为 undefined、
+                  // date 全部 +1 的情况，切换后不落库，同一晚之后会重复出卡
+                  const changed = JSON.stringify(reclassified) !== JSON.stringify(records);
                   onUpdateProfile({ chronotype: opt.key });
                   if (changed && onReplaceRecords) {
                     onReplaceRecords(reclassified);
@@ -728,7 +731,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             <div className="min-w-0">
               <h3 className="text-sm font-black text-white">摇一摇广告跳过</h3>
               <p className="text-[10px] text-slate-400 truncate">
-                {adSkipNative ? '开屏广告出现「跳过」时自动点一下' : '安装 APK 后可用'}
+                {adSkipNative ? '开屏与应用内广告的「跳过 / 关闭」自动点一下' : '安装 APK 后可用'}
               </p>
             </div>
           </div>

@@ -140,10 +140,13 @@ final class AdSkipRuleStore {
     static final class RuleSelector {
         final Predicate expr;
         final String[] context;
+        /** 全局规则：true=前台常驻（SDK 卡片关闭），false=仅启动窗口内（开屏） */
+        final boolean always;
 
-        RuleSelector(Predicate expr, String[] context) {
+        RuleSelector(Predicate expr, String[] context, boolean always) {
             this.expr = expr;
             this.context = context == null ? new String[0] : context;
+            this.always = always;
         }
 
         boolean matches(NodeData node, List<NodeData> allNodes) {
@@ -165,14 +168,17 @@ final class AdSkipRuleStore {
 
     static final class Profile {
         final String[] activityIds;
+        /** true=应用内广告（前台期间持续生效）；false=开屏（启动窗口内生效） */
+        final boolean inApp;
         final long matchTime;
         final int actionMaximum;
         final List<RuleSelector> selectors;
         final List<RuleSelector> excludes;
 
-        Profile(String[] activityIds, long matchTime, int actionMaximum,
+        Profile(String[] activityIds, boolean inApp, long matchTime, int actionMaximum,
                 List<RuleSelector> selectors, List<RuleSelector> excludes) {
             this.activityIds = activityIds;
+            this.inApp = inApp;
             this.matchTime = matchTime;
             this.actionMaximum = actionMaximum;
             this.selectors = selectors;
@@ -191,15 +197,18 @@ final class AdSkipRuleStore {
     }
 
     static final class Store {
-        final List<RuleSelector> globalSelectors;
+        final List<RuleSelector> globalSplashSelectors;
+        final List<RuleSelector> globalAlwaysSelectors;
         final List<RuleSelector> globalExcludes;
         final Set<String> excludedApps;
         final Map<String, AppRules> apps;
         final int sourceVersion;
 
-        Store(List<RuleSelector> globalSelectors, List<RuleSelector> globalExcludes,
-              Set<String> excludedApps, Map<String, AppRules> apps, int sourceVersion) {
-            this.globalSelectors = globalSelectors;
+        Store(List<RuleSelector> globalSplashSelectors, List<RuleSelector> globalAlwaysSelectors,
+              List<RuleSelector> globalExcludes, Set<String> excludedApps,
+              Map<String, AppRules> apps, int sourceVersion) {
+            this.globalSplashSelectors = globalSplashSelectors;
+            this.globalAlwaysSelectors = globalAlwaysSelectors;
             this.globalExcludes = globalExcludes;
             this.excludedApps = excludedApps;
             this.apps = apps;
@@ -208,7 +217,7 @@ final class AdSkipRuleStore {
 
         static Store empty() {
             return new Store(Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptySet(), Collections.emptyMap(), 0);
+                    Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), 0);
         }
 
         AppRules appFor(String packageName) {
@@ -217,6 +226,10 @@ final class AdSkipRuleStore {
 
         boolean globalAllowed(String packageName) {
             return !excludedApps.contains(packageName);
+        }
+
+        boolean hasAlwaysRules() {
+            return !globalAlwaysSelectors.isEmpty();
         }
     }
 
@@ -237,8 +250,14 @@ final class AdSkipRuleStore {
 
     private static Store parse(JSONObject root) {
         JSONObject global = root.optJSONObject("global");
-        List<RuleSelector> globalSelectors = parseSelectors(
+        List<RuleSelector> allGlobal = parseSelectors(
                 global == null ? null : global.optJSONArray("selectors"));
+        List<RuleSelector> globalSplash = new ArrayList<>();
+        List<RuleSelector> globalAlways = new ArrayList<>();
+        for (RuleSelector selector : allGlobal) {
+            if (selector.always) globalAlways.add(selector);
+            else globalSplash.add(selector);
+        }
         List<RuleSelector> globalExcludes = parseSelectors(
                 global == null ? null : global.optJSONArray("excludes"));
         Set<String> excludedApps = new HashSet<>();
@@ -268,6 +287,7 @@ final class AdSkipRuleStore {
                         if (selectors.isEmpty()) continue;
                         profiles.add(new Profile(
                                 parseStrings(p.optJSONArray("activityIds")),
+                                "inApp".equals(p.optString("when", "splash")),
                                 p.optLong("matchTime", 10000L),
                                 p.optInt("actionMaximum", 2),
                                 selectors,
@@ -283,7 +303,7 @@ final class AdSkipRuleStore {
         int version = 0;
         JSONObject source = root.optJSONObject("source");
         if (source != null) version = source.optInt("version", 0);
-        return new Store(globalSelectors, globalExcludes, excludedApps, apps, version);
+        return new Store(globalSplash, globalAlways, globalExcludes, excludedApps, apps, version);
     }
 
     private static String[] parseStrings(JSONArray array) {
@@ -312,7 +332,8 @@ final class AdSkipRuleStore {
                     if (!value.isEmpty()) ctx.add(value);
                 }
             }
-            out.add(new RuleSelector(expr, ctx.toArray(new String[0])));
+            out.add(new RuleSelector(expr, ctx.toArray(new String[0]),
+                    "always".equals(obj.optString("when", "splash"))));
         }
         return out;
     }

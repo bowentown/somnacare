@@ -36,12 +36,15 @@ export function mergeRecord(prev: SleepRecord[], next: SleepRecord): SleepRecord
  * 小睡判定（构建时归类）。
  * ★ 必须看用户声明的作息类型（第 21 轮 #1）：kind 是"哪一段是主睡"的
  * 宣告，不该由钟点单方面决定——
- *  - day/irregular：主睡就是主睡（一律 night，不丢弃数据）
+ *  - day：主睡就是主睡（一律 night，不丢弃数据）
+ *  - irregular：白天钟点（10:00–19:59）仍归小睡（第 66 轮）：不归小睡的话
+ *    白天觉与夜觉会同日同键，而 mergeRecord 对同日夜睡是"替换"语义——
+ *    下午睡一觉会把当晚主睡整条抹掉；归小睡则两条共存，零丢失
  *  - night（缺省）：日间就寝（本地 10:00–19:59）视为小睡
  */
 export type Chronotype = 'night' | 'day' | 'irregular';
 export function deriveKind(bedtimeLocalHour: number, chronotype: Chronotype = 'night'): 'night' | 'nap' {
-  if (chronotype === 'day' || chronotype === 'irregular') return 'night';
+  if (chronotype === 'day') return 'night';
   return bedtimeLocalHour >= 10 && bedtimeLocalHour < 20 ? 'nap' : 'night';
 }
 

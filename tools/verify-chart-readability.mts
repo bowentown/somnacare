@@ -53,13 +53,16 @@ ok('分期图：低饱和色板（不再用荧光绿/电光蓝）',
   && trends.includes("rem: '#8b7fd6'")
   && trends.includes("awake: '#d9955f'")
   && !trends.includes("deep: '#00d492'"));
-ok('起卧图：共享目标带 + 区间胶囊 + 行标签',
+ok('起卧图：哑铃点线 + 偏离须线 + 共享目标带 + 均值线 + 行标签',
   trends.includes('targetBedtime')
   && trends.includes('targetWakeTime')
   && trends.includes('rangePct')
   && trends.includes('targetLabel')
   && trends.includes('left: 44, right: 82')
-  && trends.includes('flex-1 h-6 rounded-full relative border'));
+  && trends.includes('flex-1 h-7 relative')
+  && trends.includes('bedWhisker')
+  && trends.includes('h-[3px] -translate-y-1/2 rounded-full')
+  && trends.includes('均值 ${fmtClock(avgStart)}→${fmtClock(avgEnd)}'));
 ok('App 把用户目标作息传入趋势页',
   app.includes('targetBedtime={userProfile.targetBedtime}')
   && app.includes('targetWakeTime={userProfile.targetWakeTime}'));

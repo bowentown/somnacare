@@ -10,6 +10,7 @@ import android.util.DisplayMetrics;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -18,19 +19,23 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * 摇一摇 / 开屏广告跳过（第 59 轮，第 63 轮接入 GKD 规则子集）。
+ * 摇一摇 / 开屏 / 应用内广告跳过（第 59 轮，第 63 轮接入 GKD 规则子集，
+ * 第 66 轮扩展到全屏/局部广告与全局 SDK 卡片关闭规则）。
  *
- * 规则来源：Lin-arm/GKD_subscription 的“开屏广告-全局”与 182 个应用开屏组，
- * 由 tools/import-gkd-splash.mts 归一化为 assets/ad_skip_rules.json。
- * 用户已明确要求参考该订阅并自行承担版权责任（第 63 轮）。
+ * 规则来源：Lin-arm/GKD_subscription 的“开屏广告-全局”、各应用“开屏/全屏/局部广告”
+ * 组与全局选择器库（字节/腾讯/京东/快手卡片关闭），由 tools/import-gkd-splash.mts
+ * 归一化为 assets/ad_skip_rules.json。用户已明确要求参考该订阅并自行承担版权责任。
  *
  * 执行边界（任何一条都不可绕过）：
  *  - 只在本应用开启开关后工作；默认关闭；
- *  - 只在目标应用启动后的 matchTime 内执行应用级规则（最长 15s），
+ *  - 开屏规则（splash）：只在目标应用启动后的 matchTime 内执行（最长 15s），
  *    30s 后完全停止；“跳过 3”这类倒计时可在 30s 内兜底；
- *  - 目标必须是可点击、可见、小尺寸节点（应用规则 ≤55%×30%，通用 ≤40%×25%）；
- *  - 排除自身、系统 UI、系统设置、输入法/密码/银行等敏感包；
- *  - 每次启动最多 3 次点击，点击冷却 1.2s，事件节流 350ms；
+ *  - 应用内规则（inApp / 全局 always）：目标应用前台期间持续生效，
+ *    但受滚动窗口限次（3 分钟内最多 4 次、每次前台会话最多 8 次）；
+ *  - 目标必须是可点击、可见、小尺寸节点（开屏规则 ≤55%×30%，
+ *    应用内/通用 ≤40%×25%）；
+ *  - 排除自身、系统 UI、系统设置、输入法等敏感包；
+ *  - 事件冷却 1.2s，事件节流 150ms；
  *  - 只读节点文字/描述/viewId，不读取输入内容、不截图、不联网。
  */
 public class AdSkipService extends AccessibilityService {
@@ -40,14 +45,21 @@ public class AdSkipService extends AccessibilityService {
     static final String KEY_HITS = "ad_skip_hits";
 
     private static final long CLICK_COOLDOWN_MS = 1200;
-    private static final long EVENT_THROTTLE_MS = 350;
+    private static final long EVENT_THROTTLE_MS = 150;
     private static final long GENERIC_WINDOW_MS = 15_000;
     private static final long APP_RULE_HARD_LIMIT_MS = 30_000;
-    private static final int MAX_NODES = 600;
+    private static final int MAX_NODES = 800;
     private static final int MAX_CLICKS_PER_LAUNCH = 3;
+    /** 应用内广告：滚动 3 分钟窗口内最多 4 次，一次前台会话最多 8 次 */
+    private static final long IN_APP_ROLLING_WINDOW_MS = 180_000;
+    private static final int IN_APP_ROLLING_MAX = 4;
+    private static final int IN_APP_SESSION_MAX = 8;
+    /** 5 分钟无事件视为新的前台会话，滚动计数清零 */
+    private static final long IN_APP_IDLE_RESET_MS = 300_000;
+    private static final int MAX_SIBLING_WINDOWS = 2;
 
     /** 「跳过 3」「跳过3s」这类倒计时是强广告信号：不受 15s 通用窗口限制 */
-    private static final Pattern COUNTDOWN = Pattern.compile("^跳过(广告)?\\s*\\d+\\s*[sS秒]?\\s*广告?$");
+    private static final Pattern COUNTDOWN = Pattern.compile("^跳[过過]\\s*(广告|廣告)?\\s*\\d+\\s*[sS秒]?\\s*(广告|廣告)?$");
 
     /** 文字/描述里出现这些词就不是开屏跳过（片头、教程、无障碍跳转等） */
     private static final String[] TEXT_EXCLUDES = {
@@ -81,9 +93,12 @@ public class AdSkipService extends AccessibilityService {
     private long lastEventAt = 0;
     private long lastClickAt = 0;
     private long packageSince = 0;
+    private long lastPkgEventAt = 0;
     private String lastPackage = "";
     private String lastActivity = "";
     private int clicksThisLaunch = 0;
+    /** 应用内广告滚动窗口的点击时间戳（随前台包切换/空闲清零） */
+    private final ArrayDeque<Long> inAppClickTimes = new ArrayDeque<>();
 
     @Override
     protected void onServiceConnected() {
@@ -97,7 +112,7 @@ public class AdSkipService extends AccessibilityService {
             info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
                     | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
                     | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
-            info.notificationTimeout = 100;
+            info.notificationTimeout = 50;
             setServiceInfo(info);
         }
     }
@@ -152,8 +167,10 @@ public class AdSkipService extends AccessibilityService {
             packageSince = now;
             lastClickAt = 0;
             clicksThisLaunch = 0;
+            inAppClickTimes.clear();
         }
-        if (clicksThisLaunch >= MAX_CLICKS_PER_LAUNCH) return;
+        if (now - lastPkgEventAt > IN_APP_IDLE_RESET_MS) inAppClickTimes.clear();
+        lastPkgEventAt = now;
 
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             CharSequence cls = event.getClassName();
@@ -163,19 +180,19 @@ public class AdSkipService extends AccessibilityService {
         }
 
         long elapsed = now - packageSince;
-        if (elapsed > APP_RULE_HARD_LIMIT_MS) return;
+        boolean splashPossible = elapsed <= APP_RULE_HARD_LIMIT_MS;
+        boolean inAppPossible = hasInAppRules(pkg);
+        if (!splashPossible && !inAppPossible) return;
+        if (!splashPossible && !inAppBudgetOk()) return;
 
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
         try {
-            List<AdSkipRuleStore.NodeData> nodes = collect(root);
-            Candidate best = findBest(pkg, lastActivity, elapsed, nodes);
-            if (best == null) return;
-            if (best.target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                lastClickAt = SystemClock.uptimeMillis();
-                clicksThisLaunch++;
-                SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-                sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
+            if (scanRoot(root, pkg, elapsed)) return;
+            // 部分广告 SDK 用独立悬浮窗承载：活动窗口树里找不到时，再扫同包窗口
+            CharSequence rootPkg = root.getPackageName();
+            if (rootPkg == null || !pkg.equals(rootPkg.toString())) {
+                scanSiblingWindows(pkg, elapsed, root);
             }
         } catch (Exception ignored) {
             // 节点在遍历中途失效 / ROM 权限异常：静默跳过本次事件
@@ -184,6 +201,60 @@ public class AdSkipService extends AccessibilityService {
                 root.recycle();
             } catch (Exception ignored) {
             }
+        }
+    }
+
+    private boolean hasInAppRules(String pkg) {
+        AdSkipRuleStore.AppRules appRules = rules.appFor(pkg);
+        if (appRules != null) {
+            for (AdSkipRuleStore.Profile profile : appRules.profiles) {
+                if (profile.inApp) return true;
+            }
+        }
+        return rules.globalAllowed(pkg) && rules.hasAlwaysRules();
+    }
+
+    private boolean inAppBudgetOk() {
+        long now = SystemClock.uptimeMillis();
+        while (!inAppClickTimes.isEmpty() && now - inAppClickTimes.peekFirst() > IN_APP_ROLLING_WINDOW_MS) {
+            inAppClickTimes.pollFirst();
+        }
+        return inAppClickTimes.size() < IN_APP_ROLLING_MAX && clicksThisLaunch < IN_APP_SESSION_MAX;
+    }
+
+    /** 扫一棵窗口树并按规则点击；返回是否已点击（点击后本次事件结束） */
+    private boolean scanRoot(AccessibilityNodeInfo root, String pkg, long elapsed) {
+        List<AdSkipRuleStore.NodeData> nodes = collect(root);
+        Candidate best = findBest(pkg, lastActivity, elapsed, nodes);
+        if (best == null) return false;
+        if (best.target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            lastClickAt = SystemClock.uptimeMillis();
+            clicksThisLaunch++;
+            inAppClickTimes.addLast(lastClickAt);
+            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
+            return true;
+        }
+        return false;
+    }
+
+    private void scanSiblingWindows(String pkg, long elapsed, AccessibilityNodeInfo activeRoot) {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return;
+            int scanned = 0;
+            for (AccessibilityWindowInfo window : windows) {
+                if (scanned >= MAX_SIBLING_WINDOWS) break;
+                if (window == null) continue;
+                AccessibilityNodeInfo windowRoot = window.getRoot();
+                if (windowRoot == null || windowRoot.equals(activeRoot)) continue;
+                CharSequence windowPkg = windowRoot.getPackageName();
+                if (windowPkg == null || !pkg.equals(windowPkg.toString())) continue;
+                scanned++;
+                if (scanRoot(windowRoot, pkg, elapsed)) return;
+            }
+        } catch (Exception ignored) {
+            // 某些 ROM 对 getWindows() 限权：静默降级为只扫活动窗口
         }
     }
 
@@ -216,31 +287,36 @@ public class AdSkipService extends AccessibilityService {
 
             if (appRules != null) {
                 for (AdSkipRuleStore.Profile profile : appRules.profiles) {
-                    if (elapsed > profile.matchTime) continue;
-                    if (clicksThisLaunch >= Math.min(MAX_CLICKS_PER_LAUNCH, profile.actionMaximum)) continue;
+                    boolean splash = !profile.inApp;
+                    // 开屏：只在启动窗口内；应用内：前台期间持续生效（预算在事件入口统一管）
+                    if (splash && elapsed > profile.matchTime) continue;
+                    if (splash && clicksThisLaunch >= Math.min(MAX_CLICKS_PER_LAUNCH, profile.actionMaximum)) continue;
                     if (!activityMatches(activity, profile.activityIds)) continue;
                     if (matchesAny(profile.excludes, node, nodes)) continue;
                     for (AdSkipRuleStore.RuleSelector selector : profile.selectors) {
                         if (!selector.matches(node, nodes)) continue;
-                        Candidate candidate = candidate(node, 3);
-                        best = better(best, candidate);
+                        best = better(best, candidate(node, splash ? 3 : 2, !splash));
                     }
                 }
             }
 
-            if (allowGlobal && elapsed <= 12_000) {
-                if (!matchesAny(rules.globalExcludes, node, nodes)) {
-                    for (AdSkipRuleStore.RuleSelector selector : rules.globalSelectors) {
+            if (allowGlobal && !matchesAny(rules.globalExcludes, node, nodes)) {
+                if (elapsed <= 12_000) {
+                    for (AdSkipRuleStore.RuleSelector selector : rules.globalSplashSelectors) {
                         if (!selector.matches(node, nodes)) continue;
-                        best = better(best, candidate(node, 2));
+                        best = better(best, candidate(node, 2, false));
                     }
+                }
+                for (AdSkipRuleStore.RuleSelector selector : rules.globalAlwaysSelectors) {
+                    if (!selector.matches(node, nodes)) continue;
+                    best = better(best, candidate(node, 2, true));
                 }
             }
 
             boolean countdown = isCountdown(node);
             if ((elapsed <= GENERIC_WINDOW_MS || (countdown && elapsed <= APP_RULE_HARD_LIMIT_MS))
                     && matchesGeneric(node)) {
-                best = better(best, candidate(node, 1));
+                best = better(best, candidate(node, 1, false));
             }
         }
         return best;
@@ -255,7 +331,7 @@ public class AdSkipService extends AccessibilityService {
         return candidate.area < current.area ? candidate : current;
     }
 
-    private Candidate candidate(AdSkipRuleStore.NodeData matched, int priority) {
+    private Candidate candidate(AdSkipRuleStore.NodeData matched, int priority, boolean inApp) {
         AccessibilityNodeInfo target = matched.node;
         AdSkipRuleStore.NodeData targetData = matched;
         for (int i = 0; i < 6; i++) {
@@ -270,8 +346,9 @@ public class AdSkipService extends AccessibilityService {
         Rect bounds = targetData.bounds;
         if (bounds.width() <= 3 || bounds.height() <= 3) return null;
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        float maxWidth = priority >= 2 ? 0.55f : 0.40f;
-        float maxHeight = priority >= 2 ? 0.30f : 0.25f;
+        // 应用内广告的关闭按钮通常很小；尺寸上限收紧，降低误点成本
+        float maxWidth = priority >= 2 && !inApp ? 0.55f : 0.40f;
+        float maxHeight = priority >= 2 && !inApp ? 0.30f : 0.25f;
         if (bounds.width() > dm.widthPixels * maxWidth) return null;
         if (bounds.height() > dm.heightPixels * maxHeight) return null;
 

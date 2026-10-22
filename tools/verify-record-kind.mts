@@ -93,8 +93,10 @@ const rec = (id: string, date: string, kind?: 'nap' | 'night', dur = 480): any =
   check('deriveKind day：11:00 → night（不再误标小睡）', deriveKind(11, 'day') === 'night');
   check('deriveKind day：14:00 → night', deriveKind(14, 'day') === 'night');
   check('deriveKind day：18:00 → night', deriveKind(18, 'day') === 'night');
-  // 不规律：不归类，一律当主睡（不丢弃数据）
-  check('deriveKind irregular：13:00 → night（不猜）', deriveKind(13, 'irregular') === 'night');
+  // 不规律：白天钟点（10:00–19:59）归小睡（第 66 轮）——否则白天觉与夜觉
+  // 同日同键，mergeRecord 的替换语义会把当晚主睡整条抹掉
+  check('deriveKind irregular：13:00 → nap（防同日替换丢数据）', deriveKind(13, 'irregular') === 'nap');
+  check('deriveKind irregular：23:00 → night', deriveKind(23, 'irregular') === 'night');
   // 【反向】不传 chronotype → 走 night 缺省钟点规则 → 11:00 是 nap
   // （证明 chronotype 参数真的生效，而不是摆设）
   check('反向：不传 chronotype 时 11:00 → nap（参数生效证明）', deriveKind(11) === 'nap');

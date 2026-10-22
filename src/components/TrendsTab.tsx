@@ -272,6 +272,27 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
   const activeSleep = sleepRows.find((row) => row.record.id === activeRecord?.id)
     ?? sleepRows[sleepRows.length - 1]
     ?? null;
+  // 分钟 → HH:MM（跨午夜取模，均值线/均值文案共用）
+  const fmtClock = (minutes: number): string => {
+    const norm = ((Math.round(minutes) % 1440) + 1440) % 1440;
+    return `${String(Math.floor(norm / 60)).padStart(2, '0')}:${String(norm % 60).padStart(2, '0')}`;
+  };
+  // 相对目标的偏离（分钟）：须线只画 ≥45 分钟的行，避免把 ±10 分钟画成噪音
+  const DEV_THRESHOLD = 45;
+  const bedWhisker = (start: number): { a: number; b: number } | null =>
+    targetStart !== null && Math.abs(start - targetStart) >= DEV_THRESHOLD
+      ? { a: rangePct(targetStart), b: rangePct(start) }
+      : null;
+  const wakeWhisker = (end: number): { a: number; b: number } | null =>
+    targetEnd !== null && Math.abs(end - targetEnd) >= DEV_THRESHOLD
+      ? { a: rangePct(targetEnd), b: rangePct(end) }
+      : null;
+  const hasWhisker = sleepRows.some(
+    (row) => bedWhisker(row.start) !== null || wakeWhisker(row.end) !== null,
+  );
+  const avgBedDev = targetStart !== null && sleepRows.length
+    ? Math.round(sleepRows.reduce((sum, row) => sum + Math.abs(row.start - targetStart), 0) / sleepRows.length)
+    : null;
 
   return (
     <div className={`space-y-3 pb-28 ${theme.textPrimary}`}>
@@ -537,7 +558,10 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
           </div>
         )}
 
-        {/* View Mode 3: Circadian（共享目标带 + 区间胶囊） */}
+        {/* View Mode 3: Circadian — 哑铃图（dumbbell plot，参考 Observable Plot/ECharts 的语法）：
+            入睡点 → 醒来点用细线相连，偏离目标的夜晚画出琥珀色须线，
+            再叠加均值线。和"分期比例"的满宽色带在视觉语法上完全区分：
+            这张图回答"作息准不准"，不是"睡了多久"。 */}
         {viewMode === 'circadian' && (
           <div className="space-y-2 animate-tab-fade-in">
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2`}>
@@ -570,9 +594,16 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
               </div>
 
               <div className="relative">
-                {/* 连续目标带 + 时间网格：穿过多行，而不是每行重复一块 */}
-                {targetStart !== null && targetEnd !== null && (
-                  <div className="absolute inset-y-0 z-0 pointer-events-none" style={{ left: 44, right: 82 }}>
+                {/* 连续目标带 + 时间网格 + 均值线：穿过多行，而不是每行重复一块 */}
+                <div className="absolute inset-y-0 z-0 pointer-events-none" style={{ left: 44, right: 82 }}>
+                  {[0, 3, 6, 9].map((hour) => (
+                    <div
+                      key={`grid-${hour}`}
+                      className="absolute inset-y-0 w-px"
+                      style={{ left: `${rangePct((hour + 24) * 60)}%`, background: 'rgba(255,255,255,0.06)' }}
+                    />
+                  ))}
+                  {targetStart !== null && targetEnd !== null && (
                     <div
                       className="absolute inset-y-0"
                       style={{
@@ -583,30 +614,39 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                         borderRight: `1px dashed ${theme.accentHex}66`,
                       }}
                     />
-                    {[0, 3, 6, 9].map((hour) => (
-                      <div
-                        key={`grid-${hour}`}
-                        className="absolute inset-y-0 w-px"
-                        style={{ left: `${rangePct((hour + 24) * 60)}%`, background: 'rgba(255,255,255,0.06)' }}
-                      />
-                    ))}
-                  </div>
-                )}
+                  )}
+                  {avgStart !== null && (
+                    <div
+                      className="absolute inset-y-0 w-px"
+                      style={{ left: `${rangePct(avgStart)}%`, background: `${theme.accentHex}77` }}
+                    />
+                  )}
+                  {avgEnd !== null && (
+                    <div
+                      className="absolute inset-y-0 w-px"
+                      style={{ left: `${rangePct(avgEnd)}%`, background: 'rgba(241,245,249,0.45)' }}
+                    />
+                  )}
+                </div>
 
                 <div className="relative z-10 space-y-1.5">
                   {sleepRows.map(({ record, start, end }) => {
                     const isHovered = activeRecord?.id === record.id;
                     const left = rangePct(start);
                     const right = rangePct(end);
-                    const width = Math.max(1.5, right - left);
                     const dotLeft = Math.min(99, Math.max(1, left));
                     const dotRight = Math.min(99, Math.max(1, right));
+                    const whiskers = [bedWhisker(start), wakeWhisker(end)]
+                      .filter((w): w is { a: number; b: number } => w !== null);
+                    const bedDev = targetStart !== null ? start - targetStart : null;
+                    const wakeDev = targetEnd !== null ? end - targetEnd : null;
                     return (
                       <button
                         key={record.id}
                         type="button"
                         onClick={() => { hapticStep(); setHoveredRecord(record); }}
                         aria-label={`${record.date} 就寝 ${record.bedtime}，醒来 ${record.wakeTime}`}
+                        title={`就寝 ${record.bedtime}${bedDev !== null ? `（比目标${bedDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(bedDev / 5) * 5)} 分）` : ''}，醒来 ${record.wakeTime}${wakeDev !== null ? `（比目标${wakeDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(wakeDev / 5) * 5)} 分）` : ''}`}
                         className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-9"
                       >
                         <span className={`w-9 text-[10px] font-mono shrink-0 tabular-nums ${
@@ -615,26 +655,47 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                           {record.date.slice(5)}
                         </span>
 
-                        <span className={`flex-1 h-6 rounded-full relative border ${innerBorder} ${
-                          isHovered ? `ring-1 ${theme.accentRing}` : ''
-                        }`}>
-                          {/* 区间胶囊：比 2px 线更像“一段睡眠”，两端点仍标出精确时刻 */}
+                        {/* 哑铃轨道：不再画满宽胶囊底（那会让点线看起来"断在空胶囊里"），
+                            只留一条 hover 时的微弱底色帮助定位 */}
+                        <span className={`flex-1 h-7 relative ${isHovered ? 'bg-white/[0.04] rounded-full' : ''}`}>
+                          {/* 偏离目标须线：误差线（error bar）语法 */}
+                          {whiskers.map((w, i) => (
+                            <span
+                              key={`whisk-${i}`}
+                              className="absolute top-1/2 h-[2px] -translate-y-1/2 rounded-full pointer-events-none"
+                              style={{
+                                left: `${Math.min(w.a, w.b)}%`,
+                                width: `${Math.max(0, Math.abs(w.b - w.a))}%`,
+                                background: 'rgba(251,191,36,0.45)',
+                              }}
+                            />
+                          ))}
+                          {/* 连接线：3px 细线，两端是明确的点 */}
                           <span
-                            className="absolute top-1/2 h-[6px] -translate-y-1/2 rounded-full pointer-events-none"
+                            className="absolute top-1/2 h-[3px] -translate-y-1/2 rounded-full pointer-events-none"
                             style={{
                               left: `${left}%`,
-                              width: `${width}%`,
-                              background: `${theme.accentHex}${isHovered ? 'ee' : 'aa'}`,
-                              boxShadow: `0 0 8px ${theme.accentHex}22`,
+                              width: `${Math.max(0, right - left)}%`,
+                              background: `${theme.accentHex}${isHovered ? 'cc' : '73'}`,
                             }}
                           />
+                          {/* 入睡点：主题色实心 */}
                           <span
-                            className="absolute top-1/2 w-[6px] h-[6px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                            style={{ left: `${dotLeft}%`, background: theme.accentHex }}
+                            className="absolute top-1/2 w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            style={{
+                              left: `${dotLeft}%`,
+                              background: theme.accentHex,
+                              boxShadow: isHovered ? `0 0 0 3px ${theme.accentHex}33` : '0 0 0 1.5px rgba(2,6,23,0.9)',
+                            }}
                           />
+                          {/* 醒来点：亮白实心，与入睡点一眼可分 */}
                           <span
-                            className="absolute top-1/2 w-[6px] h-[6px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                            style={{ left: `${dotRight}%`, background: '#ffffff', border: `1.5px solid ${theme.accentHex}` }}
+                            className="absolute top-1/2 w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            style={{
+                              left: `${dotRight}%`,
+                              background: '#f1f5f9',
+                              boxShadow: isHovered ? '0 0 0 3px rgba(241,245,249,0.25)' : '0 0 0 1.5px rgba(2,6,23,0.9)',
+                            }}
                           />
                         </span>
 
@@ -647,6 +708,27 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                     );
                   })}
                 </div>
+              </div>
+
+              <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 border-t ${innerBorder} text-[9px] ${textMuted}`}>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full" style={{ background: theme.accentHex }} />
+                  入睡
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-slate-100" />
+                  醒来
+                </span>
+                {hasWhisker && (
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-[2px] rounded-full" style={{ background: 'rgba(251,191,36,0.55)' }} />
+                    偏离目标≥45分
+                  </span>
+                )}
+                <span className="ml-auto font-mono tabular-nums">
+                  {avgStart !== null && avgEnd !== null && `均值 ${fmtClock(avgStart)}→${fmtClock(avgEnd)}`}
+                  {avgBedDev !== null && ` · 目标偏差±${avgBedDev}分`}
+                </span>
               </div>
             </div>
           </div>

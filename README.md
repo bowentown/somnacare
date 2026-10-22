@@ -141,8 +141,8 @@ npm run dev          # http://localhost:3000
 - **全量备份**：记录/档案/图鉴/朋友圈/聊天一键导出导入——API 密钥与端点地址**默认剥离、永不随备份迁移**，超大文件与超额记录导入前拦截，写入失败自动回滚；
 - **每周睡眠分享卡**：Canvas 生成的可保存长图，只含聚合数字，生成前可预览；
 - **应用内更新**：偏好页「应用更新」→ 显式检查 GitHub 最新 Release，展示版本说明与安装包大小；下载后原生校验**包名 / versionCode / 签名证书 / SHA-256** 才交给系统安装器（只在点击时联网，不后台上传任何数据）；
-- **广告跳过**：参考 [GKD_subscription](https://github.com/Lin-arm/GKD_subscription) 的“开屏广告”规则子集（164 个应用 / 249 条选择器 + 全局兜底），按包名 / Activity / 启动时限执行；无障碍服务按系统规范声明 `exported="true"`，并提供电池优化白名单入口；装了 Shizuku 的高级用户可在服务被系统关掉后「一键修回」（Shizuku 本身需在运行，无法阻止 OEM 清理）。
-  - 规则由 `tools/import-gkd-splash.mts` 从订阅的 `dist/gkd.json5` 生成；按用户要求参考该订阅，相关版权责任由使用者承担。
+- **广告跳过**：参考 [GKD_subscription](https://github.com/Lin-arm/GKD_subscription) 的广告规则子集（第 66 轮起覆盖「开屏 + 全屏 + 局部广告」：631 个应用 / 1482 条选择器，另含全局选择器库的 SDK 卡片关闭规则），按包名 / Activity / 启动时限执行；开屏规则在启动窗口内生效，应用内弹窗/卡片广告在前台期间以滚动窗口限次生效（3 分钟 ≤4 次、单次会话 ≤8 次、目标 ≤40%×25%）；无障碍服务按系统规范声明 `exported="true"`，并提供电池优化白名单入口；装了 Shizuku 的高级用户可在服务被系统关掉后「一键修回」（Shizuku 本身需在运行，无法阻止 OEM 清理）。
+  - 规则由 `tools/import-gkd-splash.mts` 从订阅的 `dist/gkd.json5` 与 `dist/gkd-667-selector-library.json` 生成；按用户要求参考该订阅，相关版权责任由使用者承担。
 
 ---
 
