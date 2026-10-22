@@ -60,7 +60,7 @@ ok('分期图：低饱和色板（不再用荧光绿/电光蓝）',
   && trends.includes("rem: '#8b7fd6'")
   && trends.includes("awake: '#d9955f'")
   && !trends.includes("deep: '#00d492'"));
-ok('起卧图：哑铃点线 + 偏离须线 + 共享目标带 + 均值线 + 行标签',
+ok('起卧图：哑铃点线（2px 线 + 8px 点）+ 虚线须线 + 目标带 + 页脚均值',
   trends.includes('targetBedtime')
   && trends.includes('targetWakeTime')
   && trends.includes('rangePct')
@@ -68,8 +68,13 @@ ok('起卧图：哑铃点线 + 偏离须线 + 共享目标带 + 均值线 + 行�
   && trends.includes('left: 44, right: 82')
   && trends.includes('flex-1 h-7 relative')
   && trends.includes('bedWhisker')
-  && trends.includes('h-[3px] -translate-y-1/2 rounded-full')
+  && trends.includes('h-[2px] -translate-y-1/2 rounded-full pointer-events-none')
+  && trends.includes('repeating-linear-gradient(90deg, rgba(251,191,36,0.6)')
+  && trends.includes('w-2 h-2 rounded-full')
   && trends.includes('均值 ${fmtClock(avgStart)}→${fmtClock(avgEnd)}'));
+ok('起卧图：绘图区只留目标带与网格（均值竖线/悬停色块已移除，避免竖线拥挤）',
+  !trends.includes('left: `${rangePct(avgStart)}%`')
+  && !trends.includes("bg-white/[0.04] rounded-full"));
 ok('App 把用户目标作息传入趋势页',
   app.includes('targetBedtime={userProfile.targetBedtime}')
   && app.includes('targetWakeTime={userProfile.targetWakeTime}'));

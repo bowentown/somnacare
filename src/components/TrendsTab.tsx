@@ -670,18 +670,8 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                       }}
                     />
                   )}
-                  {avgStart !== null && (
-                    <div
-                      className="absolute inset-y-0 w-px"
-                      style={{ left: `${rangePct(avgStart)}%`, background: `${theme.accentHex}77` }}
-                    />
-                  )}
-                  {avgEnd !== null && (
-                    <div
-                      className="absolute inset-y-0 w-px"
-                      style={{ left: `${rangePct(avgEnd)}%`, background: 'rgba(241,245,249,0.45)' }}
-                    />
-                  )}
+                  {/* 均值不画竖线：4 条竖线（目标带两条+均值两条）挤在一起是"看起来奇怪"的主因，
+                      均值改为页脚文案；绘图区只留目标带与网格 */}
                 </div>
 
                 <div className="relative z-10 space-y-1.5">
@@ -710,46 +700,46 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                           {record.date.slice(5)}
                         </span>
 
-                        {/* 哑铃轨道：不再画满宽胶囊底（那会让点线看起来"断在空胶囊里"），
-                            只留一条 hover 时的微弱底色帮助定位 */}
-                        <span className={`flex-1 h-7 relative ${isHovered ? 'bg-white/[0.04] rounded-full' : ''}`}>
-                          {/* 偏离目标须线：误差线（error bar）语法 */}
+                        {/* 哑铃轨道：无底衬、无悬停色块——只留线、点、须线三种元素 */}
+                        <span className="flex-1 h-7 relative">
+                          {/* 偏离目标须线：虚线误差线，画在连接线之下 */}
                           {whiskers.map((w, i) => (
                             <span
                               key={`whisk-${i}`}
-                              className="absolute top-1/2 h-[2px] -translate-y-1/2 rounded-full pointer-events-none"
+                              className="absolute top-1/2 h-[2px] -translate-y-1/2 pointer-events-none"
                               style={{
                                 left: `${Math.min(w.a, w.b)}%`,
                                 width: `${Math.max(0, Math.abs(w.b - w.a))}%`,
-                                background: 'rgba(251,191,36,0.45)',
+                                backgroundImage:
+                                  'repeating-linear-gradient(90deg, rgba(251,191,36,0.6) 0 4px, transparent 4px 7px)',
                               }}
                             />
                           ))}
-                          {/* 连接线：3px 细线，两端是明确的点 */}
+                          {/* 连接线：2px 细线，两端是明确的点 */}
                           <span
-                            className="absolute top-1/2 h-[3px] -translate-y-1/2 rounded-full pointer-events-none"
+                            className="absolute top-1/2 h-[2px] -translate-y-1/2 rounded-full pointer-events-none"
                             style={{
                               left: `${left}%`,
                               width: `${Math.max(0, right - left)}%`,
-                              background: `${theme.accentHex}${isHovered ? 'cc' : '73'}`,
+                              background: `${theme.accentHex}${isHovered ? 'cc' : '80'}`,
                             }}
                           />
                           {/* 入睡点：主题色实心 */}
                           <span
-                            className="absolute top-1/2 w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            className="absolute top-1/2 w-2 h-2 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
                             style={{
                               left: `${dotLeft}%`,
                               background: theme.accentHex,
-                              boxShadow: isHovered ? `0 0 0 3px ${theme.accentHex}33` : '0 0 0 1.5px rgba(2,6,23,0.9)',
+                              boxShadow: isHovered ? `0 0 0 3px ${theme.accentHex}33` : '0 0 0 2px rgba(2,6,23,0.9)',
                             }}
                           />
                           {/* 醒来点：亮白实心，与入睡点一眼可分 */}
                           <span
-                            className="absolute top-1/2 w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            className="absolute top-1/2 w-2 h-2 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
                             style={{
                               left: `${dotRight}%`,
                               background: '#f1f5f9',
-                              boxShadow: isHovered ? '0 0 0 3px rgba(241,245,249,0.25)' : '0 0 0 1.5px rgba(2,6,23,0.9)',
+                              boxShadow: isHovered ? '0 0 0 3px rgba(241,245,249,0.25)' : '0 0 0 2px rgba(2,6,23,0.9)',
                             }}
                           />
                         </span>

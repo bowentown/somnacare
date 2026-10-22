@@ -2,9 +2,14 @@ package com.somnacare.gemmallm;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Path;
 import android.graphics.Rect;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.accessibility.AccessibilityEvent;
@@ -63,6 +68,9 @@ public class AdSkipService extends AccessibilityService {
     /** 5 分钟无事件视为新的前台会话，滚动计数清零 */
     private static final long IN_APP_IDLE_RESET_MS = 300_000;
     private static final int MAX_SIBLING_WINDOWS = 2;
+    /** 应用启动后主动轮询窗口的时长与间隔：部分开屏 SDK 只渲染一次、不再发事件 */
+    private static final long SPLASH_POLL_WINDOW_MS = 8_000;
+    private static final long SPLASH_POLL_INTERVAL_MS = 400;
 
     /** 「跳过 3」「跳过3s」这类倒计时是强广告信号：不受 15s 通用窗口限制 */
     private static final Pattern COUNTDOWN = Pattern.compile("^跳[过過]\\s*(广告|廣告)?\\s*\\d+\\s*[sS秒]?\\s*(广告|廣告)?$");
@@ -105,6 +113,20 @@ public class AdSkipService extends AccessibilityService {
     private int clicksThisLaunch = 0;
     /** 应用内广告滚动窗口的点击时间戳（随前台包切换/空闲清零） */
     private final ArrayDeque<Long> inAppClickTimes = new ArrayDeque<>();
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    /** 启动窗口内的主动轮询：事件稀疏时保证开屏按钮仍被扫到（窗口外自动停止调度） */
+    private final Runnable splashPoller = new Runnable() {
+        @Override
+        public void run() {
+            boolean keepGoing = false;
+            try {
+                keepGoing = pollOnce();
+            } catch (Exception ignored) {
+                // 轮询失败不能拖垮服务
+            }
+            if (keepGoing) handler.postDelayed(this, SPLASH_POLL_INTERVAL_MS);
+        }
+    };
 
     @Override
     protected void onServiceConnected() {
@@ -174,6 +196,9 @@ public class AdSkipService extends AccessibilityService {
             lastClickAt = 0;
             clicksThisLaunch = 0;
             inAppClickTimes.clear();
+            // 新前台应用：启动窗口内开始主动轮询（开屏 SDK 常只渲染一次不发事件）
+            handler.removeCallbacks(splashPoller);
+            handler.postDelayed(splashPoller, SPLASH_POLL_INTERVAL_MS);
         }
         if (now - lastPkgEventAt > IN_APP_IDLE_RESET_MS) inAppClickTimes.clear();
         lastPkgEventAt = now;
@@ -186,6 +211,22 @@ public class AdSkipService extends AccessibilityService {
         }
 
         long elapsed = now - packageSince;
+        attemptScan(pkg, elapsed);
+    }
+
+    /** 轮询入口：只在启动窗口内、冷却已过时扫描；返回是否继续调度（窗口外停止，省电） */
+    private boolean pollOnce() {
+        if (!enabled()) return false;
+        String pkg = lastPackage;
+        if (pkg.isEmpty()) return false;
+        long now = SystemClock.uptimeMillis();
+        long elapsed = now - packageSince;
+        if (elapsed > SPLASH_POLL_WINDOW_MS) return false;
+        if (now - lastClickAt >= CLICK_COOLDOWN_MS) attemptScan(pkg, elapsed);
+        return true;
+    }
+
+    private void attemptScan(String pkg, long elapsed) {
         boolean splashPossible = elapsed <= APP_RULE_HARD_LIMIT_MS;
         boolean inAppPossible = hasInAppRules(pkg);
         if (!splashPossible && !inAppPossible) return;
@@ -195,19 +236,22 @@ public class AdSkipService extends AccessibilityService {
         if (root == null) return;
         try {
             if (scanRoot(root, pkg, elapsed)) return;
-            // 部分广告 SDK 用独立悬浮窗承载：活动窗口树里找不到时，再扫同包窗口
-            CharSequence rootPkg = root.getPackageName();
-            if (rootPkg == null || !pkg.equals(rootPkg.toString())) {
-                scanSiblingWindows(pkg, elapsed, root);
-            }
+            // 广告 SDK 常用独立窗口承载：启动窗口内再扫同包窗口（含活动窗口同包的情况）
+            if (elapsed <= APP_RULE_HARD_LIMIT_MS) scanSiblingWindows(pkg, elapsed, root);
         } catch (Exception ignored) {
-            // 节点在遍历中途失效 / ROM 权限异常：静默跳过本次事件
+            // 节点在遍历中途失效 / ROM 权限异常：静默跳过本次扫描
         } finally {
             try {
                 root.recycle();
             } catch (Exception ignored) {
             }
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        handler.removeCallbacks(splashPoller);
+        super.onDestroy();
     }
 
     private boolean hasInAppRules(String pkg) {
@@ -233,7 +277,7 @@ public class AdSkipService extends AccessibilityService {
         AdSkipRuleStore.Snapshot snap = collect(root);
         Candidate best = findBest(pkg, lastActivity, elapsed, snap);
         if (best == null) return false;
-        if (best.target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+        if (tapTarget(best.target)) {
             lastClickAt = SystemClock.uptimeMillis();
             clicksThisLaunch++;
             inAppClickTimes.addLast(lastClickAt);
@@ -242,6 +286,35 @@ public class AdSkipService extends AccessibilityService {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 点击目标：先走无障碍 ACTION_CLICK；失败时用坐标手势兜底。
+     * 很多广告 SDK 的关闭/跳过按钮是“有触摸监听但 clickable=false”的自绘 View，
+     * ACTION_CLICK 无效，而按坐标点一下与用户手指点按等价（锚点是文字/关系链）。
+     */
+    private boolean tapTarget(AccessibilityNodeInfo node) {
+        try {
+            if (node.isClickable() && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true;
+            }
+        } catch (Exception ignored) {
+            // 节点失效：继续尝试坐标点击
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        try {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            if (bounds.width() <= 0 || bounds.height() <= 0) return false;
+            Path path = new Path();
+            path.moveTo(bounds.centerX(), bounds.centerY());
+            GestureDescription.StrokeDescription stroke =
+                    new GestureDescription.StrokeDescription(path, 0, 40);
+            GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+            return dispatchGesture(gesture, null, null);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void scanSiblingWindows(String pkg, long elapsed, AccessibilityNodeInfo activeRoot) {
@@ -367,32 +440,36 @@ public class AdSkipService extends AccessibilityService {
     }
 
     private Candidate candidate(AdSkipRuleStore.NodeData matched, int priority, boolean inApp, boolean alwaysGlobal) {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        // 尺寸分层：开屏/通用宽松（绝对上限兜底），应用内收紧，常驻全局最严
+        float maxWidth = alwaysGlobal ? 0.25f : (priority >= 2 && !inApp ? 0.55f : 0.40f);
+        float maxHeight = alwaysGlobal ? 0.12f : (priority >= 2 && !inApp ? 0.30f : 0.25f);
+        int maxW = (int) (dm.widthPixels * maxWidth);
+        int maxH = (int) (dm.heightPixels * maxHeight);
+
         AccessibilityNodeInfo target = matched.node;
         AdSkipRuleStore.NodeData targetData = matched;
-        // 只攀登“紧凑包裹”的可点击祖先（宽 ≤2.2×、高 ≤3×）：此前无尺寸约束地
-        // 向上爬 6 层，小图标会爬到整个列表项/宫格项上点下去（第 67 轮误点主因）
-        for (int i = 0; i < 3; i++) {
+        // 攀登到可点击祖先：受 tier 绝对尺寸封顶（≤1.2×上限）+ 包裹比例（≤4×宽/5×高）
+        // 双重约束——既能让“文字在按钮里”的常见结构命中，又不会爬到整个列表项/宫格项
+        for (int i = 0; i < 4; i++) {
             if (target.isClickable()) break;
             AccessibilityNodeInfo parent = target.getParent();
             if (parent == null) break;
             AdSkipRuleStore.NodeData parentData = new AdSkipRuleStore.NodeData(parent);
-            if (parentData.bounds.width() > targetData.bounds.width() * 2.2f
-                    || parentData.bounds.height() > targetData.bounds.height() * 3.0f) {
+            if (parentData.bounds.width() > maxW * 1.2f || parentData.bounds.height() > maxH * 1.2f) break;
+            if (parentData.bounds.width() > targetData.bounds.width() * 4f
+                    || parentData.bounds.height() > targetData.bounds.height() * 5f) {
                 break;
             }
             target = parent;
             targetData = parentData;
         }
-        if (!target.isClickable() || !target.isVisibleToUser()) return null;
+        if (!target.isVisibleToUser()) return null;
 
         Rect bounds = targetData.bounds;
         if (bounds.width() <= 3 || bounds.height() <= 3) return null;
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        // 常驻全局规则（SDK 卡片关闭）在任何前台应用生效：目标必须是小小的关闭角标
-        float maxWidth = alwaysGlobal ? 0.25f : (priority >= 2 && !inApp ? 0.55f : 0.40f);
-        float maxHeight = alwaysGlobal ? 0.12f : (priority >= 2 && !inApp ? 0.30f : 0.25f);
-        if (bounds.width() > dm.widthPixels * maxWidth) return null;
-        if (bounds.height() > dm.heightPixels * maxHeight) return null;
+        if (bounds.width() > maxW) return null;
+        if (bounds.height() > maxH) return null;
 
         if (isExcludedText(targetData.text) || isExcludedText(targetData.desc)) return null;
         if (priority == 1 && isExcludedViewId(targetData.vid)) return null;

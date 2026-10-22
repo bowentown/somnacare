@@ -141,14 +141,26 @@ ok('应用内广告：inApp/常驻规则 + 滚动窗口限次 + 前台会话上�
 ok('常驻规则收紧：常驻全局目标 ≤25%×12%，应用内 ≤40%×25%',
   service.includes('alwaysGlobal ? 0.25f : (priority >= 2 && !inApp ? 0.55f : 0.40f)')
   && service.includes('alwaysGlobal ? 0.12f : (priority >= 2 && !inApp ? 0.30f : 0.25f)'));
-ok('紧凑攀登：点击目标只向紧包祖先上爬（宽 ≤2.2×/高 ≤3×），不再爬到列表项',
-  service.includes('targetData.bounds.width() * 2.2f')
-  && service.includes('targetData.bounds.height() * 3.0f')
+ok('紧凑攀登：可点击祖先受 tier 绝对封顶（≤1.2×上限）与包裹比例（≤4×/5×）双重约束',
+  service.includes('maxW * 1.2f')
+  && service.includes('targetData.bounds.width() * 4f')
+  && service.includes('targetData.bounds.height() * 5f')
   && !service.includes('for (int i = 0; i < 6; i++)'));
-ok('多窗口：广告 SDK 独立悬浮窗也在扫描范围（上限 2 个）',
+ok('启动窗口轮询：开屏 SDK 只渲染一次不发事件时仍能被扫到',
+  service.includes('splashPoller')
+  && service.includes('SPLASH_POLL_WINDOW_MS')
+  && service.includes('SPLASH_POLL_INTERVAL_MS')
+  && service.includes('pollOnce'));
+ok('点击兜底：ACTION_CLICK 失败后按坐标手势点击（非 clickable 的自绘关闭按钮）',
+  service.includes('tapTarget')
+  && service.includes('GestureDescription')
+  && service.includes('dispatchGesture')
+  && service.includes('performAction(AccessibilityNodeInfo.ACTION_CLICK)'));
+ok('多窗口：启动窗口内同包悬浮窗也扫描（含活动窗口同包的情况）',
   service.includes('scanSiblingWindows')
   && service.includes('MAX_SIBLING_WINDOWS')
-  && service.includes('AccessibilityWindowInfo'));
+  && service.includes('AccessibilityWindowInfo')
+  && service.includes('if (elapsed <= APP_RULE_HARD_LIMIT_MS) scanSiblingWindows'));
 ok('倒计时：跳过 3/跳过 3s 不受 15s 通用窗口限制',
   service.includes('COUNTDOWN')
   && service.includes('isCountdown')
