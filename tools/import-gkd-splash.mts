@@ -31,7 +31,7 @@ const OUTPUT = join(
 
 type Json = any;
 type Field = 'text' | 'desc' | 'vid' | 'id' | 'name';
-type NumField = 'width' | 'height' | 'childCount' | 'top' | 'left' | 'right' | 'bottom';
+type NumField = 'width' | 'height' | 'childCount' | 'top' | 'left' | 'right' | 'bottom' | 'index' | 'parentChildCount';
 type BoolField = 'clickable' | 'visibleToUser' | 'enabled' | 'focusable' | 'scrollable';
 type Op = '=' | '!=' | '<' | '<=' | '>' | '>=';
 
@@ -42,13 +42,20 @@ type Predicate =
   | { k: 'bool'; f: BoolField; v: boolean }
   | { k: 'null'; f: Field; v: boolean }
   | { k: 'type'; v: string }
+  | { k: 'true' }
+  | { k: 'indexFromEnd'; v: number }
   | { k: 'all' | 'any'; p: Predicate[] }
   | { k: 'not'; p: Predicate };
 
+/** 链上单个节点：rel 描述本节点相对前一节点的关系，d 是关系距离范围 */
+interface ChainStep {
+  rel: 'self' | 'parent' | 'child' | 'next' | 'prev';
+  d: [number, number];
+  pred: Predicate;
+}
+
 interface Selector {
-  expr: Predicate;
-  ancestor?: boolean;
-  ctx?: string[];
+  chain: { steps: ChainStep[]; target: number };
   /** 全局规则生效期：splash=启动窗口内；always=前台常驻（SDK 卡片关闭规则） */
   when?: 'splash' | 'always';
 }
@@ -69,13 +76,13 @@ interface AppRules {
 }
 
 const FIELD_NAMES = new Set([
-  'text', 'desc', 'vid', 'id', 'name', 'className',
+  'text', 'desc', 'vid', 'id', 'name', 'className', 'parent',
   'width', 'height', 'childCount', 'top', 'left', 'right', 'bottom',
   'index', 'depth',
   'clickable', 'visibleToUser', 'enabled', 'focusable', 'scrollable',
 ]);
 const BOOL_FIELDS = new Set(['clickable', 'visibleToUser', 'enabled', 'focusable', 'scrollable']);
-const NUM_FIELDS = new Set(['width', 'height', 'childCount', 'top', 'left', 'right', 'bottom']);
+const NUM_FIELDS = new Set(['width', 'height', 'childCount', 'top', 'left', 'right', 'bottom', 'index', 'parentChildCount']);
 const STRING_OPS: Record<string, Predicate['k']> = {
   '=': 'eq',
   '*=': 'contains',
@@ -88,9 +95,6 @@ const STRING_OPS: Record<string, Predicate['k']> = {
   '!$=': 'notEnds',
   '!~=': 'notRegex',
 };
-const REL = new Set(['@', '>', '<', '+', '-']);
-const AD_WORDS = ['跳过', '跳過', '广告', '廣告', 'skip', 'close', '关闭', '關閉', 'jump', 'count', 'timer'];
-
 class Unsupported extends Error {}
 
 interface Token {
@@ -212,17 +216,37 @@ class ExpressionParser {
     if (fieldTok.t !== 'id') throw new Unsupported('field expected');
     const field = fieldTok.v;
     if (!FIELD_NAMES.has(field)) throw new Unsupported(`field ${field}`);
-    if (field === 'index' || field === 'depth') throw new Unsupported(`unsupported ${field}`);
+    if (field === 'depth') throw new Unsupported(`unsupported ${field}`);
 
     const dot = this.peek();
     if (dot?.t === 'punc' && dot.v === '.') {
       this.pos += 1;
       const attr = this.take();
-      if (attr.t !== 'id' || attr.v !== 'length') throw new Unsupported('unsupported attribute');
-      const op = this.take();
-      const val = this.take();
-      if (op.t !== 'op' || val.t !== 'num') throw new Unsupported('length value');
-      return { k: 'len', f: field as Field, op: normalizeOp(op.v), v: Number(val.v) };
+      if (attr.t === 'id' && attr.v === 'length') {
+        const op = this.take();
+        const val = this.take();
+        if (op.t !== 'op' || val.t !== 'num') throw new Unsupported('length value');
+        return { k: 'len', f: field as Field, op: normalizeOp(op.v), v: Number(val.v) };
+      }
+      // parent.childCount.minus(N) —— 常见于 index=parent.childCount.minus(1)（倒数第 N 个子节点）
+      if (field === 'parent' && attr.t === 'id' && attr.v === 'childCount') {
+        const after = this.peek();
+        if (after?.t === 'punc' && after.v === '.') {
+          this.pos += 1;
+          const minus = this.take();
+          if (minus.t !== 'id' || minus.v !== 'minus') throw new Unsupported('parent attr');
+          this.expectPunc('(');
+          const n = this.take();
+          if (n.t !== 'num') throw new Unsupported('minus value');
+          this.expectPunc(')');
+          return { k: 'indexFromEnd', v: Number(n.v) };
+        }
+        const op = this.take();
+        const val = this.take();
+        if (op.t !== 'op' || val.t !== 'num') throw new Unsupported('parent childCount value');
+        return { k: 'num', f: 'parentChildCount', op: normalizeOp(op.v), v: Number(val.v) };
+      }
+      throw new Unsupported('unsupported attribute');
     }
 
     const next = this.peek();
@@ -234,7 +258,22 @@ class ExpressionParser {
     const value = this.take();
 
     if (value.t === 'null') {
-      return { k: 'null', f: field as Field, v: true };
+      // id=null 与 id!=null 语义相反：op 必须参与（此前被忽略，两者同义——反转 bug）
+      return { k: 'null', f: field as Field, v: op.v !== '!=' };
+    }
+    // index = parent.childCount.minus(N)：倒数第 N 个子节点
+    if (value.t === 'id' && value.v === 'parent' && field === 'index') {
+      this.expectPunc('.');
+      const attr = this.take();
+      if (attr.t !== 'id' || attr.v !== 'childCount') throw new Unsupported('parent attr');
+      this.expectPunc('.');
+      const minus = this.take();
+      if (minus.t !== 'id' || minus.v !== 'minus') throw new Unsupported('parent attr');
+      this.expectPunc('(');
+      const n = this.take();
+      if (n.t !== 'num') throw new Unsupported('minus value');
+      this.expectPunc(')');
+      return { k: 'indexFromEnd', v: Number(n.v) };
     }
     if (value.t === 'bool') {
       if (!BOOL_FIELDS.has(field)) throw new Unsupported('bool field');
@@ -260,99 +299,186 @@ function normalizeOp(op: string): Op {
 }
 
 /** 在括号深度 0 处切分关系符；跳过关系符后的计数（2 / n / (n+6) / (1,2)）。 */
-function splitTopLevel(selector: string): { segments: string[]; relations: string[] } {
-  const segments: string[] = [];
-  const relations: string[] = [];
+const REL_CHAR: Record<string, 'child' | 'parent' | 'next' | 'prev'> = {
+  '>': 'child', '<': 'parent', '+': 'next', '-': 'prev',
+};
+
+/** 关系符后的距离：`2` / `n` / `(1,2)` / `(n+6)` → [min,max]（n 视为任意层，上限 64） */
+function parseDistance(input: string, start: number): { d: [number, number]; next: number } {
+  const ch = input[start];
+  if (ch === '(') {
+    let depth = 0;
+    let j = start;
+    do {
+      if (input[j] === '(') depth += 1;
+      if (input[j] === ')') depth -= 1;
+      j += 1;
+    } while (j < input.length && depth > 0);
+    const inner = input.slice(start + 1, j - 1).trim();
+    if (inner === 'n') return { d: [1, 64], next: j };
+    let m = /^(\d+)\s*,\s*(\d+)$/.exec(inner);
+    if (m) return { d: [Number(m[1]), Number(m[2])], next: j };
+    m = /^n\s*\+\s*(\d+)$/.exec(inner);
+    if (m) return { d: [Number(m[1]) + 1, 64], next: j };
+    return { d: [1, 64], next: j };
+  }
+  if (ch === 'n' && !/[A-Za-z0-9_(]/.test(input[start + 1] ?? '')) {
+    return { d: [1, 64], next: start + 1 };
+  }
+  if (/[0-9]/.test(ch)) {
+    let j = start;
+    while (j < input.length && /[0-9]/.test(input[j])) j += 1;
+    if (!/[A-Za-z0-9_(]/.test(input[j] ?? '')) {
+      const k = Number(input.slice(start, j));
+      return { d: [k, k], next: j };
+    }
+  }
+  return { d: [1, 1], next: start };
+}
+
+interface ChainPart {
+  text: string;
+  rel: ChainStep['rel'];
+  d: [number, number];
+  isTarget: boolean;
+}
+
+/** `<<` 后的距离：`n`/无 → 任意层；`K` → 至少 K 层 */
+function parseAncestorDistance(input: string, start: number): { d: [number, number]; next: number } {
+  const ch = input[start];
+  if (ch === 'n' && !/[A-Za-z0-9_(]/.test(input[start + 1] ?? '')) {
+    return { d: [1, 64], next: start + 1 };
+  }
+  if (/[0-9]/.test(ch)) {
+    let j = start;
+    while (j < input.length && /[0-9]/.test(input[j])) j += 1;
+    if (!/[A-Za-z0-9_(]/.test(input[j] ?? '')) {
+      return { d: [Number(input.slice(start, j)), 64], next: j };
+    }
+  }
+  return { d: [1, 64], next: start };
+}
+
+/**
+ * 把 GKD 选择器切成“节点 + 关系”链：`@A[x] <2 B[y] +(1,2) C` →
+ * [{A,self}, {B,parent,[2,2]}, {C,next,[1,2]}]，@ 标记的节点是点击目标。
+ * 括号深度 0 之外的关系符才是链关系；方括号/表达式括号内的运算符不动。
+ * 这是精度的来源：不再把关系链降级成“目标 + 窗口任意位置的关键词”。
+ */
+function parseChainRaw(selector: string): { parts: ChainPart[]; target: number } | null {
+  const parts: ChainPart[] = [];
   let current = '';
+  let pendingRel: ChainStep['rel'] = 'self';
+  let pendingD: [number, number] = [1, 1];
+  let markTarget = false;
   let depth = 0;
   let i = 0;
+  const flush = (): void => {
+    parts.push({ text: current.trim(), rel: pendingRel, d: pendingD, isTarget: markTarget });
+    current = '';
+    markTarget = false;
+  };
   while (i < selector.length) {
     const ch = selector[i];
-    if (ch === '[' || ch === '(') depth += 1;
-    else if (ch === ']' || ch === ')') depth -= 1;
-    if (depth === 0 && REL.has(ch)) {
-      segments.push(current.trim());
-      current = '';
-      relations.push(ch);
+    if (depth === 0 && ch === '@') {
+      markTarget = true;
       i += 1;
-      while (selector[i] === ' ') i += 1;
-      if (selector[i] === '(') {
-        let d = 0;
-        do {
-          if (selector[i] === '(') d += 1;
-          if (selector[i] === ')') d -= 1;
-          i += 1;
-        } while (i < selector.length && d > 0);
-      } else {
-        while (i < selector.length && /[0-9n]/.test(selector[i])) i += 1;
-      }
       continue;
     }
+    if (depth === 0 && REL_CHAR[ch]) {
+      flush();
+      // `<<n` / `<<4`：任意层/至少 K 层祖先（GKD 祖先语法）；`>>` 对称表示后代
+      if ((ch === '<' && selector[i + 1] === '<') || (ch === '>' && selector[i + 1] === '>')) {
+        pendingRel = ch === '<' ? 'parent' : 'child';
+        i += 2;
+        while (selector[i] === ' ') i += 1;
+        const dist = parseAncestorDistance(selector, i);
+        pendingD = dist.d;
+        i = dist.next;
+        continue;
+      }
+      pendingRel = REL_CHAR[ch];
+      i += 1;
+      while (selector[i] === ' ') i += 1;
+      const dist = parseDistance(selector, i);
+      pendingD = dist.d;
+      i = dist.next;
+      continue;
+    }
+    if (ch === '[' || ch === '(') depth += 1;
+    else if (ch === ']' || ch === ')') depth -= 1;
     current += ch;
     i += 1;
   }
-  segments.push(current.trim());
-  return { segments, relations };
+  flush();
+  if (parts.length === 0 || parts.some((p) => !p.text)) return null;
+  if (parts[0].rel !== 'self') return null;
+  let target = parts.findIndex((p) => p.isTarget);
+  if (target < 0) target = parts.length - 1;
+  return { parts, target };
 }
 
-function collectQuoted(selector: string): string[] {
-  const out: string[] = [];
-  const re = /"([^"]{2,40})"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(selector))) {
-    const v = m[1];
-    if (!out.includes(v)) out.push(v);
-  }
-  return out.slice(0, 8);
-}
-
-function collectContext(selector: string, targetHasIdentity: boolean): string[] {
-  if (targetHasIdentity) return [];
-  const quoted = collectQuoted(selector);
-  const strong = quoted.filter((v) => AD_WORDS.some((w) => v.toLowerCase().includes(w.toLowerCase())));
-  return (strong.length > 0 ? strong : quoted).slice(0, 8);
-}
-
-function hasIdentity(pred: Predicate): boolean {
+/** 链上任意节点带“正向文字/描述/控件 id”谓词且值非空（text="" 不算锚） */
+function hasAnchor(pred: Predicate): boolean {
   switch (pred.k) {
-    // 只有“正向的文字/描述/控件 id”算可识别身份；类名和负向谓词太泛，
-    // 不能单独用来点一个节点（否则 [name$="View"] 会命中任意小 View）
     case 'eq': case 'contains': case 'starts': case 'ends': case 'regex':
-      return pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id';
+      return (pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id')
+        && pred.v.length > 0 && pred.v !== '.*';
     case 'all': case 'any':
-      return pred.p.some(hasIdentity);
-    case 'not':
-      return false;
+      return pred.p.some(hasAnchor);
     default:
       return false;
   }
 }
 
-function hasStructuralConstraint(pred: Predicate): boolean {
+/** 弱身份信号计分：非空正向文字/id 谓词 2 分；id!=null / text!=null（“有值”）1 分。
+ *  应用级规则允许“无强锚但 ≥2 分”（链上结构约束足够定位）；全局常驻仍要求强锚+词门槛。 */
+function identityPoints(pred: Predicate): number {
   switch (pred.k) {
-    case 'num':
-      return pred.f === 'width' || pred.f === 'height' || pred.f === 'childCount';
+    case 'eq': case 'contains': case 'starts': case 'ends': case 'regex':
+      if ((pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id')
+        && pred.v.length > 0 && pred.v !== '.*') return 2;
+      return 0;
+    case 'null':
+      if (pred.v === false && (pred.f === 'id' || pred.f === 'text' || pred.f === 'desc')) return 1;
+      return 0;
     case 'all': case 'any':
-      return pred.p.some(hasStructuralConstraint);
+      return pred.p.reduce((n, c) => n + identityPoints(c), 0);
     default:
-      return false;
+      return 0;
   }
 }
 
-const STRONG_CONTEXT = [
-  '跳过', '跳過', '广告', '廣告', 'skip', 'close', '关闭', '關閉',
-  '互动广告', '摇一摇', '扭动', '扭一扭', '扭动手机', '第三方应用', '点击或上滑', '省钱好物',
-  'splash', 'ksad', 'sdk_view', 'sdk',
-  // 应用内卡片/浮窗广告的关闭按钮没有文字，锚点是旁边的下载/详情 CTA
-  '立即下载', '立即打开', '立即体验', '查看详情', '了解更多', '进入小程序',
-  '领取优惠', '下载应用', '去逛逛', '去微信看看', '反馈', 'dislike',
-];
+function chainAnchorOk(steps: ChainStep[]): boolean {
+  if (steps.some((s) => hasAnchor(s.pred))) return true;
+  return steps.reduce((n, s) => n + identityPoints(s.pred), 0) >= 2;
+}
 
-function hasStrongContext(values: string[]): boolean {
-  return values.some((v) => {
-    const lower = v.toLowerCase();
-    return STRONG_CONTEXT.some((w) => lower.includes(w.toLowerCase()));
-  });
+function positiveStringValues(pred: Predicate, out: string[] = []): string[] {
+  switch (pred.k) {
+    case 'eq': case 'contains': case 'starts': case 'ends': case 'regex':
+      if (pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id') out.push(pred.v);
+      break;
+    case 'all': case 'any':
+      for (const p of pred.p) positiveStringValues(p, out);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/** 常驻（always）全局规则的额外门槛：锚点须含广告语义词，或链上 ≥2 个正向文字谓词。
+ *  常驻规则在任何前台应用生效，宁可少几条也不能多点。 */
+const AD_ANCHOR_WORDS = [
+  '广告', '廣告', '跳过', '跳過', 'skip', '关闭', '關閉', 'close', '反馈', 'dislike',
+  '立即', '详情', '詳情', '下载', '下載', '逛逛', '微信', '优惠', '優惠', '小程序',
+  '了解', '第三方', '扭动', '扭動', '省钱', '省錢', '点击或上滑', 'ksad', 'tt_', 'sdk',
+];
+function anchorWordsOk(steps: ChainStep[]): boolean {
+  const anchors = steps.flatMap((s) => positiveStringValues(s.pred));
+  if (anchors.some((a) => AD_ANCHOR_WORDS.some((w) => a.toLowerCase().includes(w)))) return true;
+  return anchors.length >= 2;
 }
 
 function textValues(pred: Predicate, out: string[] = []): string[] {
@@ -504,75 +630,45 @@ class SelectorExprParser {
   }
 }
 
-function parseSelectorExpr(raw: string, allowNoIdentity = false): Predicate | null {
-  const text = raw.trim();
-  if (!text) return null;
-  if (splitTopLevel(text).relations.length > 0) return null;
-  const tokens = selectorTokens(text);
-  if (tokens.length === 0) return null;
-  try {
-    const expr = new SelectorExprParser(tokens).parse();
-    if (!hasIdentity(expr) && !allowNoIdentity) {
-      if (process.env.DEBUG_GKD) console.error('NO IDENTITY', text.slice(0, 160));
-      return null;
-    }
-    if (isAdLabelOnly(expr)) {
-      if (process.env.DEBUG_GKD) console.error('AD LABEL ONLY', text.slice(0, 160));
-      return null;
-    }
-    return expr;
-  } catch (e) {
-    if (process.env.DEBUG_GKD) console.error('SELECTOR PARSE ERR', (e as Error).message, text.slice(0, 160));
-    return null;
-  }
-}
-
+/**
+ * 解析一条完整 GKD 选择器为关系链。精度的来源就在这里：
+ * `@A[x] < B[y] > C[z]` 不再被降级成“A + 窗口关键词”，而是整链逐节点校验。
+ * 丢弃条件：任一节点解析失败 / 目标只是“广告”标签 / 全链无锚点。
+ */
 function parseSelector(raw: string): Selector | null {
   const selector = raw.trim();
   if (!selector) return null;
-  const { segments, relations } = splitTopLevel(selector);
-  if (relations.length === 0) {
-    const expr = parseSelectorExpr(selector);
-    return expr ? { expr } : null;
-  }
-  const atIndex = relations.indexOf('@');
-  let target: string | null = null;
-  if (atIndex >= 0) {
-    for (let i = atIndex + 1; i < segments.length; i += 1) {
-      if (segments[i]) { target = segments[i]; break; }
-    }
-  }
-  if (!target) {
-    for (let i = segments.length - 1; i >= 0; i -= 1) {
-      if (!segments[i]) continue;
-      const candidate = parseSelectorExpr(segments[i]);
-      if (candidate && hasIdentity(candidate)) { target = segments[i]; break; }
-    }
-  }
-  if (!target) {
-    if (process.env.DEBUG_GKD) console.error('NO TARGET', selector.slice(0, 180));
+  const parsed = parseChainRaw(selector);
+  if (!parsed) {
+    if (process.env.DEBUG_GKD) console.error('CHAIN SPLIT FAIL', selector.slice(0, 180));
     return null;
   }
-  const expr = parseSelectorExpr(target, true);
-  if (!expr) {
-    if (process.env.DEBUG_GKD) console.error('TARGET PARSE FAIL', target.slice(0, 180));
-    return null;
-  }
-  const targetHasIdentity = hasIdentity(expr);
-  const ctx = collectContext(selector, targetHasIdentity);
-  if (!targetHasIdentity) {
-    // 无文字/id 的目标必须是“小而具体”的节点：只有 clickable=true 的选择器
-    // 可能在任意页面点到错误控件，一律丢弃；上下文也必须含广告/跳过强信号。
-    if (!hasStructuralConstraint(expr)) {
-      if (process.env.DEBUG_GKD) console.error('NO STRUCTURE', selector.slice(0, 180));
-      return null;
+  const steps: ChainStep[] = [];
+  for (const part of parsed.parts) {
+    if (part.text === '*') {
+      steps.push({ rel: part.rel, d: part.d, pred: { k: 'true' } });
+      continue;
     }
-    if (ctx.length === 0 || !hasStrongContext(ctx)) {
-      if (process.env.DEBUG_GKD) console.error('WEAK CONTEXT', selector.slice(0, 180));
+    const tokens = selectorTokens(part.text);
+    if (tokens.length === 0) return null;
+    try {
+      steps.push({ rel: part.rel, d: part.d, pred: new SelectorExprParser(tokens).parse() });
+    } catch (e) {
+      if (process.env.DEBUG_GKD) console.error('NODE PARSE ERR', (e as Error).message, part.text.slice(0, 140));
       return null;
     }
   }
-  return { expr, ancestor: true, ...(ctx.length > 0 ? { ctx } : {}) };
+  if (steps.length === 0) return null;
+  const target = steps[parsed.target];
+  if (isAdLabelOnly(target.pred)) {
+    if (process.env.DEBUG_GKD) console.error('AD LABEL TARGET', selector.slice(0, 180));
+    return null;
+  }
+  if (!chainAnchorOk(steps)) {
+    if (process.env.DEBUG_GKD) console.error('NO ANCHOR', selector.slice(0, 180));
+    return null;
+  }
+  return { chain: { steps, target: parsed.target } };
 }
 
 function textList(value: Json): string[] {
@@ -667,8 +763,18 @@ function main(): void {
         continue;
       }
       const isSplash = name.startsWith('开屏广告') || name.startsWith('字节开屏') || name.startsWith('互动开屏');
-      globalSelectors.push({ ...parsed, when: isSplash ? 'splash' : 'always' });
-      if (isSplash) librarySplash += 1; else libraryAlways += 1;
+      if (isSplash) {
+        globalSelectors.push({ ...parsed, when: 'splash' });
+        librarySplash += 1;
+      } else {
+        // 常驻规则在任何前台应用生效：必须过广告词锚点门槛，宁缺毋滥
+        if (!anchorWordsOk(parsed.chain.steps)) {
+          if (process.env.DEBUG_GKD) console.error('LIBRARY ALWAYS GATE', name, selector.slice(0, 160));
+          continue;
+        }
+        globalSelectors.push({ ...parsed, when: 'always' });
+        libraryAlways += 1;
+      }
     }
   }
 
@@ -739,7 +845,7 @@ function main(): void {
   }
 
   const output = {
-    schema: 2,
+    schema: 3,
     source: {
       repo: 'Lin-arm/GKD_subscription',
       version: dist.version ?? null,
@@ -757,6 +863,9 @@ function main(): void {
         'com.github.android', 'org.telegram.messenger', 'org.telegram.messenger.web',
         'org.telegram.plus', 'com.twitter.android', 'moe.shizuku.privileged.api',
         'li.songe.gkd', 'li.songe.gkd.debug', 'com.rosan.dhizuku',
+        // 常驻规则上线后把常见桌面也排除：误点代价最高的地方（第 67 轮）
+        'com.android.launcher3', 'com.miui.home', 'com.huawei.android.launcher',
+        'com.sec.android.app.launcher', 'com.google.android.apps.nexuslauncher',
       ],
     },
     apps,

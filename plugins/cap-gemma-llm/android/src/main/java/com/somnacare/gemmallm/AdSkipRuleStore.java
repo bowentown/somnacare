@@ -11,13 +11,13 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -57,9 +57,21 @@ final class AdSkipRuleStore {
         final boolean enabled;
         final boolean focusable;
         final boolean scrollable;
+        // 树结构信息（关系链求值用）：父节点下标 / 在父中的位次 / 父的子数 / 自身下标
+        final int parentIdx;
+        final int idxInParent;
+        final int parentChildCount;
+        int selfIdx = -1;
 
         NodeData(AccessibilityNodeInfo node) {
+            this(node, -1, 0, 0);
+        }
+
+        NodeData(AccessibilityNodeInfo node, int parentIdx, int idxInParent, int parentChildCount) {
             this.node = node;
+            this.parentIdx = parentIdx;
+            this.idxInParent = idxInParent;
+            this.parentChildCount = parentChildCount;
             node.getBoundsInScreen(bounds);
             CharSequence textValue = node.getText();
             CharSequence descValue = node.getContentDescription();
@@ -132,37 +144,141 @@ final class AdSkipRuleStore {
             return new Predicate("null", field, null, null, 0, value, null);
         }
 
+        static Predicate alwaysTrue() {
+            return new Predicate("true", null, null, null, 0, false, null);
+        }
+
+        static Predicate indexFromEnd(double value) {
+            return new Predicate("indexFromEnd", null, null, null, value, false, null);
+        }
+
         static Predicate type(String value) {
             return new Predicate("type", null, null, value, 0, false, null);
         }
     }
 
+    static final class ChainStep {
+        /** self | parent | child | next | prev：本节点相对链上前一节点的关系 */
+        final String rel;
+        final int dMin;
+        final int dMax;
+        final Predicate pred;
+
+        ChainStep(String rel, int dMin, int dMax, Predicate pred) {
+            this.rel = rel;
+            this.dMin = dMin;
+            this.dMax = dMax;
+            this.pred = pred;
+        }
+    }
+
+    /** 一次事件抓取的窗口树快照：节点列表 + 每个节点的孩子下标表（保序，-1 = 缺失） */
+    static final class Snapshot {
+        final List<NodeData> nodes;
+        final int[][] children;
+
+        Snapshot(List<NodeData> nodes, int[][] children) {
+            this.nodes = nodes;
+            this.children = children;
+        }
+    }
+
     static final class RuleSelector {
-        final Predicate expr;
-        final String[] context;
+        final ChainStep[] steps;
+        final int target;
         /** 全局规则：true=前台常驻（SDK 卡片关闭），false=仅启动窗口内（开屏） */
         final boolean always;
 
-        RuleSelector(Predicate expr, String[] context, boolean always) {
-            this.expr = expr;
-            this.context = context == null ? new String[0] : context;
+        RuleSelector(ChainStep[] steps, int target, boolean always) {
+            this.steps = steps;
+            this.target = target;
             this.always = always;
         }
 
-        boolean matches(NodeData node, List<NodeData> allNodes) {
-            if (!evaluate(expr, node)) return false;
-            if (context.length == 0) return true;
-            for (String hint : context) {
-                String needle = hint == null ? "" : hint.toLowerCase(Locale.ROOT);
-                if (needle.isEmpty()) continue;
-                for (NodeData other : allNodes) {
-                    if (other.text.toLowerCase(Locale.ROOT).contains(needle)
-                            || other.desc.toLowerCase(Locale.ROOT).contains(needle)) {
-                        return true;
-                    }
-                }
+        /**
+         * GKD 关系链求值（第 67 轮）：目标节点谓词命中后，向链两端逐节点校验。
+         * 这是精度的来源——`小图标 < 容器 - 兄弟容器 > '下载应用'文字` 必须
+         * 整链成立才点击，不再退化为“目标 + 窗口任意位置的关键词”。
+         */
+        boolean matches(NodeData node, Snapshot snap) {
+            if (target < 0 || target >= steps.length) return false;
+            if (!evaluate(steps[target].pred, node)) return false;
+            int[] budget = {400};
+            return matchDir(snap, node, target, 1, budget)
+                    && matchDir(snap, node, target, -1, budget);
+        }
+
+        private boolean matchDir(Snapshot snap, NodeData cur, int idx, int dir, int[] budget) {
+            int next = idx + dir;
+            if (next < 0 || next >= steps.length) return true;
+            if (budget[0] <= 0) return false;
+            budget[0] -= 1;
+            // dir=+1：steps[next].rel 描述 next 相对 cur；
+            // dir=-1：steps[idx].rel 描述 idx 相对 next，故 next 相对 cur 是其逆向（距离不变）
+            String rel = dir > 0 ? steps[next].rel : invert(steps[idx].rel);
+            int dMin = dir > 0 ? steps[next].dMin : steps[idx].dMin;
+            int dMax = dir > 0 ? steps[next].dMax : steps[idx].dMax;
+            for (NodeData cand : related(snap, cur, rel, dMin, dMax)) {
+                if (!evaluate(steps[next].pred, cand)) continue;
+                if (matchDir(snap, cand, next, dir, budget)) return true;
             }
             return false;
+        }
+
+        private static String invert(String rel) {
+            switch (rel) {
+                case "parent": return "child";
+                case "child": return "parent";
+                case "next": return "prev";
+                case "prev": return "next";
+                default: return rel;
+            }
+        }
+
+        private static List<NodeData> related(Snapshot snap, NodeData cur, String rel, int dMin, int dMax) {
+            List<NodeData> out = new ArrayList<>(4);
+            switch (rel) {
+                case "parent": {
+                    NodeData p = cur.parentIdx >= 0 ? snap.nodes.get(cur.parentIdx) : null;
+                    int d = 0;
+                    while (p != null && d < dMax) {
+                        d += 1;
+                        if (d >= dMin) out.add(p);
+                        p = p.parentIdx >= 0 ? snap.nodes.get(p.parentIdx) : null;
+                    }
+                    break;
+                }
+                case "child": {
+                    ArrayDeque<int[]> queue = new ArrayDeque<>();
+                    queue.add(new int[]{cur.selfIdx, 0});
+                    while (!queue.isEmpty() && out.size() < 96) {
+                        int[] entry = queue.poll();
+                        for (int child : snap.children[entry[0]]) {
+                            if (child < 0) continue;
+                            int depth = entry[1] + 1;
+                            if (depth > dMax) continue;
+                            if (depth >= dMin) out.add(snap.nodes.get(child));
+                            if (depth < dMax) queue.add(new int[]{child, depth});
+                        }
+                    }
+                    break;
+                }
+                case "next":
+                case "prev": {
+                    if (cur.parentIdx < 0) break;
+                    int[] siblings = snap.children[cur.parentIdx];
+                    for (int d = dMin; d <= dMax; d++) {
+                        int pos = "next".equals(rel) ? cur.idxInParent + d : cur.idxInParent - d;
+                        if (pos >= 0 && pos < siblings.length && siblings[pos] >= 0) {
+                            out.add(snap.nodes.get(siblings[pos]));
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            return out;
         }
     }
 
@@ -322,18 +438,30 @@ final class AdSkipRuleStore {
         for (int i = 0; i < array.length(); i++) {
             JSONObject obj = array.optJSONObject(i);
             if (obj == null) continue;
-            Predicate expr = parsePredicate(obj.optJSONObject("expr"));
-            if (expr == null) continue;
-            List<String> ctx = new ArrayList<>();
-            JSONArray ctxArray = obj.optJSONArray("ctx");
-            if (ctxArray != null) {
-                for (int j = 0; j < ctxArray.length(); j++) {
-                    String value = ctxArray.optString(j, "");
-                    if (!value.isEmpty()) ctx.add(value);
+            JSONObject chain = obj.optJSONObject("chain");
+            if (chain == null) continue;
+            JSONArray stepsJson = chain.optJSONArray("steps");
+            int targetIdx = chain.optInt("target", -1);
+            if (stepsJson == null || stepsJson.length() == 0
+                    || targetIdx < 0 || targetIdx >= stepsJson.length()) continue;
+            ChainStep[] steps = new ChainStep[stepsJson.length()];
+            boolean ok = true;
+            for (int j = 0; j < stepsJson.length(); j++) {
+                JSONObject stepJson = stepsJson.optJSONObject(j);
+                if (stepJson == null) { ok = false; break; }
+                Predicate pred = parsePredicate(stepJson.optJSONObject("pred"));
+                if (pred == null) { ok = false; break; }
+                JSONArray d = stepJson.optJSONArray("d");
+                int dMin = 1;
+                int dMax = 1;
+                if (d != null && d.length() >= 2) {
+                    dMin = Math.max(1, d.optInt(0, 1));
+                    dMax = Math.max(dMin, d.optInt(1, 1));
                 }
+                steps[j] = new ChainStep(stepJson.optString("rel", "self"), dMin, dMax, pred);
             }
-            out.add(new RuleSelector(expr, ctx.toArray(new String[0]),
-                    "always".equals(obj.optString("when", "splash"))));
+            if (!ok) continue;
+            out.add(new RuleSelector(steps, targetIdx, "always".equals(obj.optString("when", "splash"))));
         }
         return out;
     }
@@ -374,6 +502,10 @@ final class AdSkipRuleStore {
                 return Predicate.bool(obj.optString("f", ""), obj.optBoolean("v", false));
             case "null":
                 return Predicate.isNull(obj.optString("f", ""), obj.optBoolean("v", true));
+            case "true":
+                return Predicate.alwaysTrue();
+            case "indexFromEnd":
+                return Predicate.indexFromEnd(obj.optDouble("v", 1));
             default:
                 return null;
         }
@@ -413,6 +545,11 @@ final class AdSkipRuleStore {
                 return compare(fieldValue(node, p.field).length(), p.op, p.numberValue);
             case "num":
                 return compare(numberField(node, p.field), p.op, p.numberValue);
+            case "true":
+                return true;
+            case "indexFromEnd":
+                return node.parentChildCount > 0
+                        && node.idxInParent == node.parentChildCount - (int) p.numberValue;
             default:
                 return stringPredicate(p, fieldValue(node, p.field));
         }
@@ -487,6 +624,10 @@ final class AdSkipRuleStore {
                 return node.bounds.right;
             case "bottom":
                 return node.bounds.bottom;
+            case "index":
+                return node.idxInParent;
+            case "parentChildCount":
+                return node.parentChildCount;
             default:
                 return 0;
         }

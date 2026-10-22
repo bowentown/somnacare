@@ -24,6 +24,8 @@ import {
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ReferenceArea,
   ReferenceLine,
@@ -208,11 +210,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
   // 周报卡已删除（与近期小结重复）；连胜仍保留为小结里的一行
   const weekReport = computeWeekReport(records);
 
-  const shortMinutes = (minutes: number): string =>
-    minutes >= 60
-      ? `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
-      : `${minutes}m`;
-
   // 分期横带：分母必须是卧床总长（纯睡眠 + 清醒），否则四段和会超过 100%
   const stageRows = last7Records.map((record) => {
     const total = Math.max(1, record.durationMinutes + record.awakeMinutes);
@@ -237,6 +234,57 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
   const activeStage = stageRows.find((row) => row.record.id === activeRecord?.id)
     ?? stageRows[stageRows.length - 1]
     ?? null;
+
+  // ── 分期比例：Recharts 100% 堆叠横条（数据 = 百分比，浮层给分钟） ──
+  const stageData = stageRows.map((row) => ({
+    record: row.record,
+    label: row.record.date.slice(5),
+    deep: row.deep,
+    light: row.light,
+    rem: row.rem,
+    awake: row.awake,
+  }));
+  const StageTooltip = (props: any) => {
+    const row = props?.payload?.[0]?.payload;
+    if (!props?.active || !row?.record) return null;
+    const r = row.record as SleepRecord;
+    const total = Math.max(1, r.durationMinutes + r.awakeMinutes);
+    const items = [
+      { key: 'deep', label: '深睡', minutes: r.deepSleepMinutes },
+      { key: 'light', label: '浅睡', minutes: r.lightSleepMinutes },
+      { key: 'rem', label: 'REM', minutes: r.remSleepMinutes },
+      { key: 'awake', label: '清醒', minutes: r.awakeMinutes },
+    ] as const;
+    return (
+      <div className="rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+        <p className="text-[10px] text-white font-bold font-mono mb-1">{row.label}</p>
+        {items.map((it) => (
+          <p key={it.key} className="text-[9px] text-slate-300 font-mono flex items-center gap-1.5 tabular-nums">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: STAGE_COLORS[it.key] }} />
+            {it.label} {it.minutes}m · {Math.round((it.minutes / total) * 100)}%
+          </p>
+        ))}
+      </div>
+    );
+  };
+  const stageScrubRef = useRef(false);
+  const stageHapticRef = useRef<string | null>(null);
+  // 按指针 Y 坐标取行：不依赖 Recharts 的 rAF 事件（假时钟/低帧率 WebView 下稳定）
+  const pickStageAt = (clientY: number, el: HTMLElement): void => {
+    if (stageData.length === 0) return;
+    const rect = el.getBoundingClientRect();
+    const plotTop = 6;
+    const plotBottom = 20; // X 轴刻度区
+    const band = Math.max(1, (rect.height - plotTop - plotBottom) / stageData.length);
+    const index = Math.max(0, Math.min(stageData.length - 1, Math.floor((clientY - rect.top - plotTop) / band)));
+    const record = stageData[index]?.record;
+    if (!record) return;
+    if (stageHapticRef.current !== record.id) {
+      stageHapticRef.current = record.id;
+      hapticStep();
+    }
+    setHoveredRecord(record);
+  };
 
   // 起卧图统一时间窗：21:00 → 次日 10:00
   const RANGE_START = 21 * 60;
@@ -470,7 +518,8 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
           </div>
         )}
 
-        {/* View Mode 2: Sleep Stages（100% 横带，逐晚一行） */}
+        {/* View Mode 2: Sleep Stages — Recharts 100% 堆叠横条（shadcn/ui Charts 语法）：
+            轴在绘图区外、网格低对比、悬浮浮层给精确分钟；不再手绘色带。 */}
         {viewMode === 'stages' && (
           <div className="space-y-2 animate-tab-fade-in">
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2.5`}>
@@ -490,54 +539,60 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                 </span>
               </div>
 
-              <div className="space-y-1.5">
-                {stageRows.map((row) => {
-                  const isHovered = activeRecord?.id === row.record.id;
-                  const segments = [
-                    { key: 'deep', value: row.deep, minutes: row.record.deepSleepMinutes, label: '深睡' },
-                    { key: 'light', value: row.light, minutes: row.record.lightSleepMinutes, label: '浅睡' },
-                    { key: 'rem', value: row.rem, minutes: row.record.remSleepMinutes, label: 'REM' },
-                    { key: 'awake', value: row.awake, minutes: row.record.awakeMinutes, label: '醒' },
-                  ] as const;
-                  return (
-                    <button
-                      key={row.record.id}
-                      type="button"
-                      onClick={() => { hapticStep(); setHoveredRecord(row.record); }}
-                      aria-label={`${row.record.date} 睡眠分期：深睡 ${row.record.deepSleepMinutes} 分钟，浅睡 ${row.record.lightSleepMinutes} 分钟，REM ${row.record.remSleepMinutes} 分钟，清醒 ${row.record.awakeMinutes} 分钟`}
-                      className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-9"
-                    >
-                      <span className={`w-9 text-[10px] font-mono shrink-0 tabular-nums ${
-                        isHovered ? accentText + ' font-bold' : textMuted
-                      }`}>
-                        {row.record.date.slice(5)}
-                      </span>
-                      <span className={`flex-1 h-5 rounded-full overflow-hidden flex ${
-                        isHovered ? `ring-1 ${theme.accentRing}` : ''
-                      }`}>
-                        {segments.map((segment) => {
-                          const width = Math.max(0, segment.value);
-                          const label = width >= 12 ? `${Math.round(width)}%` : '';
-                          return (
-                            <span
-                              key={segment.key}
-                              title={`${segment.label} ${shortMinutes(segment.minutes)}（${Math.round(width)}%）`}
-                              style={{ width: `${width}%`, background: STAGE_COLORS[segment.key] }}
-                              className="h-full flex items-center justify-center overflow-hidden whitespace-nowrap text-[8px] font-black text-[#06121f] tabular-nums"
-                            >
-                              {label}
-                            </span>
-                          );
-                        })}
-                      </span>
-                      <span className={`w-11 text-right text-[10px] font-mono shrink-0 tabular-nums ${
-                        isHovered ? accentText + ' font-bold' : textMuted
-                      }`}>
-                        {shortMinutes(row.record.durationMinutes)}
-                      </span>
-                    </button>
-                  );
-                })}
+              <div
+                data-testid="stage-chart"
+                role="group"
+                aria-label="近 7 晚睡眠分期比例图，可点按或拖动查看每一晚"
+                className="w-full"
+                style={{ height: 196, touchAction: 'pan-y' }}
+                onPointerDown={(e) => {
+                  // 与得分图同因：pointerdown 里 setState 会让 Recharts 重建 SVG，
+                  // 事件目标脱离文档，父级翻页层把图表拖拽误判成横向翻页
+                  stageScrubRef.current = true;
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+                }}
+                onPointerMove={(e) => {
+                  if (e.pointerType === 'mouse' || stageScrubRef.current) {
+                    pickStageAt(e.clientY, e.currentTarget);
+                  }
+                }}
+                onPointerUp={(e) => {
+                  pickStageAt(e.clientY, e.currentTarget);
+                  stageScrubRef.current = false;
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                }}
+                onPointerCancel={() => { stageScrubRef.current = false; }}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stageData} layout="vertical" margin={{ top: 4, right: 6, left: 0, bottom: 0 }} barCategoryGap="32%">
+                    <CartesianGrid horizontal={false} stroke="rgba(255,255,255,0.06)" />
+                    <XAxis
+                      type="number"
+                      domain={[0, 100]}
+                      ticks={[0, 25, 50, 75, 100]}
+                      tickFormatter={(v: number) => `${v}%`}
+                      axisLine={false}
+                      tickLine={false}
+                      tickMargin={6}
+                      tick={{ fill: 'rgba(148,163,184,0.9)', fontSize: 9 }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={34}
+                      interval={0}
+                      axisLine={false}
+                      tickLine={false}
+                      tickMargin={4}
+                      tick={{ fill: 'rgba(148,163,184,0.9)', fontSize: 10 }}
+                    />
+                    <Tooltip content={<StageTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+                    <Bar dataKey="deep" stackId="stage" fill={STAGE_COLORS.deep} isAnimationActive={false} />
+                    <Bar dataKey="light" stackId="stage" fill={STAGE_COLORS.light} isAnimationActive={false} />
+                    <Bar dataKey="rem" stackId="stage" fill={STAGE_COLORS.rem} isAnimationActive={false} />
+                    <Bar dataKey="awake" stackId="stage" fill={STAGE_COLORS.awake} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
 
               <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 border-t ${innerBorder} text-[9px] ${textMuted}`}>

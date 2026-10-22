@@ -20,11 +20,17 @@ import java.util.regex.Pattern;
 
 /**
  * 摇一摇 / 开屏 / 应用内广告跳过（第 59 轮，第 63 轮接入 GKD 规则子集，
- * 第 66 轮扩展到全屏/局部广告与全局 SDK 卡片关闭规则）。
+ * 第 66 轮扩展到全屏/局部广告，第 67 轮改为完整关系链求值）。
  *
  * 规则来源：Lin-arm/GKD_subscription 的“开屏广告-全局”、各应用“开屏/全屏/局部广告”
  * 组与全局选择器库（字节/腾讯/京东/快手卡片关闭），由 tools/import-gkd-splash.mts
- * 归一化为 assets/ad_skip_rules.json。用户已明确要求参考该订阅并自行承担版权责任。
+ * 归一化为 assets/ad_skip_rules.json（关系链 AST，非降级子集）。用户已明确要求
+ * 参考该订阅并自行承担版权责任。
+ *
+ * 第 67 轮修复误点：此前关系选择器被降级成“目标 + 窗口任意位置关键词”，
+ * 常驻 SDK 卡片规则会在正常内容里乱点。现在整链逐节点校验（@/</>/+/-/距离），
+ * 点击目标只向“紧凑包裹”的祖先攀登（≤2.2×宽/3×高），常驻规则另加
+ * 广告词锚点门槛 + 更小尺寸上限，并排除常见桌面。
  *
  * 执行边界（任何一条都不可绕过）：
  *  - 只在本应用开启开关后工作；默认关闭；
@@ -33,9 +39,9 @@ import java.util.regex.Pattern;
  *  - 应用内规则（inApp / 全局 always）：目标应用前台期间持续生效，
  *    但受滚动窗口限次（3 分钟内最多 4 次、每次前台会话最多 8 次）；
  *  - 目标必须是可点击、可见、小尺寸节点（开屏规则 ≤55%×30%，
- *    应用内/通用 ≤40%×25%）；
- *  - 排除自身、系统 UI、系统设置、输入法等敏感包；
- *  - 事件冷却 1.2s，事件节流 150ms；
+ *    应用内 ≤40%×25%，全局常驻 ≤25%×12%）；
+ *  - 排除自身、系统 UI、系统设置、输入法、常见桌面等包；
+ *  - 事件冷却 1.2s，事件节流 200ms；
  *  - 只读节点文字/描述/viewId，不读取输入内容、不截图、不联网。
  */
 public class AdSkipService extends AccessibilityService {
@@ -45,7 +51,7 @@ public class AdSkipService extends AccessibilityService {
     static final String KEY_HITS = "ad_skip_hits";
 
     private static final long CLICK_COOLDOWN_MS = 1200;
-    private static final long EVENT_THROTTLE_MS = 150;
+    private static final long EVENT_THROTTLE_MS = 200;
     private static final long GENERIC_WINDOW_MS = 15_000;
     private static final long APP_RULE_HARD_LIMIT_MS = 30_000;
     private static final int MAX_NODES = 800;
@@ -224,8 +230,8 @@ public class AdSkipService extends AccessibilityService {
 
     /** 扫一棵窗口树并按规则点击；返回是否已点击（点击后本次事件结束） */
     private boolean scanRoot(AccessibilityNodeInfo root, String pkg, long elapsed) {
-        List<AdSkipRuleStore.NodeData> nodes = collect(root);
-        Candidate best = findBest(pkg, lastActivity, elapsed, nodes);
+        AdSkipRuleStore.Snapshot snap = collect(root);
+        Candidate best = findBest(pkg, lastActivity, elapsed, snap);
         if (best == null) return false;
         if (best.target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             lastClickAt = SystemClock.uptimeMillis();
@@ -258,30 +264,59 @@ public class AdSkipService extends AccessibilityService {
         }
     }
 
-    private List<AdSkipRuleStore.NodeData> collect(AccessibilityNodeInfo root) {
+    private static final class Pending {
+        final AccessibilityNodeInfo node;
+        final int parentIdx;
+        final int idxInParent;
+        final int parentChildCount;
+
+        Pending(AccessibilityNodeInfo node, int parentIdx, int idxInParent, int parentChildCount) {
+            this.node = node;
+            this.parentIdx = parentIdx;
+            this.idxInParent = idxInParent;
+            this.parentChildCount = parentChildCount;
+        }
+    }
+
+    /** BFS 抓树并保留结构信息（父下标/位次/孩子表）：关系链求值依赖这些 */
+    private AdSkipRuleStore.Snapshot collect(AccessibilityNodeInfo root) {
         List<AdSkipRuleStore.NodeData> out = new ArrayList<>();
-        ArrayDeque<AccessibilityNodeInfo> queue = new ArrayDeque<>();
-        queue.add(root);
+        ArrayDeque<Pending> queue = new ArrayDeque<>();
+        queue.add(new Pending(root, -1, 0, 0));
         while (!queue.isEmpty() && out.size() < MAX_NODES) {
-            AccessibilityNodeInfo node = queue.poll();
-            if (node == null) continue;
-            out.add(new AdSkipRuleStore.NodeData(node));
-            int count = Math.min(node.getChildCount(), MAX_NODES);
+            Pending pending = queue.poll();
+            AdSkipRuleStore.NodeData data = new AdSkipRuleStore.NodeData(
+                    pending.node, pending.parentIdx, pending.idxInParent, pending.parentChildCount);
+            data.selfIdx = out.size();
+            out.add(data);
+            int count = Math.min(pending.node.getChildCount(), MAX_NODES);
             for (int i = 0; i < count; i++) {
-                AccessibilityNodeInfo child = node.getChild(i);
-                if (child != null) queue.add(child);
+                AccessibilityNodeInfo child = pending.node.getChild(i);
+                if (child != null) {
+                    queue.add(new Pending(child, data.selfIdx, i, pending.node.getChildCount()));
+                }
             }
         }
-        return out;
+        int[][] children = new int[out.size()][];
+        for (int i = 0; i < out.size(); i++) {
+            children[i] = new int[Math.max(0, out.get(i).childCount)];
+            java.util.Arrays.fill(children[i], -1);
+        }
+        for (AdSkipRuleStore.NodeData node : out) {
+            if (node.parentIdx >= 0 && node.idxInParent < children[node.parentIdx].length) {
+                children[node.parentIdx][node.idxInParent] = node.selfIdx;
+            }
+        }
+        return new AdSkipRuleStore.Snapshot(out, children);
     }
 
     private Candidate findBest(String pkg, String activity, long elapsed,
-                               List<AdSkipRuleStore.NodeData> nodes) {
+                               AdSkipRuleStore.Snapshot snap) {
         AdSkipRuleStore.AppRules appRules = rules.appFor(pkg);
         boolean allowGlobal = rules.globalAllowed(pkg);
         Candidate best = null;
 
-        for (AdSkipRuleStore.NodeData node : nodes) {
+        for (AdSkipRuleStore.NodeData node : snap.nodes) {
             if (!node.visible) continue;
             if (isExcludedText(node.text) || isExcludedText(node.desc)) continue;
 
@@ -292,31 +327,31 @@ public class AdSkipService extends AccessibilityService {
                     if (splash && elapsed > profile.matchTime) continue;
                     if (splash && clicksThisLaunch >= Math.min(MAX_CLICKS_PER_LAUNCH, profile.actionMaximum)) continue;
                     if (!activityMatches(activity, profile.activityIds)) continue;
-                    if (matchesAny(profile.excludes, node, nodes)) continue;
+                    if (matchesAny(profile.excludes, node, snap)) continue;
                     for (AdSkipRuleStore.RuleSelector selector : profile.selectors) {
-                        if (!selector.matches(node, nodes)) continue;
-                        best = better(best, candidate(node, splash ? 3 : 2, !splash));
+                        if (!selector.matches(node, snap)) continue;
+                        best = better(best, candidate(node, splash ? 3 : 2, !splash, false));
                     }
                 }
             }
 
-            if (allowGlobal && !matchesAny(rules.globalExcludes, node, nodes)) {
+            if (allowGlobal && !matchesAny(rules.globalExcludes, node, snap)) {
                 if (elapsed <= 12_000) {
                     for (AdSkipRuleStore.RuleSelector selector : rules.globalSplashSelectors) {
-                        if (!selector.matches(node, nodes)) continue;
-                        best = better(best, candidate(node, 2, false));
+                        if (!selector.matches(node, snap)) continue;
+                        best = better(best, candidate(node, 2, false, false));
                     }
                 }
                 for (AdSkipRuleStore.RuleSelector selector : rules.globalAlwaysSelectors) {
-                    if (!selector.matches(node, nodes)) continue;
-                    best = better(best, candidate(node, 2, true));
+                    if (!selector.matches(node, snap)) continue;
+                    best = better(best, candidate(node, 2, true, true));
                 }
             }
 
             boolean countdown = isCountdown(node);
             if ((elapsed <= GENERIC_WINDOW_MS || (countdown && elapsed <= APP_RULE_HARD_LIMIT_MS))
                     && matchesGeneric(node)) {
-                best = better(best, candidate(node, 1, false));
+                best = better(best, candidate(node, 1, false, false));
             }
         }
         return best;
@@ -331,24 +366,31 @@ public class AdSkipService extends AccessibilityService {
         return candidate.area < current.area ? candidate : current;
     }
 
-    private Candidate candidate(AdSkipRuleStore.NodeData matched, int priority, boolean inApp) {
+    private Candidate candidate(AdSkipRuleStore.NodeData matched, int priority, boolean inApp, boolean alwaysGlobal) {
         AccessibilityNodeInfo target = matched.node;
         AdSkipRuleStore.NodeData targetData = matched;
-        for (int i = 0; i < 6; i++) {
+        // 只攀登“紧凑包裹”的可点击祖先（宽 ≤2.2×、高 ≤3×）：此前无尺寸约束地
+        // 向上爬 6 层，小图标会爬到整个列表项/宫格项上点下去（第 67 轮误点主因）
+        for (int i = 0; i < 3; i++) {
             if (target.isClickable()) break;
             AccessibilityNodeInfo parent = target.getParent();
             if (parent == null) break;
+            AdSkipRuleStore.NodeData parentData = new AdSkipRuleStore.NodeData(parent);
+            if (parentData.bounds.width() > targetData.bounds.width() * 2.2f
+                    || parentData.bounds.height() > targetData.bounds.height() * 3.0f) {
+                break;
+            }
             target = parent;
-            targetData = new AdSkipRuleStore.NodeData(target);
+            targetData = parentData;
         }
         if (!target.isClickable() || !target.isVisibleToUser()) return null;
 
         Rect bounds = targetData.bounds;
         if (bounds.width() <= 3 || bounds.height() <= 3) return null;
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        // 应用内广告的关闭按钮通常很小；尺寸上限收紧，降低误点成本
-        float maxWidth = priority >= 2 && !inApp ? 0.55f : 0.40f;
-        float maxHeight = priority >= 2 && !inApp ? 0.30f : 0.25f;
+        // 常驻全局规则（SDK 卡片关闭）在任何前台应用生效：目标必须是小小的关闭角标
+        float maxWidth = alwaysGlobal ? 0.25f : (priority >= 2 && !inApp ? 0.55f : 0.40f);
+        float maxHeight = alwaysGlobal ? 0.12f : (priority >= 2 && !inApp ? 0.30f : 0.25f);
         if (bounds.width() > dm.widthPixels * maxWidth) return null;
         if (bounds.height() > dm.heightPixels * maxHeight) return null;
 
@@ -364,9 +406,9 @@ public class AdSkipService extends AccessibilityService {
 
     private boolean matchesAny(List<AdSkipRuleStore.RuleSelector> selectors,
                                AdSkipRuleStore.NodeData node,
-                               List<AdSkipRuleStore.NodeData> allNodes) {
+                               AdSkipRuleStore.Snapshot snap) {
         for (AdSkipRuleStore.RuleSelector selector : selectors) {
-            if (selector.matches(node, allNodes)) return true;
+            if (selector.matches(node, snap)) return true;
         }
         return false;
     }

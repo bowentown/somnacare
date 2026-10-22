@@ -42,11 +42,18 @@ ok('图表文字：轴标签不小于 9px，窄屏不换行',
   trends.includes('fontSize: 9')
   && trends.includes('fontSize: 10')
   && trends.includes('whitespace-nowrap'));
-ok('分期图：100% 横带 + 直接百分比 + 7 晚平均',
-  trends.includes('STAGE_COLORS')
+ok('分期图：Recharts 100% 堆叠横条（shadcn/ui Charts 语法）+ 浮层 + 7 晚平均',
+  trends.includes('BarChart')
+  && trends.includes('layout="vertical"')
+  && trends.includes('stackId="stage"')
+  && trends.includes('StageTooltip')
+  && trends.includes('stageData')
   && trends.includes('stageAvg')
   && trends.includes('近 7 晚平均')
-  && trends.includes('min-h-9'));
+  && trends.includes('aria-label="近 7 晚睡眠分期比例图')
+  && trends.includes('pickStageAt'));
+ok('分期图：分段色带内嵌文字已移除（百分比走浮层/图例，不再挤在色块里）',
+  !trends.includes('text-[8px] font-black text-[#06121f]'));
 ok('分期图：低饱和色板（不再用荧光绿/电光蓝）',
   trends.includes("deep: '#3f9e8f'")
   && trends.includes("light: '#4f86d9'")

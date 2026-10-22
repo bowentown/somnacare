@@ -34,48 +34,73 @@ const generator = read('tools/import-gkd-splash.mts');
 type RulePredicate = {
   k?: string;
   f?: string;
+  v?: unknown;
   p?: RulePredicate[] | RulePredicate;
   [key: string]: unknown;
 };
+type RuleChain = {
+  steps?: Array<{ rel?: string; pred?: RulePredicate }>;
+  target?: number;
+};
 
-function hasRuleIdentity(pred: RulePredicate | undefined): boolean {
+/** 强锚点：正向 text/desc/vid/id 谓词且值非空非通配 */
+function hasRuleAnchor(pred: RulePredicate | undefined): boolean {
   if (!pred || typeof pred !== 'object') return false;
   const k = pred.k;
   if ((k === 'eq' || k === 'contains' || k === 'starts' || k === 'ends' || k === 'regex')
       && (pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id')) {
-    return true;
+    const v = String(pred.v ?? '');
+    return v.length > 0 && v !== '.*';
   }
   if (k === 'all' || k === 'any') {
-    return Array.isArray(pred.p) && pred.p.some((child) => hasRuleIdentity(child));
+    return Array.isArray(pred.p) && pred.p.some((child) => hasRuleAnchor(child));
   }
   return false;
 }
 
-function hasRuleStructure(pred: RulePredicate | undefined): boolean {
-  if (!pred || typeof pred !== 'object') return false;
-  if (pred.k === 'num' && (pred.f === 'width' || pred.f === 'height' || pred.f === 'childCount')) {
-    return true;
-  }
-  if (pred.k === 'all' || pred.k === 'any') {
-    return Array.isArray(pred.p) && pred.p.some((child) => hasRuleStructure(child));
-  }
-  return false;
+function chainHasAnchor(chain: RuleChain): boolean {
+  return (chain.steps ?? []).some((s) => hasRuleAnchor(s.pred));
 }
 
-const STRONG_RULE_CONTEXT = [
-  '跳过', '跳過', '广告', '廣告', 'skip', 'close', '关闭', '關閉',
-  '互动广告', '摇一摇', '扭动', '扭一扭', '扭动手机', '第三方应用', '点击或上滑', '省钱好物',
-  'splash', 'ksad', 'sdk_view', 'sdk',
-  // 应用内卡片/浮窗广告的关闭按钮没有文字，锚点是旁边的下载/详情 CTA
-  '立即下载', '立即打开', '立即体验', '查看详情', '了解更多', '进入小程序',
-  '领取优惠', '下载应用', '去逛逛', '去微信看看', '反馈', 'dislike',
+/** 弱身份计分：强锚 2 分；id!=null / text!=null 1 分 */
+function chainIdentityPoints(chain: RuleChain): number {
+  const points = (pred: RulePredicate | undefined): number => {
+    if (!pred || typeof pred !== 'object') return 0;
+    const k = pred.k;
+    if ((k === 'eq' || k === 'contains' || k === 'starts' || k === 'ends' || k === 'regex')
+        && (pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id')) {
+      const v = String(pred.v ?? '');
+      return v.length > 0 && v !== '.*' ? 2 : 0;
+    }
+    if (k === 'null' && pred.v === false
+        && (pred.f === 'id' || pred.f === 'text' || pred.f === 'desc')) return 1;
+    if (k === 'all' || k === 'any') {
+      return Array.isArray(pred.p) ? pred.p.reduce((n, c) => n + points(c), 0) : 0;
+    }
+    return 0;
+  };
+  return (chain.steps ?? []).reduce((n, s) => n + points(s.pred), 0);
+}
+
+const AD_ANCHOR_WORDS = [
+  '广告', '廣告', '跳过', '跳過', 'skip', '关闭', '關閉', 'close', '反馈', 'dislike',
+  '立即', '详情', '詳情', '下载', '下載', '逛逛', '微信', '优惠', '優惠', '小程序',
+  '了解', '第三方', '扭动', '扭動', '省钱', '省錢', '点击或上滑', 'ksad', 'tt_', 'sdk',
 ];
-function hasStrongRuleContext(ctx: string[] | undefined): boolean {
-  if (!ctx || ctx.length === 0) return false;
-  return ctx.some((value) => {
-    const lower = value.toLowerCase();
-    return STRONG_RULE_CONTEXT.some((word) => lower.includes(word.toLowerCase()));
-  });
+function chainAlwaysSafe(chain: RuleChain): boolean {
+  const anchors: string[] = [];
+  const collect = (pred: RulePredicate | undefined): void => {
+    if (!pred || typeof pred !== 'object') return;
+    const k = pred.k;
+    if ((k === 'eq' || k === 'contains' || k === 'starts' || k === 'ends' || k === 'regex')
+        && (pred.f === 'text' || pred.f === 'desc' || pred.f === 'vid' || pred.f === 'id')) {
+      anchors.push(String(pred.v ?? ''));
+    }
+    if ((k === 'all' || k === 'any') && Array.isArray(pred.p)) pred.p.forEach(collect);
+  };
+  (chain.steps ?? []).forEach((s) => collect(s.pred));
+  if (anchors.some((a) => AD_ANCHOR_WORDS.some((w) => a.toLowerCase().includes(w)))) return true;
+  return anchors.filter((a) => a.length > 0 && a !== '.*').length >= 2;
 }
 
 ok('服务：继承 AccessibilityService', service.includes('extends AccessibilityService'));
@@ -113,9 +138,13 @@ ok('应用内广告：inApp/常驻规则 + 滚动窗口限次 + 前台会话上�
   && service.includes('inAppBudgetOk')
   && service.includes('hasInAppRules')
   && service.includes('inAppClickTimes.clear()'));
-ok('常驻规则收紧：应用内目标尺寸上限更小（≤40%×25%）',
-  service.includes('priority >= 2 && !inApp ? 0.55f : 0.40f')
-  && service.includes('priority >= 2 && !inApp ? 0.30f : 0.25f'));
+ok('常驻规则收紧：常驻全局目标 ≤25%×12%，应用内 ≤40%×25%',
+  service.includes('alwaysGlobal ? 0.25f : (priority >= 2 && !inApp ? 0.55f : 0.40f)')
+  && service.includes('alwaysGlobal ? 0.12f : (priority >= 2 && !inApp ? 0.30f : 0.25f)'));
+ok('紧凑攀登：点击目标只向紧包祖先上爬（宽 ≤2.2×/高 ≤3×），不再爬到列表项',
+  service.includes('targetData.bounds.width() * 2.2f')
+  && service.includes('targetData.bounds.height() * 3.0f')
+  && !service.includes('for (int i = 0; i < 6; i++)'));
 ok('多窗口：广告 SDK 独立悬浮窗也在扫描范围（上限 2 个）',
   service.includes('scanSiblingWindows')
   && service.includes('MAX_SIBLING_WINDOWS')
@@ -138,14 +167,18 @@ ok('规则引擎：JSON AST 加载 + 包名/Activity/时限求值',
   && service.includes('activityMatches')
   && service.includes('rules.appFor(pkg)')
   && service.includes('rules.globalAllowed(pkg)'));
-ok('规则生成：关系型选择器只提取安全目标，弱上下文丢弃',
+ok('规则生成：完整关系链（@/</>/+/-/距离/祖先/index），非降级子集',
   generator.includes('GKD_subscription')
-  && generator.includes('splitTopLevel')
-  && generator.includes('hasStructuralConstraint')
-  && generator.includes('hasStrongContext')
-  && generator.includes('WEAK CONTEXT'));
+  && generator.includes('parseChainRaw')
+  && generator.includes('parseAncestorDistance')
+  && generator.includes('chainAnchorOk')
+  && generator.includes('anchorWordsOk')
+  && generator.includes('indexFromEnd')
+  && generator.includes('NO ANCHOR'));
+ok('规则生成：id!=null 与 id=null 语义区分（历史反转 bug 已修）',
+  generator.includes("op.v !== '!='"));
 
-// 对生成产物做结构审计（不是只扫源码）：覆盖量、弱选择器、强上下文
+// 对生成产物做结构审计（不是只扫源码）：覆盖量、链完整性、锚点、常驻门槛
 {
   const data = JSON.parse(ruleJson) as any;
   const appKeys = Object.keys(data.apps ?? {});
@@ -162,20 +195,29 @@ ok('规则生成：关系型选择器只提取安全目标，弱上下文丢弃'
     appKeys.length >= 500 && selectors.length >= 1200
     && appProfiles.some((p) => p.when === 'inApp')
     && globalSelectors.some((s) => s.when === 'always'));
-  const weak = selectors.filter((s) => !hasRuleIdentity(s.expr) && !hasRuleStructure(s.expr));
-  ok('规则安全：不存在“只有 clickable/尺寸”的弱目标', weak.length === 0);
-  const weakCtx = selectors.filter((s) => {
-    if (hasRuleIdentity(s.expr)) return false;
-    return !hasStrongRuleContext(Array.isArray(s.ctx) ? s.ctx : []);
-  });
-  ok('规则安全：context-only 目标都带广告/跳过强上下文', weakCtx.length === 0);
+  ok('规则结构：全部为关系链（steps+target），降级机制（ctx）已消失',
+    !ruleJson.includes('"ctx"')
+    && ruleJson.includes('"target"')
+    && selectors.every((s) => Array.isArray(s.chain?.steps) && s.chain.steps.length > 0)
+    && globalSelectors.every((s) => Array.isArray(s.chain?.steps) && s.chain.steps.length > 0));
+  const weak = [...selectors, ...globalSelectors]
+    .filter((s) => !chainHasAnchor(s.chain) && chainIdentityPoints(s.chain) < 2);
+  ok('规则安全：每条链都有锚点（强锚或 ≥2 弱身份），纯结构链为 0', weak.length === 0);
+  const unsafeAlways = globalSelectors
+    .filter((s) => s.when === 'always')
+    .filter((s) => !chainAlwaysSafe(s.chain));
+  ok('规则安全：常驻全局链全部过广告词锚点门槛', unsafeAlways.length === 0);
+  const excluded: string[] = data.global?.excludedApps ?? [];
+  ok('排除清单：包含常见桌面（误点代价最高处）',
+    ['com.android.launcher3', 'com.miui.home'].every((p) => excluded.includes(p)));
   for (const pkg of ['com.taobao.taobao', 'com.sankuai.meituan', 'tv.danmaku.bili', 'com.tencent.mobileqq', 'com.baidu.tieba', 'com.qidian.QDReader']) {
     if (!appKeys.includes(pkg)) {
       console.error(`✗ 规则覆盖缺少常用应用 ${pkg}`);
       failures++;
     }
   }
-  console.log('  规则审计：应用', appKeys.length, '选择器', selectors.length, '弱目标', weak.length, '弱上下文', weakCtx.length);
+  console.log('  规则审计：应用', appKeys.length, '选择器', selectors.length,
+    '全局', globalSelectors.length, '弱链', weak.length, '常驻不安全', unsafeAlways.length);
 }
 ok('隐私：服务内无任何网络代码', !/java\.net|HttpURLConnection|new URL\(/.test(service));
 ok('点击：仅对可点击节点执行 ACTION_CLICK',
