@@ -140,6 +140,10 @@ public class GemmaLLMPlugin extends Plugin {
         ret.put("serviceEnabled", isAdSkipServiceEnabled());
         ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(AdSkipService.KEY_HITS, 0));
+        // 运行时诊断（最近的包切换/扫描/命中/点击记录）：某应用跳不过去时据此定位
+        com.getcapacitor.JSArray diag = new com.getcapacitor.JSArray();
+        for (String line : AdSkipService.diagSnapshot()) diag.put(line);
+        ret.put("diag", diag);
         call.resolve(ret);
     }
 

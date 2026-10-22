@@ -12,9 +12,11 @@ export interface AdSkipStatus {
   enabled: boolean;
   serviceEnabled: boolean;
   hits: number;
+  /** 最近运行时诊断（包切换/扫描/命中/点击），设置页展示用于远程定位问题 */
+  diag: string[];
 }
 
-const EMPTY: AdSkipStatus = { enabled: false, serviceEnabled: false, hits: 0 };
+const EMPTY: AdSkipStatus = { enabled: false, serviceEnabled: false, hits: 0, diag: [] };
 
 function plugin(): any {
   if (!isNativePlatform()) return null;
@@ -25,16 +27,21 @@ function plugin(): any {
   }
 }
 
+function parseStatus(res: any): AdSkipStatus {
+  const rawDiag = res?.diag;
+  return {
+    enabled: res?.enabled === true,
+    serviceEnabled: res?.serviceEnabled === true,
+    hits: typeof res?.hits === 'number' ? res.hits : 0,
+    diag: Array.isArray(rawDiag) ? rawDiag.map((v: unknown) => String(v)).slice(-12) : [],
+  };
+}
+
 export async function getAdSkipStatus(): Promise<AdSkipStatus> {
   const pl = plugin();
   if (!pl?.adSkipStatus) return EMPTY;
   try {
-    const res = await pl.adSkipStatus();
-    return {
-      enabled: res?.enabled === true,
-      serviceEnabled: res?.serviceEnabled === true,
-      hits: typeof res?.hits === 'number' ? res.hits : 0,
-    };
+    return parseStatus(await pl.adSkipStatus());
   } catch {
     return EMPTY;
   }
@@ -44,12 +51,7 @@ export async function setAdSkipEnabled(enabled: boolean): Promise<AdSkipStatus> 
   const pl = plugin();
   if (!pl?.adSkipSetEnabled) return { ...EMPTY, enabled };
   try {
-    const res = await pl.adSkipSetEnabled({ enabled });
-    return {
-      enabled: res?.enabled === true,
-      serviceEnabled: res?.serviceEnabled === true,
-      hits: typeof res?.hits === 'number' ? res.hits : 0,
-    };
+    return parseStatus(await pl.adSkipSetEnabled({ enabled }));
   } catch {
     return { ...EMPTY, enabled };
   }

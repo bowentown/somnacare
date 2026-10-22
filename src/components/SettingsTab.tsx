@@ -116,7 +116,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   // 广告跳过（第 59 轮）：默认关闭；无障碍服务状态与开关分开显示
   const adSkipNative = isNativePlatform();
-  const [adSkip, setAdSkip] = useState<AdSkipStatus>({ enabled: false, serviceEnabled: false, hits: 0 });
+  const [adSkip, setAdSkip] = useState<AdSkipStatus>({ enabled: false, serviceEnabled: false, hits: 0, diag: [] });
   const [adSkipBusy, setAdSkipBusy] = useState(false);
   const [adSkipOpen, setAdSkipOpen] = useState(false);
   const adSkipPollRef = useRef<number | null>(null);
@@ -819,6 +819,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <p className={`text-[10px] ${batteryIgnored ? 'text-emerald-400' : 'text-slate-500'}`}>
                 电池优化：{batteryIgnored ? '已豁免' : '未豁免'}
               </p>
+            )}
+
+            {/* 运行时诊断（第 69 轮）：跳不过某个应用时，展开这里截图发给开发者，
+                日志能直接区分「没收到事件 / 扫了没命中 / 命中了点击失败」 */}
+            {adSkip.enabled && (
+              <div className="pt-2 border-t border-slate-700/50 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold text-slate-300">运行日志</p>
+                  <button
+                    type="button"
+                    onClick={() => void refreshAdSkip()}
+                    className="text-[10px] text-slate-400 underline cursor-pointer"
+                  >
+                    刷新
+                  </button>
+                </div>
+                {adSkip.diag.length === 0 ? (
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    暂无记录——打开一个带广告的应用后再回来看
+                  </p>
+                ) : (
+                  <pre className="text-[9px] leading-[1.5] text-slate-400 font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto bg-black/30 rounded-lg p-2 border border-slate-700/50">
+{adSkip.diag.join('\n')}
+                  </pre>
+                )}
+              </div>
             )}
 
             <div className="pt-2 border-t border-slate-700/50 space-y-2">

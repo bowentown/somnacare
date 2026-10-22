@@ -189,6 +189,14 @@ ok('规则生成：完整关系链（@/</>/+/-/距离/祖先/index），非降�
   && generator.includes('NO ANCHOR'));
 ok('规则生成：id!=null 与 id=null 语义区分（历史反转 bug 已修）',
   generator.includes("op.v !== '!='"));
+ok('运行时诊断：环形缓冲 + 插件回传 + 设置页展示（跳不过时不再靠猜）',
+  service.includes('private static void diag(')
+  && service.includes('static java.util.List<String> diagSnapshot()')
+  && service.includes('hit=" + best.source')
+  && plugin.includes('ret.put("diag", diag)')
+  && js.includes('diag: string[]')
+  && settings.includes('运行日志')
+  && settings.includes('adSkip.diag.join'));
 
 // 对生成产物做结构审计（不是只扫源码）：覆盖量、链完整性、锚点、常驻门槛
 {
