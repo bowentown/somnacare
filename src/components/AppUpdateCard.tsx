@@ -67,7 +67,18 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
       if (!native) return;
       const pending = await getPendingUpdate();
       if (!alive || !pending) return;
+      // stale = 原生侧判定“这个包已经装过”并清理了文件与记录——绝不能再当
+      // 待安装展示（第 72 轮实锤：装完 v(n) 后 pending 残留，UI 永远显示
+      // “继续安装”指向旧包，install 又被构建号检查拒绝，卡死循环）
+      if (pending.status === 'stale') {
+        setMessage('之前下载的安装包已经装过，已清理；重新检查后可下载新版');
+        return;
+      }
       if (pending.status === 'ready') {
+        if (v.native && pending.versionCode && pending.versionCode <= v.versionCode) {
+          setMessage('之前下载的安装包已经装过，请重新检查下载新版');
+          return;
+        }
         setDownload(pending);
         setMessage(`已下载${pending.versionName ? ` v${pending.versionName}` : '更新包'}，等待安装`);
       } else if (ACTIVE_DOWNLOAD.includes(pending.status)) {
@@ -110,8 +121,19 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
     const tick = async () => {
       const st = await getDownloadStatus(download.downloadId);
       if (cancelled) return;
+      if (st.status === 'stale') {
+        // 原生侧判定包已装过并清理——清空本地状态，别再显示“继续安装”
+        setDownload(null);
+        setMessage('之前下载的安装包已经装过，已清理；点「重新检查」下载新版');
+        return;
+      }
       setDownload(st);
       if (st.status === 'ready') {
+        if (!installed || (st.versionCode && st.versionCode <= installed.versionCode)) {
+          setDownload(null);
+          setMessage('之前下载的安装包已经装过，已清理；点「重新检查」下载新版');
+          return;
+        }
         void handleInstall(st.downloadId);
       } else if (st.status === 'failed') {
         setMessage(st.reason ?? '下载失败，请重试');
@@ -195,9 +217,14 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
     ? Math.min(100, Math.round((download.bytesDownloaded / download.totalBytes) * 100))
     : null;
   const downloadBusy = !!download && ['pending', 'running', 'paused'].includes(download.status);
+  // “继续安装”只对真正比当前新的包出现——旧包（已装过）一律走重新下载
+  const readyInstallable = !!download && download.status === 'ready'
+    && (!download.versionCode || !installed || download.versionCode > installed.versionCode);
+  const readyToInstall = !!download
+    && (download.status === 'installing' || (download.status === 'ready' && readyInstallable));
   const summary = downloadBusy
     ? `下载中 ${pct ?? 0}%`
-    : download?.status === 'ready'
+    : readyToInstall
       ? '待安装'
       : phase === 'latest'
         ? `已是最新 ${release?.tag ?? ''}`
@@ -340,9 +367,10 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                 {native && release.asset && comparable && (
                   <button
                     type="button"
+                    aria-label={readyToInstall ? '继续安装已下载的更新包' : '下载并安装新版本'}
                     onClick={() => {
-                      if (download && (download.status === 'ready' || download.status === 'installing')) {
-                        void handleInstall(download.downloadId);
+                      if (readyToInstall) {
+                        void handleInstall(download!.downloadId);
                       } else {
                         void handleDownload();
                       }
@@ -352,7 +380,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                   >
                     {downloadBusy ? (
                       <><Loader2 className="w-3.5 h-3.5 animate-spin" /> 下载中…</>
-                    ) : download?.status === 'ready' || download?.status === 'installing' ? (
+                    ) : readyToInstall ? (
                       <><DownloadCloud className="w-3.5 h-3.5" /> 继续安装</>
                     ) : (
                       <><DownloadCloud className="w-3.5 h-3.5" /> 下载并安装</>

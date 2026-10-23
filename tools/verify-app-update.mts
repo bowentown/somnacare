@@ -101,6 +101,14 @@ ok('原生：包名 / versionCode / 签名 / SHA-256 四重校验',
 ok('原生：安装未知来源权限检查',
   manager.includes('canRequestPackageInstalls')
   && manager.includes('ACTION_MANAGE_UNKNOWN_APP_SOURCES'));
+ok('原生：装过的旧包判定为 stale 并彻底清理（修“第二次更新永远继续安装”死循环）',
+  manager.includes('cleanupStale')
+  && manager.includes('clearDownloadPrefs')
+  && manager.includes('cachedCode <= currentCode')
+  && manager.includes('该安装包已安装过')
+  && js.includes("'stale'")
+  && card.includes("pending.status === 'stale'")
+  && card.includes('readyInstallable'));
 ok('原生：SHA-256 不匹配时删除安装包并拒绝',
   manager.includes('已阻止安装')
   && manager.includes('deleteQuietly(apk)'));

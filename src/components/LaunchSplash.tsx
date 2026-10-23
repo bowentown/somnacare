@@ -57,11 +57,14 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
       className="absolute inset-0 overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #060b1a 0%, #03060f 100%)' }}
     >
-      {/* 第三步：极光条带（月亮后方浮现） */}
+      {/* 第三步：极光条带（月亮后方浮现）。全屏 14px 模糊很贵：提为合成层后
+          模糊纹理只光栅化一次，800ms 淡入走 GPU（第 72 轮流畅度） */}
       <div
         className="absolute inset-0"
         style={{
           opacity: 0,
+          willChange: 'opacity',
+          transform: 'translateZ(0)',
           animation: 'splash-aurora-in 800ms ease-out 1500ms both',
           background: `repeating-linear-gradient(97deg, transparent 0 14px, ${mc.aur2}22 14px 22px, transparent 22px 40px), linear-gradient(180deg, transparent 8%, ${mc.aur1}30 45%, transparent 85%)`,
           filter: 'blur(14px)',
@@ -92,16 +95,18 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
             marginLeft: -75,
             marginTop: -75,
             border: `1.5px solid ${mc.lit}`,
+            willChange: 'transform, opacity',
             animation: `splash-ripple 950ms ease-out ${430 + i * 170}ms both`,
           }}
         />
       ))}
 
-      {/* 第二步：月亮顺时针渲染 + 镜头拉远 */}
+      {/* 第二步：月亮顺时针渲染 + 镜头拉远（scale 动画提为合成层） */}
       <div
         className="absolute left-1/2 top-[38%]"
         style={{
           transform: 'translate(-50%,-50%)',
+          willChange: 'transform',
           animation: 'splash-zoom 1500ms ease-out 500ms both',
         }}
       >

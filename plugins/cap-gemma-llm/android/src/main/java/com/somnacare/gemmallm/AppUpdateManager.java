@@ -212,18 +212,36 @@ final class AppUpdateManager {
 
     private static JSObject verifiedStatus(Context context, long id, JSObject ret) {
         SharedPreferences sp = prefs(context);
+        long currentCode = versionCodeOf(currentInfoSafe(context));
         if (sp.getLong(KEY_VERIFIED_ID, -1L) == id) {
+            // 缓存命中也要做“是否已装过”判定（第 72 轮）：装完 v(n) 后 pending
+            // 记录还在，下次检查更新会一直显示“继续安装”指向旧包，install 又被
+            // “构建号不高于当前”拒绝——用户卡死在这个循环里
+            long cachedCode = sp.getLong(KEY_VERIFIED_CODE, 0L);
+            if (cachedCode > 0 && cachedCode <= currentCode) {
+                cleanupStale(context, id);
+                ret.put("status", "stale");
+                ret.put("reason", "该安装包已安装过，已清理；请重新下载新版");
+                return ret;
+            }
             ret.put("status", "ready");
             ret.put("versionName", sp.getString(KEY_VERIFIED_NAME, ""));
-            ret.put("versionCode", sp.getLong(KEY_VERIFIED_CODE, 0L));
+            ret.put("versionCode", cachedCode);
             return ret;
         }
         File apk = apkFile(context);
         Verified verified = verify(context, apk, sp.getString(KEY_SHA256, ""));
         if (!verified.ok) {
             deleteQuietly(apk);
+            clearDownloadPrefs(context);
             ret.put("status", "failed");
             ret.put("reason", verified.reason);
+            return ret;
+        }
+        if (verified.versionCode <= currentCode) {
+            cleanupStale(context, id);
+            ret.put("status", "stale");
+            ret.put("reason", "该安装包已安装过，已清理；请重新下载新版");
             return ret;
         }
         sp.edit()
@@ -235,6 +253,35 @@ final class AppUpdateManager {
         ret.put("versionName", verified.versionName);
         ret.put("versionCode", verified.versionCode);
         return ret;
+    }
+
+    /** 已装过的旧下载：删 APK + 移除 DownloadManager 记录 + 清偏好，一次清干净 */
+    private static void cleanupStale(Context context, long id) {
+        deleteQuietly(apkFile(context));
+        try {
+            DownloadManager dm = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (dm != null) dm.remove(id);
+        } catch (Exception ignored) {
+        }
+        clearDownloadPrefs(context);
+    }
+
+    private static void clearDownloadPrefs(Context context) {
+        prefs(context).edit()
+                .remove(KEY_DOWNLOAD_ID)
+                .remove(KEY_SHA256)
+                .remove(KEY_VERIFIED_ID)
+                .remove(KEY_VERIFIED_NAME)
+                .remove(KEY_VERIFIED_CODE)
+                .apply();
+    }
+
+    private static PackageInfo currentInfoSafe(Context context) {
+        try {
+            return currentInfo(context.getPackageManager(), context.getPackageName());
+        } catch (Exception e) {
+            return new PackageInfo();
+        }
     }
 
     static JSObject pending(Context context) {
@@ -273,6 +320,12 @@ final class AppUpdateManager {
         Verified verified = verify(context, apk, expectedSha);
         if (!verified.ok) {
             deleteQuietly(apk);
+            // 校验失败最常见的就是“包已装过（构建号不高于当前）”——不清偏好
+            // 的话 UI 会永远显示“继续安装”指向这个已删除的文件（第 72 轮实锤）
+            clearDownloadPrefs(context);
+            if (verified.reason != null && verified.reason.contains("不高于当前")) {
+                verified.reason = "这个安装包已经安装过了。返回后点「重新检查」下载新版";
+            }
             ret.put("reason", verified.reason);
             return ret;
         }

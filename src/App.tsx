@@ -36,7 +36,7 @@ import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
-import { maybeMigrateRecordDates, migrateRecordDatesToNightKey, markRecordDateMigrationDone } from './utils/recordDateMigration';
+import { maybeMigrateRecordDates, migrateRecordDatesToNightKey, markRecordDateMigrationDone, recordDateMigrationDone } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { TravelCodexModal } from './components/travel/TravelCodexModal';
 import { processDailySleepScore, processRecordRemoval, loadTravelState, clearPendingArrival, restoreRecordScore } from './services/travelService';
@@ -134,9 +134,14 @@ export const App: React.FC = () => {
   } | null>(null);
 
   // Persistence for user logs: Empty by default for new users, prevents overwriting corrupt data
+  // 首次持久化跳过标记（第 72 轮流畅度）：数据本就来自磁盘且未经迁移时，
+  // 挂载立刻 JSON.stringify 全量写回是纯重复劳动（3.5MB 级），恰好撞上
+  // 开屏动画的主线程帧——跳过它，等第一条真实变更再写
+  const skipFirstPersistRef = useRef(false);
   const [records, setRecords] = useState<SleepRecord[]>(() => {
     const saved = localStorage.getItem('somnacare_sleep_records');
     if (!saved) return [];
+    if (recordDateMigrationDone()) skipFirstPersistRef.current = true;
     // 与导入路径共用同一条清洗：畸形记录（缺 bedtime / null 项 / 坏值）
     // 此前会直接把首页打崩（.split 抛错）或产出 NaN。
     // 排序与导入路径同契约：records[0] 必须是最近一晚——升序存储
@@ -282,6 +287,12 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // 首次挂载跳过写回：数据刚从磁盘读出且未经迁移，写回是纯重复劳动，
+    // 还会在开屏动画的窗口里同步 stringify 几 MB（第 72 轮流畅度）
+    if (skipFirstPersistRef.current) {
+      skipFirstPersistRef.current = false;
+      return;
+    }
     persistRecords(records.length > MAX_RECORDS ? records.slice(0, MAX_RECORDS) : records);
   }, [records]);
 

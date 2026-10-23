@@ -46,7 +46,9 @@ export type DownloadPhase =
   | 'successful'
   | 'ready'
   | 'installing'
-  | 'failed';
+  | 'failed'
+  /** 已装过的旧包（versionCode ≤ 当前），原生侧已清理文件与记录 */
+  | 'stale';
 
 export interface DownloadStatus {
   downloadId: number;
