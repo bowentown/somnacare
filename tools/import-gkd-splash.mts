@@ -872,7 +872,9 @@ function main(): void {
   };
 
   mkdirSync(dirname(OUTPUT), { recursive: true });
-  writeFileSync(OUTPUT, JSON.stringify(output, null, 2) + '\n', 'utf-8');
+  // 紧凑序列化：美化打印白吃 ~40% 体积（1.27MB → ~0.8MB），规则表由
+  // verify-ad-skip 做结构审计，不依赖缩进
+  writeFileSync(OUTPUT, JSON.stringify(output), 'utf-8');
   const selectors = Object.values(apps).reduce((n, a) => n + a.profiles.reduce((m, p) => m + p.selectors.length, 0), 0);
   const inAppSelectors = Object.values(apps).reduce((n, a) => n + a.profiles.reduce((m, p) => m + (p.when === 'inApp' ? p.selectors.length : 0), 0), 0);
   console.log(`✓ 导入 ${importedApps} 个应用 / ${selectors} 条应用级选择器（其中应用内广告 ${inAppSelectors} 条）/ ${output.global.selectors.length} 条全局选择器`);

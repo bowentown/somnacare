@@ -487,7 +487,11 @@ export const App: React.FC = () => {
         const now = new Date();
         const nowMin = now.getHours() * 60 + now.getMinutes();
         const targetMin = th * 60 + tm;
-        if (nowMin >= targetMin && nowMin <= targetMin + 15) {
+        // 15 分钟窗口跨午夜：目标 23:50 时，00:05 打开（nowMin=5）也应命中——
+        // 否则就寝时间在最后十几分钟的用户整晚都收不到提醒（第 73 轮审计）
+        const lateEvening = nowMin >= targetMin && nowMin <= targetMin + 15;
+        const pastMidnight = nowMin + 1440 >= targetMin && nowMin + 1440 <= targetMin + 15;
+        if (lateEvening || pastMidnight) {
           localStorage.setItem('somnacare_reminder_fired', today);
           setBedtimeReminder('ask');
         }

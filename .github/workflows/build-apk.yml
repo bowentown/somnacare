@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# 推 main 后紧跟推 tag 会触发两个构建，前一个白跑 ~8 分钟；
+# 固定并发组让新运行取消旧的（单人仓库无并行分支冲突）
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest

@@ -175,28 +175,15 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
         </svg>
       </div>
 
-      {/* 到点提醒操作按钮：屏幕下方居中（不贴最底） */}
+      {/* 到点提醒操作按钮：屏幕下方居中（不贴最底）。入场动画（2.3s 延迟）
+          完成前 pointerEvents 关闭——透明不挡命中测试，不关的话手指落在
+          底栏区域会凭空触发「好的」直接开始监测（第 73 轮审计） */}
       {isBedtime && showActions && (
-        <div
-          className="absolute left-0 right-0 flex items-center justify-center gap-3.5"
-          style={{ bottom: '9%', opacity: 0, animation: 'splash-rise 520ms ease-out 2300ms both' }}
-        >
-          <button
-            type="button"
-            onClick={onGood}
-            className="px-10 py-3 rounded-2xl text-slate-950 text-sm font-black cursor-pointer active:scale-95 transition-transform shadow-lg"
-            style={{ background: `linear-gradient(90deg, ${mc.lit}, #3b82f6)` }}
-          >
-            好的
-          </button>
-          <button
-            type="button"
-            onClick={onIgnore}
-            className="px-10 py-3 rounded-2xl border border-white/15 text-slate-300 text-sm font-bold cursor-pointer active:scale-95 transition-transform hover:border-white/30"
-          >
-            无视
-          </button>
-        </div>
+        <BedtimeActions
+          mcLit={mc.lit}
+          onGood={onGood}
+          onIgnore={onIgnore}
+        />
       )}
 
       {/* 文字区：开屏=宣传词居中；到点提醒=水波下方居中（主文案从左到右映现） */}
@@ -237,6 +224,45 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
           懂睡眠，更懂你
         </p>
       )}
+    </div>
+  );
+};
+
+/** 到点提醒按钮组：入场动画结束才开启命中（onAnimationEnd 精确解锁，无定时器竞态） */
+const BedtimeActions: React.FC<{
+  mcLit: string;
+  onGood?: () => void;
+  onIgnore?: () => void;
+}> = ({ mcLit, onGood, onIgnore }) => {
+  const [ready, setReady] = useState(false);
+  return (
+    <div
+      className="absolute left-0 right-0 flex items-center justify-center gap-3.5"
+      style={{
+        bottom: '9%',
+        opacity: 0,
+        pointerEvents: ready ? 'auto' : 'none',
+        animation: 'splash-rise 520ms ease-out 2300ms both',
+      }}
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget && e.animationName === 'splash-rise') setReady(true);
+      }}
+    >
+      <button
+        type="button"
+        onClick={onGood}
+        className="px-10 py-3 rounded-2xl text-slate-950 text-sm font-black cursor-pointer active:scale-95 transition-transform shadow-lg"
+        style={{ background: `linear-gradient(90deg, ${mcLit}, #3b82f6)` }}
+      >
+        好的
+      </button>
+      <button
+        type="button"
+        onClick={onIgnore}
+        className="px-10 py-3 rounded-2xl border border-white/15 text-slate-300 text-sm font-bold cursor-pointer active:scale-95 transition-transform hover:border-white/30"
+      >
+        无视
+      </button>
     </div>
   );
 };

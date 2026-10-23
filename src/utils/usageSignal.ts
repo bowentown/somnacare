@@ -102,9 +102,14 @@ export async function refreshUsageDays(days = 7, chronotype: 'night' | 'day' | '
   if (list) {
     lastUsageError = null;
     lastUsageOkAt = Date.now();
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(list));
-    } catch { /* ignore */ }
+    // 空结果也是"成功"（原生对配不成整夜的天窗直接跳过），但绝不能拿它
+    // 覆盖磁盘缓存——否则一次夜间空查询 + 之后任何查询失败，提议引擎和
+    // 趋势对照卡会一直"没有手机使用数据"（与 usageStore 的内存策略对齐）
+    if (list.length > 0) {
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(list));
+      } catch { /* ignore */ }
+    }
     return list;
   }
   return cachedUsageDays();

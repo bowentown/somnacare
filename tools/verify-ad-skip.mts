@@ -177,8 +177,8 @@ ok('倒计时：跳过 3/跳过 3s 不受 15s 通用窗口限制',
   service.includes('COUNTDOWN')
   && service.includes('isCountdown')
   && service.includes('countdown && elapsed <= APP_RULE_HARD_LIMIT_MS'));
-ok('规则：GKD 广告规则表在场（>1MB，含来源/全局/应用/排除）',
-  ruleJson.length > 1_000_000
+ok('规则：GKD 广告规则表在场（>500KB 紧凑 JSON，含来源/全局/应用/排除）',
+  ruleJson.length > 500_000
   && ruleJson.includes('Lin-arm/GKD_subscription')
   && ruleJson.includes('"selectors"')
   && ruleJson.includes('"excludes"')
