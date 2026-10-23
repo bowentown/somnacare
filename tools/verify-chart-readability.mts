@@ -70,8 +70,13 @@ ok('起卧图：哑铃（2px 线 + 7px 点）+ 偏离琥珀着色 + 纯填充目
   && trends.includes('isOffTarget')
   && trends.includes('offTargetCount')
   && trends.includes("offTarget ? '#fbbf24' : theme.accentHex")
-  && trends.includes('w-[7px] h-[7px] rounded-full')
+  && trends.includes('w-2 h-2 rounded-full')
+  && trends.includes("top: 'calc(50% - 4px)'")
+  && trends.includes("top: 'calc(50% - 1px)'")
   && trends.includes('均值 ${fmtClock(avgStart)}→${fmtClock(avgEnd)}'));
+ok('起卧图：点线整数几何居中（去 translate 半像素偏移）',
+  !trends.includes('w-[7px] h-[7px] rounded-full')
+  && !trends.includes('-translate-x-1/2 -translate-y-1/2'));
 ok('起卧图：无竖线拥挤（均值线/须线/带边框/悬停色块全部移除）',
   !trends.includes('left: `${rangePct(avgStart)}%`')
   && !trends.includes('bedWhisker')

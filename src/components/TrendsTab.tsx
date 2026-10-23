@@ -710,11 +710,14 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                           {record.date.slice(5)}
                         </span>
 
-                        {/* 哑铃轨道：只有线、点两种元素，无底衬无悬停色块 */}
+                        {/* 哑铃轨道：整数几何居中（calc 定位）——此前 7px 点配
+                            -translate-y-1/2 产生 ±3.5px 的半像素偏移，部分设备
+                            取整后点与线肉眼可见地不在同一高度 */}
                         <span className="flex-1 h-6 relative">
                           <span
-                            className="absolute top-1/2 h-[2px] -translate-y-1/2 rounded-full pointer-events-none"
+                            className="absolute h-[2px] rounded-full pointer-events-none"
                             style={{
+                              top: 'calc(50% - 1px)',
                               left: `${left}%`,
                               width: `${Math.max(0, right - left)}%`,
                               background: offTarget
@@ -723,17 +726,19 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                             }}
                           />
                           <span
-                            className="absolute top-1/2 w-[7px] h-[7px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            className="absolute w-2 h-2 rounded-full pointer-events-none"
                             style={{
-                              left: `${dotLeft}%`,
+                              top: 'calc(50% - 4px)',
+                              left: `calc(${dotLeft}% - 4px)`,
                               background: bedColor,
                               boxShadow: isHovered ? `0 0 0 3px ${bedColor}33` : '0 0 0 2px rgba(2,6,23,0.9)',
                             }}
                           />
                           <span
-                            className="absolute top-1/2 w-[7px] h-[7px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                            className="absolute w-2 h-2 rounded-full pointer-events-none"
                             style={{
-                              left: `${dotRight}%`,
+                              top: 'calc(50% - 4px)',
+                              left: `calc(${dotRight}% - 4px)`,
                               background: '#f1f5f9',
                               boxShadow: isHovered ? '0 0 0 3px rgba(241,245,249,0.25)' : '0 0 0 2px rgba(2,6,23,0.9)',
                             }}

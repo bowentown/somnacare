@@ -151,11 +151,18 @@ ok('启动窗口轮询：开屏 SDK 只渲染一次不发事件时仍能被扫�
   && service.includes('SPLASH_POLL_WINDOW_MS')
   && service.includes('SPLASH_POLL_INTERVAL_MS')
   && service.includes('pollOnce'));
-ok('点击：手势优先（真实触摸触发 OnTouchListener），ACTION_CLICK 兜底',
+ok('点击：手势 + ACTION_CLICK 双保险；手势打匹配节点正中心（120ms）',
   service.indexOf('dispatchGesture') < service.indexOf('performAction(AccessibilityNodeInfo.ACTION_CLICK)')
-  && service.includes('tapTarget')
-  && service.includes('GestureDescription')
+  && service.includes('tapTarget(Candidate best)')
+  && service.includes('best.matchedNode.getBoundsInScreen')
+  && service.includes('StrokeDescription(path, 0, 120)')
   && service.includes('performAction(AccessibilityNodeInfo.ACTION_CLICK)'));
+ok('手势能力：无障碍服务声明 canPerformGestures（缺失时 dispatchGesture 永远无效）',
+  xml.includes('android:canPerformGestures="true"'));
+ok('诊断带命中文字与手势落点（误触时能看到点的是哪个按钮、点在哪）',
+  service.includes('diagText(node)')
+  && service.includes('hit=" + best.source + "[" + best.matchedText + "]"')
+  && service.includes('tap=" + best.tapPoint'));
 ok('全局规则点击上限 + 诊断带命中文字（误触时能看到点的是哪个按钮）',
   service.includes('MAX_GLOBAL_CLICKS_PER_LAUNCH')
   && service.includes('globalClicksThisLaunch')

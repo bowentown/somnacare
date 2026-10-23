@@ -331,10 +331,10 @@ public class AdSkipService extends AccessibilityService {
             if ("poll".equals(source)) diag("scan " + pkg + " src=poll nodes=" + snap.nodes.size() + " hit=none");
             return false;
         }
-        boolean clicked = tapTarget(best.target);
+        boolean clicked = tapTarget(best);
         diag("scan " + pkg + " src=" + source + " nodes=" + snap.nodes.size()
                 + " hit=" + best.source + "[" + best.matchedText + "]"
-                + " click=" + (clicked ? "ok" : "fail"));
+                + " tap=" + best.tapPoint + " click=" + (clicked ? "ok" : "fail"));
         if (clicked) {
             lastClickAt = SystemClock.uptimeMillis();
             clicksThisLaunch++;
@@ -356,28 +356,44 @@ public class AdSkipService extends AccessibilityService {
      * 是一根真实点击手势，完整走 down/up 分发，两类监听器都会触发。
      * GKD 对这类按钮同样是坐标手势点击。
      */
-    private boolean tapTarget(AccessibilityNodeInfo node) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+    /**
+     * 点击目标 = 手势 + ACTION_CLICK 双保险。
+     *
+     * 第 70 轮实锤：命中跳过按钮 click=ok 但广告毫无反应。两个原因：
+     *  1) 服务 XML 缺 canPerformGestures——dispatchGesture 从未真正生效，
+     *     实际干活的只有 ACTION_CLICK，而开屏 SDK 的跳过按钮多由
+     *     OnTouchListener 自绘，ACTION_CLICK 只走 performClick() 触不到它；
+     *  2) v1.2.6 又把手势顶在前面，把原本有效的 ACTION_CLICK 路径废掉
+     *     （用户实测「全部失灵」）。
+     * 现在两种机制同时发：手势打在【匹配节点正中心】（「跳过」文字必然
+     * 在按钮内，120ms 接近真人点按），ACTION_CLICK 走攀登到的可点击祖先。
+     */
+    private boolean tapTarget(Candidate best) {
+        boolean dispatched = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && best.matchedNode != null) {
             try {
                 Rect bounds = new Rect();
-                node.getBoundsInScreen(bounds);
+                best.matchedNode.getBoundsInScreen(bounds);
                 if (bounds.width() > 0 && bounds.height() > 0) {
+                    int x = bounds.centerX();
+                    int y = bounds.centerY();
                     Path path = new Path();
-                    path.moveTo(bounds.centerX(), bounds.centerY());
+                    path.moveTo(x, y);
                     GestureDescription gesture = new GestureDescription.Builder()
-                            .addStroke(new GestureDescription.StrokeDescription(path, 0, 40))
+                            .addStroke(new GestureDescription.StrokeDescription(path, 0, 120))
                             .build();
-                    if (dispatchGesture(gesture, null, null)) return true;
+                    dispatched = dispatchGesture(gesture, null, null);
+                    best.tapPoint = "(" + x + "," + y + ")";
                 }
             } catch (Exception ignored) {
-                // 手势派发失败（如正被其他手势占用）：落到 ACTION_CLICK 兜底
+                // 手势派发异常：靠下面的 ACTION_CLICK 兜底
             }
         }
         try {
-            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            if (best.target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) dispatched = true;
         } catch (Exception ignored) {
-            return false;
         }
+        return dispatched;
     }
 
     private void scanSiblingWindows(String pkg, long elapsed, AccessibilityNodeInfo activeRoot, String source) {
@@ -528,6 +544,7 @@ public class AdSkipService extends AccessibilityService {
         int maxH = (int) (dm.heightPixels * maxHeight);
 
         AccessibilityNodeInfo target = matched.node;
+        AccessibilityNodeInfo matchedNode = matched.node;
         AdSkipRuleStore.NodeData targetData = matched;
         // 攀登到可点击祖先：受 tier 绝对尺寸封顶（≤1.2×上限）+ 包裹比例（≤4×宽/5×高）
         // 双重约束——既能让“文字在按钮里”的常见结构命中，又不会爬到整个列表项/宫格项
@@ -558,7 +575,9 @@ public class AdSkipService extends AccessibilityService {
         String targetPkg = targetPkgCs == null ? "" : targetPkgCs.toString();
         if (isExcludedPackage(targetPkg)) return null;
 
-        return new Candidate(target, bounds.width() * (long) bounds.height(), priority);
+        Candidate cand = new Candidate(target, bounds.width() * (long) bounds.height(), priority);
+        cand.matchedNode = matchedNode;
+        return cand;
     }
 
     private boolean matchesAny(List<AdSkipRuleStore.RuleSelector> selectors,
@@ -690,6 +709,10 @@ public class AdSkipService extends AccessibilityService {
         String source = "unknown";
         /** 命中节点的文字/描述（诊断用，截断到 12 字） */
         String matchedText = "";
+        /** 命中节点本体：手势点击打在它的正中心（「跳过」文字必然在按钮内） */
+        AccessibilityNodeInfo matchedNode;
+        /** 手势落点（诊断用） */
+        String tapPoint = "";
 
         Candidate(AccessibilityNodeInfo target, long area, int priority) {
             this.target = target;
