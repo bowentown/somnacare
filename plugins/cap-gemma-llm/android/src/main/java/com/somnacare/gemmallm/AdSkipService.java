@@ -61,6 +61,8 @@ public class AdSkipService extends AccessibilityService {
     private static final long APP_RULE_HARD_LIMIT_MS = 30_000;
     private static final int MAX_NODES = 800;
     private static final int MAX_CLICKS_PER_LAUNCH = 3;
+    /** 全局规则（global-splash/card）每次启动的点击上限：日志实测误触时会反复点同一个按钮 */
+    private static final int MAX_GLOBAL_CLICKS_PER_LAUNCH = 4;
     /** 应用内广告：滚动 3 分钟窗口内最多 4 次，一次前台会话最多 8 次 */
     private static final long IN_APP_ROLLING_WINDOW_MS = 180_000;
     private static final int IN_APP_ROLLING_MAX = 4;
@@ -111,6 +113,7 @@ public class AdSkipService extends AccessibilityService {
     private String lastPackage = "";
     private String lastActivity = "";
     private int clicksThisLaunch = 0;
+    private int globalClicksThisLaunch = 0;
     /** 应用内广告滚动窗口的点击时间戳（随前台包切换/空闲清零） */
     private final ArrayDeque<Long> inAppClickTimes = new ArrayDeque<>();
 
@@ -119,6 +122,12 @@ public class AdSkipService extends AccessibilityService {
     // 扫描了但没命中 / 命中了但点击失败 —— 不再靠猜。 ──
     private static final ArrayDeque<String> DIAG = new ArrayDeque<>();
     private static final int DIAG_MAX = 24;
+
+    private static String diagText(AdSkipRuleStore.NodeData node) {
+        String value = node.text.length() > 0 ? node.text : node.desc;
+        value = value.replaceAll("\\s+", " ").trim();
+        return value.length() > 12 ? value.substring(0, 12) + "…" : value;
+    }
 
     private static void diag(String line) {
         synchronized (DIAG) {
@@ -220,6 +229,7 @@ public class AdSkipService extends AccessibilityService {
             packageSince = now;
             lastClickAt = 0;
             clicksThisLaunch = 0;
+            globalClicksThisLaunch = 0;
             inAppClickTimes.clear();
             // 新前台应用：启动窗口内开始主动轮询（开屏 SDK 常只渲染一次不发事件）
             handler.removeCallbacks(splashPoller);
@@ -323,10 +333,12 @@ public class AdSkipService extends AccessibilityService {
         }
         boolean clicked = tapTarget(best.target);
         diag("scan " + pkg + " src=" + source + " nodes=" + snap.nodes.size()
-                + " hit=" + best.source + " click=" + (clicked ? "ok" : "fail"));
+                + " hit=" + best.source + "[" + best.matchedText + "]"
+                + " click=" + (clicked ? "ok" : "fail"));
         if (clicked) {
             lastClickAt = SystemClock.uptimeMillis();
             clicksThisLaunch++;
+            if (best.source.startsWith("global")) globalClicksThisLaunch++;
             inAppClickTimes.addLast(lastClickAt);
             SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
@@ -336,29 +348,33 @@ public class AdSkipService extends AccessibilityService {
     }
 
     /**
-     * 点击目标：先走无障碍 ACTION_CLICK；失败时用坐标手势兜底。
-     * 很多广告 SDK 的关闭/跳过按钮是“有触摸监听但 clickable=false”的自绘 View，
-     * ACTION_CLICK 无效，而按坐标点一下与用户手指点按等价（锚点是文字/关系链）。
+     * 点击目标：手势点击优先，ACTION_CLICK 兜底。
+     *
+     * 第 70 轮实锤（好游快爆运行日志）：hit=global-splash click=ok 连续 4 次但
+     * 广告毫无反应——开屏 SDK 的跳过按钮是 OnTouchListener 自绘触摸，
+     * ACTION_CLICK 只走 performClick()，压根不触发触摸监听器；而 dispatchGesture
+     * 是一根真实点击手势，完整走 down/up 分发，两类监听器都会触发。
+     * GKD 对这类按钮同样是坐标手势点击。
      */
     private boolean tapTarget(AccessibilityNodeInfo node) {
-        try {
-            if (node.isClickable() && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                return true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                Rect bounds = new Rect();
+                node.getBoundsInScreen(bounds);
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    Path path = new Path();
+                    path.moveTo(bounds.centerX(), bounds.centerY());
+                    GestureDescription gesture = new GestureDescription.Builder()
+                            .addStroke(new GestureDescription.StrokeDescription(path, 0, 40))
+                            .build();
+                    if (dispatchGesture(gesture, null, null)) return true;
+                }
+            } catch (Exception ignored) {
+                // 手势派发失败（如正被其他手势占用）：落到 ACTION_CLICK 兜底
             }
-        } catch (Exception ignored) {
-            // 节点失效：继续尝试坐标点击
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
         try {
-            Rect bounds = new Rect();
-            node.getBoundsInScreen(bounds);
-            if (bounds.width() <= 0 || bounds.height() <= 0) return false;
-            Path path = new Path();
-            path.moveTo(bounds.centerX(), bounds.centerY());
-            GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0, 40);
-            GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
-            return dispatchGesture(gesture, null, null);
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         } catch (Exception ignored) {
             return false;
         }
@@ -453,18 +469,20 @@ public class AdSkipService extends AccessibilityService {
                         Candidate cand = candidate(node, splash ? 3 : 2, !splash, false);
                         if (cand == null) continue;
                         cand.source = splash ? "app-splash" : "app-inapp";
+                        cand.matchedText = diagText(node);
                         best = better(best, cand);
                     }
                 }
             }
 
             if (allowGlobal && !matchesAny(rules.globalExcludes, node, snap)) {
-                if (elapsed <= 12_000) {
+                if (elapsed <= 12_000 && globalClicksThisLaunch < MAX_GLOBAL_CLICKS_PER_LAUNCH) {
                     for (AdSkipRuleStore.RuleSelector selector : rules.globalSplashSelectors) {
                         if (!selector.matches(node, snap)) continue;
                         Candidate cand = candidate(node, 2, false, false);
                         if (cand == null) continue;
                         cand.source = "global-splash";
+                        cand.matchedText = diagText(node);
                         best = better(best, cand);
                     }
                 }
@@ -473,6 +491,7 @@ public class AdSkipService extends AccessibilityService {
                     Candidate cand = candidate(node, 2, true, true);
                     if (cand == null) continue;
                     cand.source = "global-card";
+                    cand.matchedText = diagText(node);
                     best = better(best, cand);
                 }
             }
@@ -483,6 +502,7 @@ public class AdSkipService extends AccessibilityService {
                 Candidate cand = candidate(node, 1, false, false);
                 if (cand != null) {
                     cand.source = "generic";
+                    cand.matchedText = diagText(node);
                     best = better(best, cand);
                 }
             }
@@ -668,6 +688,8 @@ public class AdSkipService extends AccessibilityService {
         final int priority;
         /** 命中来源（诊断用）：app-splash / app-inapp / global-splash / global-card / generic */
         String source = "unknown";
+        /** 命中节点的文字/描述（诊断用，截断到 12 字） */
+        String matchedText = "";
 
         Candidate(AccessibilityNodeInfo target, long area, int priority) {
             this.target = target;

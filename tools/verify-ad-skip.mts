@@ -151,11 +151,16 @@ ok('启动窗口轮询：开屏 SDK 只渲染一次不发事件时仍能被扫�
   && service.includes('SPLASH_POLL_WINDOW_MS')
   && service.includes('SPLASH_POLL_INTERVAL_MS')
   && service.includes('pollOnce'));
-ok('点击兜底：ACTION_CLICK 失败后按坐标手势点击（非 clickable 的自绘关闭按钮）',
-  service.includes('tapTarget')
+ok('点击：手势优先（真实触摸触发 OnTouchListener），ACTION_CLICK 兜底',
+  service.indexOf('dispatchGesture') < service.indexOf('performAction(AccessibilityNodeInfo.ACTION_CLICK)')
+  && service.includes('tapTarget')
   && service.includes('GestureDescription')
-  && service.includes('dispatchGesture')
   && service.includes('performAction(AccessibilityNodeInfo.ACTION_CLICK)'));
+ok('全局规则点击上限 + 诊断带命中文字（误触时能看到点的是哪个按钮）',
+  service.includes('MAX_GLOBAL_CLICKS_PER_LAUNCH')
+  && service.includes('globalClicksThisLaunch')
+  && service.includes('diagText(node)')
+  && service.includes('hit=" + best.source + "[" + best.matchedText + "]"'));
 ok('多窗口：启动窗口内同包悬浮窗也扫描（含活动窗口同包的情况）',
   service.includes('scanSiblingWindows')
   && service.includes('MAX_SIBLING_WINDOWS')

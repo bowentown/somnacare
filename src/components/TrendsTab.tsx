@@ -607,21 +607,41 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
         )}
 
         {/* View Mode 3: Circadian — 哑铃图（dumbbell plot，参考 Observable Plot/ECharts 的语法）：
-            入睡点 → 醒来点用细线相连，偏离目标的夜晚画出琥珀色须线，
-            再叠加均值线。和"分期比例"的满宽色带在视觉语法上完全区分：
+            入睡点 → 醒来点细线相连；偏离目标 ≥45 分的晚上整条染琥珀。
+            和"分期比例"的满宽色带在视觉语法上完全区分：
             这张图回答"作息准不准"，不是"睡了多久"。 */}
-        {viewMode === 'circadian' && (
+        {viewMode === 'circadian' && (() => {
+          // 轴刻度按真实百分比绝对定位：justify-between 会把 09:00 顶到轨道
+          // 右缘（100%），而它的真实位置是 92.3%——轴错位是"看着别扭"的来源
+          const axisTicks = ([
+            { h: 21, label: '21:00', show: true },
+            // 00:00 与 21:00 只差 23% 轨道宽，标签会重叠——留网格线不给刻度
+            { h: 3, label: '03:00', show: true },
+            { h: 6, label: '06:00', show: true },
+            { h: 9, label: '09:00', show: true },
+          ] as const).map((t) => ({
+            ...t,
+            pct: rangePct(t.h === 21 ? 21 * 60 : (t.h + 24) * 60),
+          }));
+          return (
           <div className="space-y-2 animate-tab-fade-in">
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2`}>
-              {/* 时间轴只对齐中间轨道，不跨到日期/时刻列 */}
-              <div className={`flex items-center gap-2 pb-1 border-b ${innerBorder}`}>
+              {/* 时间轴只对齐中间轨道，刻度按真实位置绝对定位 */}
+              <div className={`flex items-end gap-2 pb-1 border-b ${innerBorder}`}>
                 <span className="w-9 shrink-0" />
-                <div className={`flex flex-1 justify-between text-[10px] ${textMuted} font-mono`}>
-                  <span>21:00</span>
-                  <span className="hidden min-[360px]:inline">00:00</span>
-                  <span>03:00</span>
-                  <span className="hidden min-[360px]:inline">06:00</span>
-                  <span>09:00</span>
+                <div className={`relative flex-1 h-4 text-[10px] ${textMuted} font-mono`}>
+                  {axisTicks.map((t) => (
+                    <span
+                      key={t.label}
+                      className={`absolute top-0 ${t.show ? '' : 'hidden min-[360px]:inline'}`}
+                      style={{
+                        left: `${t.pct}%`,
+                        transform: t.h === 21 ? 'none' : 'translateX(-50%)',
+                      }}
+                    >
+                      {t.label}
+                    </span>
+                  ))}
                 </div>
                 <span className="w-[74px] shrink-0" />
               </div>
@@ -653,7 +673,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                   ))}
                   {targetStart !== null && targetEnd !== null && (
                     <div
-                      className="absolute inset-y-0"
+                      className="absolute inset-y-0 rounded-xl"
                       style={{
                         left: `${rangePct(targetStart)}%`,
                         width: `${Math.max(0, rangePct(targetEnd) - rangePct(targetStart))}%`,
@@ -753,7 +773,8 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
         </>)}
       </div>
 
