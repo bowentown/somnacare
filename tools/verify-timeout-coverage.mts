@@ -61,6 +61,7 @@ const AC_ALLOW: Record<string, number> = {
   'src/components/CustomAISettingsModal.tsx': 1, // 模型下载取消
   'src/utils/localLlmEngine.ts': 1,       // 下载停滞看门狗（45 轮 D4：30s 无数据中止重试）
   'src/utils/sleepShareCard.ts': 1,       // 分享卡图源 10s 超时（45 轮 D4）
+  'src/components/AppUpdateCard.tsx': 1,  // 检查更新 15s 超时（第 81 轮：网络停滞不再无限转圈）
   'server.ts': 1,                         // 服务端上游 40s 保护
 };
 {

@@ -326,11 +326,14 @@ const insightBedMin = (bedtime: string): number => {
   return (h < 12 ? h + 24 : h) * 60 + m;
 };
 
+// 周末判定按"醒来的早晨"算：夜归属 date=放下手机那晚，周五晚→周六早上、
+// 周六晚→周日早上才是典型"周末补觉"。此前直接判 date 的周六/周日，
+// 选中的是"周日/周一早上"的睡懒觉，周五晚的补觉反而落进工作日桶（第 81 轮）
 const insightWeekend = (date: string): boolean => {
   const [y, m, d] = date.split('-').map(Number);
   if (!y || !m || !d) return false;
   const day = new Date(y, m - 1, d).getDay();
-  return day === 0 || day === 6;
+  return day === 5 || day === 6;   // 周五/周六晚开始的夜 → 周末早晨醒来
 };
 
 export function generatePersonalInsights(records: SleepRecord[] = []): PersonalInsight[] {

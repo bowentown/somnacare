@@ -120,7 +120,7 @@ export const PostcardCard: React.FC<Props> = ({ postcardId, postcard: initialPos
               </div>
               <div className="text-right">
                 <p className="text-[9px] text-[#92400e] font-bold">蓝色大肥鱼 亲笔 🐾</p>
-                <p className="text-[8px] text-amber-600/80">点击再次翻转</p>
+                <p className="text-[9px] text-amber-600/80">点击再次翻转</p>
               </div>
             </div>
           </div>

@@ -46,6 +46,32 @@ import {
 import { MomentsOverlay } from './MomentsOverlay';
 import { fetchJsonWithTimeout } from '../utils/fetchJson';
 
+/** 单条聊天气泡（第 81 轮性能）：流式生成每个 token 都会重排 chatMessages，
+ *  memo 让未变的旧消息跳过重渲染（旧消息每条都要跑一遍 stripMd 正则）；
+ *  顺带补 break-words——长 URL/型号名曾把 88% 宽的气泡撑破。 */
+const ChatBubble = React.memo(function ChatBubble({
+  msg,
+  bubbleUserCls,
+  bubbleBotCls,
+}: {
+  msg: ChatMessage;
+  bubbleUserCls: string;
+  bubbleBotCls: string;
+}) {
+  return (
+    <div className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+      <div
+        className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 leading-relaxed text-xs whitespace-pre-wrap break-words ${
+          msg.role === 'user' ? `${bubbleUserCls} rounded-br-none` : `${bubbleBotCls} rounded-bl-none`
+        }`}
+      >
+        {stripMd(msg.content)}
+      </div>
+      <span className="text-[9px] text-slate-400 mt-1 px-1 font-mono">{msg.timestamp}</span>
+    </div>
+  );
+});
+
 // 输出契约：固定追加在 persona 尾部、随 system 一起走前缀缓存（恒定段，
 // 不破坏 DeepSeek 前缀缓存）。篇幅约束同时压输出成本——输出是最贵的一项
 const OUTPUT_CONTRACT =
@@ -124,7 +150,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   useEffect(() => {
     // 300ms 防抖：流式生成时每个 token 都会改 messages，
     // 逐次同步 stringify+setItem 约 220 次/生成，全压在打字机路径上
-    const t = setTimeout(() => persistChatState(chat), 300);
+    const t = setTimeout(() => setPersistFailed(!persistChatState(chat)), 300);
     return () => clearTimeout(t);
   }, [chat]);
   // 卸载兜底：分区在滑动轨道里常驻，本组件正常不卸载；此兜底保护的是
@@ -147,6 +173,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   }, []);
   const [inputText, setInputText] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
+  // 聊天落盘失败提示（配额满）：此前静默失败，重启后对话凭空消失
+  const [persistFailed, setPersistFailed] = useState(false);
   const [showAssessment, setShowAssessment] = useState(false);
 
   // ── 会话管理（第 25 轮）──
@@ -890,22 +918,19 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             </div>
           )}
           {chatMessages.map((msg) => (
-            <div
+            <ChatBubble
               key={msg.id}
-              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-            >
-              <div
-                className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 leading-relaxed text-xs whitespace-pre-wrap ${
-                  msg.role === 'user'
-                    ? `${theme.accentBg.split(' ')[0]} ${theme.accentFg} font-medium rounded-br-none`
-                    : `${theme.cardInnerBg} text-white border ${theme.cardInnerBorder} rounded-bl-none`
-                }`}
-              >
-                {stripMd(msg.content)}
-              </div>
-              <span className="text-[9px] text-slate-400 mt-1 px-1 font-mono">{msg.timestamp}</span>
-            </div>
+              msg={msg}
+              bubbleUserCls={`${theme.accentBg.split(' ')[0]} ${theme.accentFg} font-medium`}
+              bubbleBotCls={`${theme.cardInnerBg} text-white border ${theme.cardInnerBorder}`}
+            />
           ))}
+
+          {persistFailed && !isSendingChat && (
+            <p className="text-[10px] text-amber-300 py-1">
+              存储空间不足，最新对话可能没有保存——重开应用后会回到上次成功保存的位置。
+            </p>
+          )}
 
           {isSendingChat && (
             <div className={`flex items-center gap-1.5 ${theme.accentText} text-xs py-1`}>

@@ -157,8 +157,15 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
     setPhase('checking');
     setError(null);
     setMessage(null);
+    // 网络停滞时 fetch 可能挂到系统级 TCP 超时（几十秒到几分钟）——
+    // 15s 自行了断，给用户一个能读的错误而不是无限转圈（第 81 轮审计）
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     try {
-      const [version, latest] = await Promise.all([getInstalledVersion(), fetchLatestRelease()]);
+      const [version, latest] = await Promise.all([
+        getInstalledVersion(),
+        fetchLatestRelease(controller.signal),
+      ]);
       setInstalled(version);
       setRelease(latest);
       if (latest.asset === null) {
@@ -171,8 +178,11 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
       setPhase(cmp !== null && cmp <= 0 ? 'latest' : 'available');
     } catch (e) {
       setPhase('error');
-      setError(e instanceof Error ? e.message : '检查更新失败');
+      setError(e instanceof DOMException && e.name === 'AbortError'
+        ? '网络超时（15 秒无响应），请稍后重试'
+        : e instanceof Error ? e.message : '检查更新失败');
     } finally {
+      window.clearTimeout(timeout);
       setBusy(false);
     }
   };
@@ -183,7 +193,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
     if (next && phase === 'idle') void handleCheck();
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (allowMetered = false) => {
     if (!release?.asset || busy) return;
     tapTick();
     setBusy(true);
@@ -194,7 +204,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
         setMessage('请先允许「安装未知应用」，返回后再点下载');
         return;
       }
-      const started = await startUpdateDownload(release.asset);
+      const started = await startUpdateDownload(release.asset, { allowMetered });
       if (!started.ok || !started.downloadId) {
         setMessage(started.reason ?? '无法开始下载');
         return;
@@ -332,7 +342,11 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                   {(downloadBusy || download.status === 'failed') && (
                     <>
                       <div className="flex items-center justify-between text-[10px] text-slate-300">
-                        <span>{download.status === 'paused' ? '下载已暂停' : '正在下载'}</span>
+                        <span>
+                          {download.status === 'paused'
+                            ? download.pausedReason === 'wifi' ? '等待 Wi-Fi（默认不用移动流量）' : '下载已暂停'
+                            : '正在下载'}
+                        </span>
                         <span className="font-mono text-slate-400">
                           {pct !== null ? `${pct}%` : formatBytes(download.bytesDownloaded)}
                         </span>
@@ -343,6 +357,15 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                           style={{ width: `${pct ?? 8}%`, background: theme.accentHex }}
                         />
                       </div>
+                      {download.status === 'paused' && download.pausedReason === 'wifi' && release.asset && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDownload(true)}
+                          className="w-full py-2 rounded-xl bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
+                        >
+                          改用移动数据下载（{formatBytes(release.asset.size)}）
+                        </button>
+                      )}
                     </>
                   )}
                   {download.status === 'ready' && (
@@ -401,7 +424,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
 
           {message && <p className="text-[10px] text-amber-300 leading-relaxed">{message}</p>}
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[9px] text-slate-500 leading-relaxed">
+            <p className="text-[9px] text-slate-400 leading-relaxed">
               只在打开此卡时访问 GitHub；安装前校验签名与版本。
             </p>
             {phase !== 'checking' && phase !== 'idle' && (

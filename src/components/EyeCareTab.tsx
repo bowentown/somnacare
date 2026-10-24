@@ -17,8 +17,9 @@ import {
   type EyeRestStatus,
 } from '../utils/eyeCare';
 import { queryDailyHealth, queryAppUsage, type DailyHealthDay, type AppUsageEntry } from '../utils/usageSignal';
+import { subscribeAppResume } from '../utils/appResume';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
-import { EmptyState, StatCard } from './ui';
+import { EmptyState, StatCard, Switch } from './ui';
 
 interface EyeCareTabProps {
   userProfile: UserProfile;
@@ -97,7 +98,12 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
       setNow(new Date());
       void applyEyeCare(cfg);
     }, 30_000);
-    return () => clearInterval(t);
+    // 回前台复查悬浮窗权限（第 81 轮审计）：用户可能刚在系统设置里
+    // 收回了"显示在其他应用上层"，卡面不该继续宣称"滤镜生效中"
+    const unsubscribeResume = subscribeAppResume(() => {
+      if (native) eyeCarePermissionGranted().then(setGranted);
+    });
+    return () => { clearInterval(t); unsubscribeResume(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.enabled, cfg.scheduleEnabled, cfg.start, cfg.end, cfg.warmColor, cfg.warmStrength, cfg.dimStrength]);
 
@@ -110,8 +116,8 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
   const [dailyHealth, setDailyHealth] = useState<DailyHealthDay[]>([]);
   useEffect(() => {
     if (!native) return;
-    void getEyeRestStatus().then(setRest);
-    void queryDailyHealth(7).then(setDailyHealth);
+    void getEyeRestStatus().then(setRest).catch(() => { /* 状态不可得时保持默认 */ });
+    void queryDailyHealth(7).then(setDailyHealth).catch(() => setDailyHealth([]));
   }, [native]);
 
   const toggleRest = async () => {
@@ -124,7 +130,10 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
       onToast('当前环境不支持（需安装 APK）');
     }
   };
-  const todayHealth = dailyHealth.length > 0 ? dailyHealth[dailyHealth.length - 1] : null;
+  // 今日按日期过滤，而非取数组末位：系统使用桶未落盘今天数据时末位是
+  // 昨天，"今日屏幕时间"会把昨天的数字贴上今日标签（第 81 轮审计）
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayHealth = dailyHealth.find((d) => d.date === todayKey) ?? null;
   const maxToday = (() => {
     try {
       const obj = JSON.parse(rest.maxTodayRaw || '{}');
@@ -141,10 +150,9 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
 
   // ── 数字健康台（第 78 轮，Phase 3）：每应用真实时长 + 本地分类 ──
   const [appUsage, setAppUsage] = useState<AppUsageEntry[]>([]);
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   useEffect(() => {
     if (!native) return;
-    void queryAppUsage(1).then(setAppUsage);
+    void queryAppUsage(1).then(setAppUsage).catch(() => setAppUsage([]));
   }, [native]);
   const todayApps = appUsage
     .filter((a) => a.date === todayKey)
@@ -165,10 +173,11 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     }
     return [...totals.entries()].sort((a, b) => b[1] - a[1]);
   })();
-  // 应用显示名由原生 PackageManager 提供（真实应用名），title 保留完整包名
+  // 应用显示名由原生 PackageManager 提供（真实应用名）；截断交给 CSS
+  // truncate（此前 JS slice(0,10) 会从词中间切断且可能劈开 emoji）
   const appLabel = (a: AppUsageEntry): string => {
     const name = a.label && a.label !== a.pkg ? a.label : (a.pkg.split('.').pop() ?? a.pkg);
-    return name.length > 10 ? name.slice(0, 10) : name;
+    return Array.from(name).length > 12 ? `${Array.from(name).slice(0, 12).join('')}…` : name;
   };
 
   const handleToggle = async (next: boolean) => {
@@ -215,23 +224,12 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               </p>
             </div>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0">
-            <input
-              type="checkbox"
-              aria-label="开启或关闭护眼滤镜"
-              checked={cfg.enabled}
-              onChange={(e) => void handleToggle(e.target.checked)}
-              className="sr-only peer"
-            />
-            {/* 真实子元素拨钮 + 内联 left：after:translate-x-* 依赖 v4 的
-                translate 变量链（@property），旧 WebView 上拨钮会卡死在左侧 */}
-            <div className={`relative w-11 h-6 rounded-full transition-colors ${cfg.enabled ? 'bg-orange-500' : 'bg-slate-600'}`}>
-              <span
-                className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all"
-                style={{ left: cfg.enabled ? '22px' : '2px' }}
-              />
-            </div>
-          </label>
+          <Switch
+            checked={cfg.enabled}
+            onChange={(next) => void handleToggle(next)}
+            ariaLabel="开启或关闭护眼滤镜"
+            onClass="bg-orange-500"
+          />
         </div>
 
         {/* 滤镜色预览细条：仅开启时显示（关闭态是条几乎全黑的空条，像坏掉的进度条） */}
@@ -453,9 +451,8 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               }`}
             >
               <span
-                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${
-                  cfg.auto ? 'left-[22px]' : 'left-0.5'
-                }`}
+                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
+                style={{ left: cfg.auto ? '22px' : '2px' }}
               />
             </span>
           </button>
@@ -525,26 +522,14 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               <Eye className="w-4 h-4 text-sky-300 shrink-0" />
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-white">20-20-20 远眺提醒</h3>
-                <p className="text-[10px] text-slate-400 truncate">
-                  连续用屏 20 分钟 → 提醒远眺 20 秒
-                </p>
               </div>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                aria-label="开关 20-20-20 远眺提醒"
-                checked={rest.enabled}
-                onChange={() => void toggleRest()}
-                className="sr-only peer"
-              />
-              <div className={`relative w-10 h-5 rounded-full transition-colors ${rest.enabled ? 'bg-sky-500' : 'bg-slate-600'}`}>
-                <span
-                  className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
-                  style={{ left: rest.enabled ? '18px' : '2px' }}
-                />
-              </div>
-            </label>
+            <Switch
+              checked={rest.enabled}
+              onChange={() => void toggleRest()}
+              ariaLabel="开关 20-20-20 远眺提醒"
+              onClass="bg-sky-500"
+            />
           </div>
           {rest.enabled && maxToday !== null && (
             <p className="text-[10px] text-slate-400">
@@ -561,7 +546,7 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-emerald-300" />
             <h3 className="text-sm font-bold text-white">用眼日报</h3>
-            <span className="text-[10px] text-slate-500 font-mono">近 7 天</span>
+            <span className="text-[10px] text-slate-400 font-mono">近 7 天</span>
           </div>
           {todayHealth && (
             <div className="grid grid-cols-2 gap-2.5">
@@ -612,7 +597,7 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
           <div className="flex items-center gap-2">
             <Pipette className="w-4 h-4 text-violet-300" />
             <h3 className="text-sm font-bold text-white">数字健康台</h3>
-            <span className="text-[10px] text-slate-500 font-mono">今日</span>
+            <span className="text-[10px] text-slate-400 font-mono">今日</span>
           </div>
           {categoryTotals.length > 0 && (
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-300">
@@ -654,21 +639,12 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
             <Clock className="w-4 h-4 text-indigo-300" />
             <h3 className="text-sm font-bold text-white">定时开启</h3>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0">
-            <input
-              type="checkbox"
-              aria-label="定时开启或关闭护眼滤镜"
-              checked={cfg.scheduleEnabled}
-              onChange={(e) => patch({ scheduleEnabled: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className={`relative w-10 h-5 rounded-full transition-colors ${cfg.scheduleEnabled ? 'bg-indigo-500' : 'bg-slate-600'}`}>
-              <span
-                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
-                style={{ left: cfg.scheduleEnabled ? '18px' : '2px' }}
-              />
-            </div>
-          </label>
+          <Switch
+            checked={cfg.scheduleEnabled}
+            onChange={(next) => patch({ scheduleEnabled: next })}
+            ariaLabel="定时开启或关闭护眼滤镜"
+            onClass="bg-indigo-500"
+          />
         </div>
 
         {cfg.scheduleEnabled && (
@@ -695,11 +671,11 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
             </div>
           </div>
         )}
-        <p className="text-[10px] text-slate-400">
-          {cfg.scheduleEnabled
-            ? '到点自动开、出窗自动关，支持跨午夜时段（如 22:00 – 07:00）'
-            : '开启后按设定时间段自动开关滤镜'}
-        </p>
+        {cfg.scheduleEnabled && (
+          <p className="text-[10px] text-slate-400">
+            到点自动开、出窗自动关，支持跨午夜时段（如 22:00 – 07:00）
+          </p>
+        )}
       </div>
     </div>
   );

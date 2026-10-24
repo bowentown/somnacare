@@ -104,11 +104,13 @@ function fmtDuration(min: number): string {
   return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分`;
 }
 
-/** 最近一条夜睡记录（第 51 轮夜归属口径：昨晚的觉 date=昨天，"今晚已有
- * 记录"在晨间场景下永远查不到 date=今天——改取最近夜睡，文案"昨晚"随之
- * 精确；小睡不顶掉）。 */
-function tonightRecord(records: SleepRecord[], _now: Date): SleepRecord | undefined {
-  return records.find((r) => r.kind !== 'nap');   // records 按夜归属降序，[0]=最近一晚
+/** "昨晚"的夜睡记录 = date 等于昨夜归属键（昨天）的那条（第 81 轮收紧，
+ * 与 petContext/petMoments 同口径）——此前取"最新一条"，停更几晚后会把
+ * 几天前的旧记录播报成"昨晚睡了 X"，今晚已补录的记录在傍晚也会被误引。 */
+function tonightRecord(records: SleepRecord[], now: Date): SleepRecord | undefined {
+  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const yKey = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
+  return records.find((r) => r.kind !== 'nap' && r.date === yKey);
 }
 
 /**

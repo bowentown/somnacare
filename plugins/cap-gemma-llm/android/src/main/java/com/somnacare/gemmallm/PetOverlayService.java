@@ -1064,6 +1064,13 @@ public class PetOverlayService extends Service {
                 .format(new java.util.Date());
     }
 
+    /** 夜号（劝睡去重键）：凌晨 0-6 点归前一晚——劝睡窗口 23-06 跨午夜，
+     * 用自然日去重会出现"23:55 劝过、00:05 又劝"和"次晚整晚不劝"两种错。 */
+    private static String nightKey() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date(System.currentTimeMillis() - 6 * 3600_000L));
+    }
+
     /**
      * 记录感知上下文（第二批，行为方案 §二后半）→ 视图权重；
      * 昨晚达标且今天未祝贺 → 庆祝一次（§5.4 记忆：防"每天都是第一次见你"的塑料感）。
@@ -1096,8 +1103,8 @@ public class PetOverlayService extends Service {
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm == null || !pm.isInteractive()) return;
             android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            if (todayKey().equals(sp.getString(K_NAG_DATE, null))) return;   // 每晚至多一次
-            sp.edit().putString(K_NAG_DATE, todayKey()).apply();
+            if (nightKey().equals(sp.getString(K_NAG_DATE, null))) return;   // 每晚至多一次
+            sp.edit().putString(K_NAG_DATE, nightKey()).apply();
             // 措辞不假设场景：isInteractive 只说明"屏幕亮着"——用户可能在本 App
             // 里记录睡眠，说"还在滑"就冤枉了；"亮着屏幕"对两种情形都成立
             showBubble("都这个点了还亮着屏幕呢……明天又要赖床了哦。放下，闭眼，本鱼看着你呢", 6000);

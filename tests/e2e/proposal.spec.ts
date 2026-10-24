@@ -376,7 +376,7 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
   expect(await page.evaluate(() => localStorage.getItem('somnacare_proposal_handled'))).toBe(dstr(-1, fixed));   // 夜归属：bed 00:28 凌晨放下 → 昨天
 });
 
-test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', async ({ page }) => {
+test('遗留会话清理：卡住 >24h 的监测会话不再压制提议卡', async ({ page }) => {
   const fixed = new Date();
   fixed.setHours(8, 30, 0, 0);
   const today = dstr(0, fixed);
@@ -400,8 +400,10 @@ test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', as
   }
   events.sort((a, b) => a - b);
 
-  // 卡住 17h 的监测会话（昨 15:30 开始）——gate 5 会永远压制提议
-  const stuckStart = fixed.getTime() - 17 * 3600e3;
+  // 卡住 25h 的监测会话——gate 5 会永远压制提议。第 81 轮起阈值从 14h
+  // 放宽到 24h：14-24h 的会话保留在卡上等用户「已醒来」按 16h 上限结算，
+  // 不再静默丢弃整晚；超过一夜（24h）的死会话才在挂载时清掉
+  const stuckStart = fixed.getTime() - 25 * 3600e3;
 
   await page.addInitScript(([evs, ud, stuck]) => {
     const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
@@ -441,7 +443,7 @@ test('遗留会话清理：卡住 >14h 的监测会话不再压制提议卡', as
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
 
-  // 遗留会话在挂载时被清理（>14h）→ gate 5 解除 → 提议卡照常出现
+  // 遗留会话在挂载时被清理（>24h）→ gate 5 解除 → 提议卡照常出现
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cleared = await page.evaluate(() => localStorage.getItem('somnacare_bedtime_start'));
   expect(cleared).toBeNull();   // 会话键已被清理

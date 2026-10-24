@@ -21,6 +21,26 @@ interface ActiveSleepModalProps {
   chronotype?: 'night' | 'day' | 'irregular';
 }
 
+// 整夜监测会话的落盘键：息屏/进程被杀后整晚记录不再丢失（第 81 轮 P0）。
+// 超过 20h（> 模型 16h 截断上限 + 余量）视为遗留死会话，不恢复。
+const ACTIVE_SLEEP_SESSION_KEY = 'somnacare_activesleep_start';
+const ACTIVE_SLEEP_SESSION_MAX_MS = 20 * 3600_000;
+
+export function hasRecoverableActiveSleepSession(): boolean {
+  try {
+    const saved = localStorage.getItem(ACTIVE_SLEEP_SESSION_KEY);
+    if (!saved) return false;
+    const start = Number(saved);
+    return Number.isFinite(start) && Date.now() - start <= ACTIVE_SLEEP_SESSION_MAX_MS && Date.now() - start >= 0;
+  } catch {
+    return false;
+  }
+}
+
+function clearActiveSleepSession(): void {
+  try { localStorage.removeItem(ACTIVE_SLEEP_SESSION_KEY); } catch { /* ignore */ }
+}
+
 export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
   isOpen,
   onClose,
@@ -39,6 +59,8 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
   const [micError, setMicError] = useState<string | null>(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [activeSound, setActiveSound] = useState<'rain' | 'ocean' | 'bowl'>('rain');
+  // 会话恢复标记：从进程死亡中续上的会话，展示一行"计时未中断"提示
+  const [sessionRestored, setSessionRestored] = useState(false);
 
   // Finish review state
   const [isWakingUp, setIsWakingUp] = useState(false);
@@ -85,9 +107,23 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    const startTimestamp = Date.now();
-    const now = new Date(startTimestamp);
-    setStartTime(now);
+    // 会话恢复：进程被杀/息屏后重开 App，从落盘的开始时间继续计时
+    // （计时器息屏冻结也没关系——已记录时长按时间戳差值计算）
+    let startTimestamp = NaN;
+    let restored = false;
+    try {
+      const saved = Number(localStorage.getItem(ACTIVE_SLEEP_SESSION_KEY) ?? '');
+      if (Number.isFinite(saved) && Date.now() - saved <= ACTIVE_SLEEP_SESSION_MAX_MS && Date.now() - saved >= 0) {
+        startTimestamp = saved;
+        restored = true;
+      }
+    } catch { /* ignore */ }
+    if (!restored) {
+      startTimestamp = Date.now();
+      try { localStorage.setItem(ACTIVE_SLEEP_SESSION_KEY, String(startTimestamp)); } catch { /* ignore */ }
+    }
+    setSessionRestored(restored);
+    setStartTime(new Date(startTimestamp));
     setElapsedSeconds(0);
     setIsWakingUp(false);
 
@@ -110,11 +146,33 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
     updateClock();
     const clockTimer = setInterval(updateClock, 1000);
 
+    // 屏幕常亮（第 81 轮）：界面一直承诺"屏幕保持亮起"，此前从未真正
+    // 申请 WakeLock——按系统超时自动息屏后计时器冻结、进程可能被杀。
+    // WebView 的 https://localhost 满足安全上下文；不支持的环境静默跳过。
+    let wakeLock: any = null;
+    const acquireWakeLock = async () => {
+      try {
+        const wl = (navigator as any).wakeLock;
+        if (!wl) return;
+        // 已持有但被系统释放过的 sentinel 重复 request 是安全的（返回新句柄）
+        wakeLock = await wl.request('screen');
+      } catch { /* 息屏策略拒绝或不受支持：不影响监测本身 */ }
+    };
+    void acquireWakeLock();
+    const onVisibility = () => {
+      // 解锁回到前台时系统会释放 wakeLock，需要重新申请
+      if (document.visibilityState === 'visible') void acquireWakeLock();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     // Audio / Noise monitor
     startNoiseDetection();
 
     return () => {
       clearInterval(clockTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (wakeLock?.release) wakeLock.release().catch(() => {});
+      wakeLock = null;
       stopNoiseDetection();
     };
   }, [isOpen]);
@@ -298,6 +356,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
     });
 
     onFinishSleep(built.record);
+    clearActiveSleepSession();
     onClose();
   };
 
@@ -344,6 +403,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
             // 会话进行中（>2 分钟）的关闭 = 丢弃未保存的整晚记录——破坏性
             // 操作与"取消记录"同防护级，必须确认（第 51 轮审计）
             if (elapsedSeconds > 120 && !window.confirm(`已记录 ${Math.floor(elapsedSeconds / 60)} 分钟，关闭将丢弃本次未保存的整夜记录，确定？`)) return;
+            clearActiveSleepSession();
             onClose();
           }}
           aria-label="关闭整夜记录"
@@ -387,6 +447,11 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
               {elapsedMins}分{elapsedSecs}秒
             </span>
           </div>
+          {sessionRestored && (
+            <p className={`text-[11px] ${theme.textMuted} -mt-4 mb-5`}>
+              应用曾被关闭，已从 {String(startTime.getHours()).padStart(2, '0')}:{String(startTime.getMinutes()).padStart(2, '0')} 继续计时
+            </p>
+          )}
 
           {/* Sound / Ambient Noise Visualizer */}
           <div className={`w-full max-w-xs ${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-4 mb-4`}>

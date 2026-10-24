@@ -24,7 +24,7 @@ export const EmptyState: React.FC<{
     <Illustration name={illustration} theme={theme} maxHeight={compact ? 90 : 130} className="w-full" />
     <span className={`font-black text-slate-200 ${compact ? 'text-xs' : 'text-sm'}`}>{title}</span>
     {hint != null && (
-      <span className="text-[10px] text-slate-500 leading-relaxed text-center">{hint}</span>
+      <span className="text-[10px] text-slate-400 leading-relaxed text-center">{hint}</span>
     )}
     {action}
   </div>

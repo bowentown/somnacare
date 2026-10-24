@@ -142,7 +142,7 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
           )}
         </div>
         {preview && (
-          <p className="text-[9px] text-slate-500 text-center -mt-2">点按预览可放大查看</p>
+          <p className="text-[9px] text-slate-400 text-center -mt-2">点按预览可放大查看</p>
         )}
 
         <button
@@ -159,7 +159,7 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
           </span>
           <span className="text-[11px] font-bold text-slate-200">包含具体时刻</span>
         </button>
-        <p className="text-[10px] text-slate-500 leading-relaxed -mt-1">不含梦境、心情与习惯记录</p>
+        <p className="text-[10px] text-slate-400 leading-relaxed -mt-1">不含梦境、心情与习惯记录</p>
 
         {note && <p className="text-[11px] text-rose-300 font-bold">{note}</p>}
 

@@ -112,7 +112,7 @@ final class AppUpdateManager {
         }
     }
 
-    static JSObject enqueue(Context context, String url, String sha256) {
+    static JSObject enqueue(Context context, String url, String sha256, boolean allowMetered) {
         JSObject ret = new JSObject();
         ret.put("ok", false);
         if (!isTrustedUrl(url)) {
@@ -136,12 +136,19 @@ final class AppUpdateManager {
             request.setMimeType("application/vnd.android.package-archive");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, APK_NAME);
-            request.setAllowedOverMetered(true);
+            // 默认仅 Wi-Fi 下载（第 81 轮审计 P1）：60-100MB 的 APK 在流量下
+            // 静默开跑对有限流量用户不友好——移动网络需用户显式选择
+            request.setAllowedOverMetered(allowMetered);
             request.setAllowedOverRoaming(false);
             DownloadManager dm = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
             if (dm == null) {
                 ret.put("reason", "系统下载服务不可用");
                 return ret;
+            }
+            // 旧队列项先移除（如"等待 Wi-Fi"的暂停项被改用流量重排时），避免残留
+            long oldId = prefs(context).getLong(KEY_DOWNLOAD_ID, -1L);
+            if (oldId > 0) {
+                try { dm.remove(new long[]{oldId}); } catch (Exception ignored) { }
             }
             long id = dm.enqueue(request);
             SharedPreferences.Editor editor = prefs(context).edit()
@@ -189,7 +196,19 @@ final class AppUpdateManager {
                     return ret;
                 case DownloadManager.STATUS_PAUSED:
                     ret.put("status", "paused");
-                    ret.put("reason", "下载已暂停（网络不可用或等待 Wi-Fi）");
+                    // 机器可读的暂停原因（DownloadManager 隐藏常量值稳定）：
+                    // 3=QUEUED_FOR_WIFI（仅 Wi-Fi 策略在等网络）2=WAITING_FOR_NETWORK
+                    int pauseReason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+                    if (pauseReason == 3) {
+                        ret.put("pausedReason", "wifi");
+                        ret.put("reason", "已加入下载队列，等待 Wi-Fi（可在应用内选择用移动数据下载）");
+                    } else if (pauseReason == 2) {
+                        ret.put("pausedReason", "network");
+                        ret.put("reason", "网络不可用，下载已暂停");
+                    } else {
+                        ret.put("pausedReason", "retry");
+                        ret.put("reason", "下载已暂停，稍后自动重试");
+                    }
                     return ret;
                 case DownloadManager.STATUS_FAILED:
                     ret.put("status", "failed");

@@ -134,6 +134,10 @@ function todayStr(now: Date): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+function dateKeyOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /**
  * 真实事实清单：LLM 只允许引用这里的数字（dsh-plugin-moments 的核心纪律）。
  */
@@ -144,10 +148,13 @@ export function buildSleepFacts(
 ): string[] {
   const facts: string[] = [];
   const bedtime = profile?.targetBedtime ?? '23:30';
-  // "昨晚"= 最近的夜睡记录（第 51 轮夜归属口径：昨夜的觉 date=昨天，
-  // 不再是旧的"醒来那天=今天"）——夜睡列表按 date 降序，[0] 即最近一晚
-  const lastNight = nightsOnly(records as SleepRecord[])[0];
-  const week = nightsOnly(records as SleepRecord[]).slice(0, 7);
+  // "昨晚"= 昨夜归属键（date=昨天）上的夜睡（第 81 轮收紧，与 petContext
+  // 同口径）——此前取"最新一条"，停更几晚后会把几天前的旧记录说成昨晚，
+  // 今晚已补录的记录也会在傍晚被当成"昨晚"引用
+  const yKey = dateKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const nights = nightsOnly(records as SleepRecord[]);
+  const lastNight = nights.find((r) => r.date === yKey) ?? null;
+  const week = nights.slice(0, 7);
 
   facts.push(`就寝目标 ${bedtime}`);
   if (lastNight) {
@@ -159,6 +166,11 @@ export function buildSleepFacts(
     facts.push(`夜醒累计 ${fmtDuration(lastNight.awakeMinutes)}`);
   } else {
     facts.push('昨晚没有睡眠记录');
+    if (nights.length) {
+      // 有旧记录时如实说停在哪一晚——比只说"没记录"多给 LLM 一句真话
+      const gap = Math.round((Date.parse(`${yKey}T12:00:00`) - Date.parse(`${nights[0].date}T12:00:00`)) / 86400000);
+      if (gap > 0) facts.push(`最近一次夜睡记录停在 ${gap} 晚前`);
+    }
   }
   if (week.length) {
     const avg = Math.round(week.reduce((a, r) => a + r.sleepScore, 0) / week.length);
@@ -356,10 +368,12 @@ function localMoment(
     text = '昨晚的觉睡得如何本鱼不知道——因为根本没有记录！事已至此，先睡觉吧 🛏';
   }
   // 潜伏期骂人段只对实测值（未标注推算）生效；且解析 fmtDuration 的两种格式
-  // （"45 分" / "2 小时 0 分"——此前 parseInt 只读首段，120 分被读成 2）
+  // （"45 分" / "2 小时 0 分"——此前 parseInt 只读首段，120 分被读成 2）。
+  // 无昨晚记录时跳过——lastNight 可能是几天前的旧记录，接在"昨晚没记录"
+  // 后面自相矛盾
   const latencyRaw = lastNight?.latencyMinutes ?? 0;
   const latencyIsEstimate = lastNight?.latencyEstimated === true;
-  if (!latencyIsEstimate && latencyRaw >= 30) {
+  if (!noData && !latencyIsEstimate && latencyRaw >= 30) {
     text += ` 躺了 ${fmtDuration(latencyRaw)} 才睡着，手机没收！`;
   }
   if (eff && /^\d+/.test(eff) && parseInt(eff, 10) >= 85) {
@@ -457,8 +471,9 @@ export async function ensureTodayMoment(
   const facts = buildSleepFacts(records, profile, now);
   const cfg = profile?.aiConfig;
   // 本地兜底模板需要原始数值字段（骂人段按实测潜伏期判断，见 localMoment）
-  // 与 buildSleepFacts 同口径：只看夜睡，别把午睡数值塞进骂人模板；
-  // "昨晚"= 最近的夜睡记录（夜归属口径，第 51 轮）
+  // 与 buildSleepFacts 同口径：只看夜睡，别把午睡数值塞进骂人模板。
+  // 注意"昨晚"文案是否出现由 facts 决定（第 81 轮起只认 date=昨天）；
+  // 这里的 lastNight 仅取最新夜睡供潜伏期段引用，非昨晚时会因 noData 守卫跳过
   const lastNight = nightsOnly(records as SleepRecord[])[0];
   let text: string | null = null;
   let comments: MomentComment[] = [];

@@ -106,15 +106,30 @@ export function loadChatState(): ChatState {
   return { sessions: [s], activeId: s.id };
 }
 
-/** 持久化：排序（最近在前）+ 双重上限（会话数/单会话消息数） */
-export function persistChatState(state: ChatState): void {
-  const sessions = [...state.sessions]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_SESSIONS)
-    .map((s) => ({ ...s, messages: s.messages.slice(-MAX_MESSAGES) }));
+/** 持久化：排序（最近在前）+ 双重上限（会话数/消息数）。
+ *  返回是否落盘成功——配额满时先裁最旧的一半会话重试一次，仍失败
+ *  则如实返回 false（此前静默吞掉，用户以为已保存，重启后整段聊天
+ *  消失，第 81 轮审计），由调用方提示。 */
+export function persistChatState(state: ChatState): boolean {
+  const sortAndCap = (list: ChatSession[]): ChatSession[] =>
+    [...list]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_SESSIONS)
+      .map((s) => ({ ...s, messages: s.messages.slice(-MAX_MESSAGES) }));
   try {
-    localStorage.setItem(CHAT_KEY, JSON.stringify({ v: 1, sessions, activeId: state.activeId }));
-  } catch { /* 配额满时保内存即可 */ }
+    localStorage.setItem(CHAT_KEY, JSON.stringify({ v: 1, sessions: sortAndCap(state.sessions), activeId: state.activeId }));
+    return true;
+  } catch { /* 配额满 → 降级重试 */ }
+  try {
+    // 降级：只保留最近 8 个会话、每会话最近 40 条
+    const trimmed = sortAndCap(state.sessions)
+      .slice(0, 8)
+      .map((s) => ({ ...s, messages: s.messages.slice(-40) }));
+    localStorage.setItem(CHAT_KEY, JSON.stringify({ v: 1, sessions: trimmed, activeId: state.activeId }));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 相对时间标签（会话列表用）：今天 → HH:MM；今年 → M月D日；更早 → YYYY-M-D */

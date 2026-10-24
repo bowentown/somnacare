@@ -17,6 +17,7 @@ import {
 import { CustomAlarmSetting } from '../types/sleep';
 import { sleepAudio } from '../utils/audioSynth';
 import { ThemeConfig } from '../utils/themeStyles';
+import { Switch } from './ui';
 import {
   getExactAlarmStatus,
   isNativePlatform,
@@ -408,12 +409,11 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                 <span className="text-xs text-white block font-bold">浅睡唤醒</span>
                 <span className="text-[11px] text-slate-300">于设定时刻 ±{newSmartWindow} 分钟内平缓唤醒</span>
               </div>
-              <input
-                type="checkbox"
-                aria-label="启用浅睡唤醒窗口"
+              <Switch
                 checked={newSmartWake}
-                onChange={(e) => setNewSmartWake(e.target.checked)}
-                className={`w-5 h-5 rounded cursor-pointer`}
+                onChange={setNewSmartWake}
+                ariaLabel="启用浅睡唤醒窗口"
+                onClass="bg-sky-500"
               />
             </div>
             {newSmartWake && (
@@ -495,7 +495,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                       <span className="text-2xl font-mono font-black tracking-tight text-white">
                         {alarm.time}
                       </span>
-                      <span className="text-xs text-white font-bold whitespace-nowrap">{alarm.label}</span>
+                      <span className="text-xs text-white font-bold truncate max-w-[9rem]">{alarm.label}</span>
                     </div>
                     <div className="text-xs text-slate-300 mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-1 font-medium">
                       <span className="whitespace-nowrap">{dayText}</span>
@@ -509,7 +509,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                             title="减小唤醒窗口"
                             aria-label="减小唤醒窗口"
                             onClick={() => handleAdjustWindow(alarm.id, -1)}
-                            className="px-2 py-1 -my-1 min-w-6 min-h-6 hover:text-white cursor-pointer"
+                            className="px-2.5 py-1.5 -my-1.5 min-w-8 min-h-8 hover:text-white cursor-pointer"
                           >
                             −
                           </button>
@@ -519,7 +519,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                             title="增大唤醒窗口"
                             aria-label="增大唤醒窗口"
                             onClick={() => handleAdjustWindow(alarm.id, +1)}
-                            className="px-2 py-1 -my-1 min-w-6 min-h-6 hover:text-white cursor-pointer"
+                            className="px-2.5 py-1.5 -my-1.5 min-w-8 min-h-8 hover:text-white cursor-pointer"
                           >
                             +
                           </button>
@@ -539,21 +539,12 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                     <Trash2 className="w-4 h-4" />
                   </button>
 
-                  {/* Switch toggle：拨钮用内联 left——translate-x-* 依赖 v4 的
-                      translate 变量链（@property），旧 WebView 上会卡死在左侧 */}
-                  <button
-                    type="button"
-                    aria-label={alarm.enabled ? '关闭该闹钟' : '开启该闹钟'}
-                    onClick={() => handleToggleAlarm(alarm.id)}
-                    className={`w-12 h-6 rounded-full transition-colors relative p-0.5 cursor-pointer ${
-                      alarm.enabled ? theme?.accentBg.split(' ')[0] : 'bg-slate-700'
-                    }`}
-                  >
-                    <div
-                      className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
-                      style={{ left: alarm.enabled ? '22px' : '2px' }}
-                    />
-                  </button>
+                  <Switch
+                    checked={alarm.enabled}
+                    onChange={() => handleToggleAlarm(alarm.id)}
+                    ariaLabel={alarm.enabled ? '关闭该闹钟' : '开启该闹钟'}
+                    onClass={theme?.accentBg.split(' ')[0]}
+                  />
                 </div>
               </div>
             );

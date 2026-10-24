@@ -99,6 +99,18 @@ export const TripArrivalModal: React.FC<Props> = ({ postcardId, onClose, onOpenM
             >
               ✉️ 拆开信封并查看
             </button>
+            {/* 不想看仪式的用户也有一条出路——此前未拆封状态没有任何关闭控件，
+                只能靠返回键/Escape（第 81 轮视觉审查） */}
+            <button
+              type="button"
+              onClick={() => {
+                clearPendingArrival();
+                onClose();
+              }}
+              className="py-1.5 text-[#94a3b8] hover:text-[#e2e8f0] text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              收进图鉴，稍后再看
+            </button>
           </div>
         ) : (
           /* 已拆开：展示 3D 拍立得明信片与伴手礼 */

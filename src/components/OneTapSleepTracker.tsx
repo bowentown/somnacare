@@ -48,10 +48,16 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     const saved = localStorage.getItem('somnacare_bedtime_start');
     if (!saved) return null;
     const start = Number(saved);
-    // 遗留会话清理：会话超过 14h（= 模型夜长上限 NIGHT_MAX）仍未结算，
-    // 只会永远压制自动提议（gate 5）而不产生任何价值——真睡眠记录由
-    // 提议链路负责。跨午夜会话（23:45→07:38 ≈ 8h）不受影响。
-    if (Number.isFinite(start) && Date.now() - start > 14 * 3600000) {
+    // 存储损坏（非数字）直接清掉，否则 NaN 会卡死会话卡并污染记录构建
+    if (!Number.isFinite(start)) {
+      try { localStorage.removeItem('somnacare_bedtime_start'); } catch { /* ignore */ }
+      return null;
+    }
+    // 遗留会话保留到 24h（第 81 轮审计 P1）：此前 14h 即静默丢弃——用户
+    // 忘了结束、次日傍晚才打开时，整晚监测无影无踪。现在保留会话卡，
+    // 由用户点「已醒来」按 16h 上限结算（截断有提示横幅）或显式取消；
+    // 超过 24h 的一夜之外的死会话仍清掉（继续挂着只会压制自动提议）
+    if (Date.now() - start > 24 * 3600000) {
       try { localStorage.removeItem('somnacare_bedtime_start'); } catch { /* ignore */ }
       return null;
     }
@@ -514,7 +520,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     aria-label="就寝提前15分钟"
                     disabled={bedShift <= -SHIFT_MAX}
                     onClick={() => { hapticStep(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
-                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
                   <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
                   <button
@@ -522,7 +528,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     aria-label="就寝推迟15分钟"
                     disabled={bedShift >= SHIFT_MAX}
                     onClick={() => { hapticStep(); setBedShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
-                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >＋</button>
                 </div>
                 <span className="text-[10px] text-slate-400">放下</span>
@@ -535,7 +541,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     aria-label="起床提前15分钟"
                     disabled={wakeShift <= -SHIFT_MAX}
                     onClick={() => { hapticStep(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
-                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
                   <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
                   <button
@@ -543,7 +549,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     aria-label="起床推迟15分钟"
                     disabled={wakeShift >= SHIFT_MAX}
                     onClick={() => { hapticStep(); setWakeShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
-                    className="w-7 h-7 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >＋</button>
                 </div>
                 <span className="text-[10px] text-slate-400">拿起</span>
@@ -691,6 +697,11 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                 取消记录
               </button>
             </div>
+            {elapsedMinutes > 960 && (
+              <p className="text-[10px] text-amber-300 px-1 -mt-2">
+                会话已超过 16 小时——点「已醒来」将按 16 小时上限截断保存（忘记结束的常见情形）。
+              </p>
+            )}
 
             {/* 两行布局：一行 flex 塞不下"图标+文案+CTA"三块，硬塞会把副标题挤折行。
                 琥珀色是有意保留的"晨光"语义（醒来 = 早晨），不随主题强调色变化 */}

@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Moon,
   Plus,
   Play,
   ArrowRight,
   ShieldAlert,
 } from 'lucide-react';
+import { EmptyState } from './ui';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { OneTapSleepTracker } from './OneTapSleepTracker';
@@ -84,9 +84,11 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   const isEvening = dayPhase === 'evening' || dayPhase === 'late';
   const [sleepExpanded, setSleepExpanded] = useState(() => !isEvening);
   useEffect(() => { setSleepExpanded(!isEvening); }, [isEvening]);
-  const travel = loadTravelState();
-  const travelProgress = getTravelProgress();
-  const streak = computeWeekReport(records).streak;
+  // useMemo（第 81 轮性能）：travel 状态含同步 JSON.parse、周报要全量扫
+  // 记录——此前每次渲染（60s 时钟/父级状态）都重算一遍，纯浪费
+  const travel = useMemo(() => loadTravelState(), [records]);
+  const travelProgress = useMemo(() => getTravelProgress(), [records]);
+  const streak = useMemo(() => computeWeekReport(records).streak, [records]);
   const [goalOpen, setGoalOpen] = useState(false);
   // 睡前提醒的悬浮窗授权态：null=未检查。此前开关只翻布尔、不申请任何权限，
   // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效
@@ -163,7 +165,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           type="button"
           onClick={onOpenAutoCheck}
           aria-label="检查自动记录链路"
-          className={`w-full ${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center justify-between gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
+          className={`w-full ${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center justify-between gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
         >
           <span className="flex items-center gap-2 text-[11px] font-bold text-slate-200">
             <ShieldAlert className={`w-4 h-4 ${theme.accentText}`} />
@@ -184,7 +186,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
       {/* 当天小睡紧凑行（主卡只显示夜睡；小睡不顶掉主卡） */}
       <div style={{ order: sectionOrder.nap }}>
       {todayNaps.length > 0 && (
-        <div className={`${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-2 text-[11px]`}>
+        <div className={`${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-2 text-[11px]`}>
           <span>😴</span>
           <span className="font-bold text-white">
             今天已小睡 {todayNaps.length} 次 · 共{' '}
@@ -205,7 +207,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
             type="button"
             onClick={onOpenCodex}
             aria-label="打开梦境旅行图鉴"
-            className={`w-full ${theme.cardBg} rounded-2xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
+            className={`w-full ${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
           >
             <MoonEnergy value={travel.currentEnergy} target={TRIP_ENERGY_TARGET} size={38} />
             <div className="flex-1 min-w-0">
@@ -243,7 +245,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-white font-black text-xs">昨晚睡眠</span>
-                  <span className="font-mono text-slate-500 text-[10px]">{latestRecord.date}</span>
+                  <span className="font-mono text-slate-400 text-[10px]">{latestRecord.date}</span>
                 </div>
                 <p className="font-mono text-slate-200 text-[11px] mt-1">
                   {formatDurationChinese(latestRecord.durationMinutes)} · {latestRecord.bedtime} → {latestRecord.wakeTime}
@@ -313,18 +315,19 @@ export const TodayTab: React.FC<TodayTabProps> = ({
 
           {latestRecord.dreamNotes && (
             <div className="mt-3 pt-3 border-t border-slate-700/80 text-xs text-slate-200">
-              <span className={`${theme.accentText} font-bold`}>梦境记录：</span>{latestRecord.dreamNotes}
+              <span className={`${theme.accentText} font-bold`}>梦境记录：</span>
+              <span className="line-clamp-3 break-words">{latestRecord.dreamNotes}</span>
             </div>
           )}
         </div>
         )
       ) : (
-        <div className={`rounded-3xl p-6 ${theme.cardBg} border ${theme.cardBorder} text-center space-y-2 shadow-lg`}>
-          <div className={`w-12 h-12 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center mx-auto shadow-inner`}>
-            <Moon className={`w-6 h-6 ${theme.accentText}`} />
-          </div>
-          <h4 className="text-sm font-bold text-white pt-1">暂无睡眠记录</h4>
-        </div>
+        <EmptyState
+          theme={theme}
+          illustration="no-data"
+          title="暂无睡眠记录"
+          hint="点下方「晨起手动补录」记下第一晚"
+        />
       )}
       </div>
 
@@ -333,7 +336,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
         <button
           type="button"
           onClick={onOpenManualLog}
-          className={`p-4 rounded-2xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
+          className={`p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
         >
           <div className="flex items-center justify-between mb-2">
             <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
@@ -347,7 +350,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
         <button
           type="button"
           onClick={onOpenActiveSleep}
-          className={`p-4 rounded-2xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
+          className={`p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
         >
           <div className="flex items-center justify-between mb-2">
             <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
@@ -364,7 +367,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({
       <button
         type="button"
         onClick={() => setMixerOpen(true)}
-        className={`w-full p-4 rounded-2xl ${theme.cardBg} border ${theme.cardBorder} flex items-center justify-between cursor-pointer hover:border-white/20 transition-all active:scale-[0.99] shadow-md group`}
+        className={`w-full p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} flex items-center justify-between cursor-pointer hover:border-white/20 transition-all active:scale-[0.99] shadow-md group`}
       >
         <div className="flex items-center gap-3">
           <div className={`w-9 h-9 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
@@ -443,9 +446,8 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               }`}
             >
               <span
-                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${
-                  userProfile.bedtimeReminderEnabled ? 'left-[22px]' : 'left-0.5'
-                }`}
+                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
+                style={{ left: userProfile.bedtimeReminderEnabled ? '22px' : '2px' }}
               />
             </span>
           </button>
@@ -472,9 +474,8 @@ export const TodayTab: React.FC<TodayTabProps> = ({
               }`}
             >
               <span
-                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${
-                  userProfile.nightRescueEnabled !== false ? 'left-[22px]' : 'left-0.5'
-                }`}
+                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
+                style={{ left: userProfile.nightRescueEnabled !== false ? '22px' : '2px' }}
               />
             </span>
           </button>

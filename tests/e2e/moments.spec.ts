@@ -87,6 +87,8 @@ test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) =>
     }
   });
   await seed(page, {
+    // 种 date=今天 的旧口径记录：首载迁移会把 00:20 入睡的觉改写到
+    // 夜归属"昨天"——迁移后恰好命中第 81 轮收紧的"昨晚"口径
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
   });
@@ -148,6 +150,8 @@ test('语录时间纪律：缓存里写死钟点的台词被过滤（用户实�
 
 test('LLM 编数字：数字白名单拒收整条，回退本地模板', async ({ page }) => {
   await seed(page, {
+    // 种 date=今天 的旧口径记录：首载迁移会把 00:20 入睡的觉改写到
+    // 夜归属"昨天"——迁移后恰好命中第 81 轮收紧的"昨晚"口径
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
   });
@@ -199,6 +203,8 @@ test('评论回复链路：请求体含评论与正文，模型回复直接回�
     });
   });
   await seed(page, {
+    // 种 date=今天 的旧口径记录：首载迁移会把 00:20 入睡的觉改写到
+    // 夜归属"昨天"——迁移后恰好命中第 81 轮收紧的"昨晚"口径
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
   });

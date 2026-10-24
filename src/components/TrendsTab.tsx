@@ -94,7 +94,93 @@ const HISTORY_ROW_H = 64;
 const HISTORY_VIEW_H = 320;
 const HISTORY_OVERSCAN = 4;
 
-export const TrendsTab: React.FC<TrendsTabProps> = ({
+/** 历史列表独立组件（第 81 轮性能）：滚动 scrollTop 收在本组件内部——
+ *  此前每次滚动 setState 住在 TrendsTab，整页（Recharts 图表 + 全量
+ *  聚合推导）跟着每个滚动帧重渲染，长历史下明显掉帧。 */
+const HistoryList = React.memo(function HistoryList({
+  records,
+  onDeleteRecord,
+  textMuted,
+  accentText,
+}: {
+  records: SleepRecord[];
+  onDeleteRecord?: (id: string) => void;
+  textMuted: string;
+  accentText: string;
+}) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const win = (() => {
+    const visible = Math.ceil(HISTORY_VIEW_H / HISTORY_ROW_H) + HISTORY_OVERSCAN * 2;
+    const start = Math.max(0, Math.floor(scrollTop / HISTORY_ROW_H) - HISTORY_OVERSCAN);
+    const end = Math.min(records.length, start + visible);
+    return { start, end };
+  })();
+  return (
+    <>
+      <div
+        data-testid="history-list"
+        className="overflow-y-auto no-scrollbar"
+        style={{ height: HISTORY_VIEW_H }}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      >
+        <div className="relative" style={{ height: records.length * HISTORY_ROW_H }}>
+          {records
+            .slice(win.start, win.end)
+            .map((r, i) => {
+              const index = win.start + i;
+              return (
+                <div
+                  key={r.id}
+                  style={{ top: index * HISTORY_ROW_H, height: HISTORY_ROW_H }}
+                  className="absolute left-0 right-0 flex items-center justify-between hover:bg-slate-800/30 px-2 rounded-xl transition-colors group"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-xs">{r.date}</span>
+                      {r.kind === 'nap' && <span className="text-[9px] font-black text-sky-300 bg-[#082f49]/80 px-1 py-0.5 rounded">😴 小睡</span>}
+                      <span className={`font-mono ${accentText} font-bold text-xs`}>{r.sleepScore}分</span>
+                    </div>
+                    <div className={`text-[11px] ${textMuted} flex items-center gap-2 mt-0.5 font-mono`}>
+                      <span>{r.bedtime} - {r.wakeTime}</span>
+                      <span>·</span>
+                      <span>{formatDurationChinese(r.durationMinutes)}</span>
+                      <span>·</span>
+                      <span className="text-emerald-400">深睡 {r.deepSleepMinutes}m</span>
+                    </div>
+                  </div>
+
+                  {/* Delete Button */}
+                  {onDeleteRecord && (
+                    <button
+                      type="button"
+                      aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {
+                          onDeleteRecord(r.id);
+                        }
+                      }}
+                      title="删除此条记录"
+                      className={`p-2 ${textMuted} hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      </div>
+      {records.length > win.end && (
+        <p className={`text-center text-[10px] ${textMuted} pt-2`}>
+          向下滚动查看更多（共 {records.length} 条）
+        </p>
+      )}
+    </>
+  );
+});
+
+const TrendsTabInner: React.FC<TrendsTabProps> = ({
   records,
   onDeleteRecord,
   theme,
@@ -132,21 +218,16 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
   useEffect(() => {
     if (!isNativePlatform()) return;
     void (async () => {
-      const granted = await usageHasPermission();
+      // 3s 兜底：桥不响应时"检查权限中…"曾会无限挂起（第 81 轮审计）
+      const granted = await Promise.race([
+        usageHasPermission(),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+      ]);
       setUsagePerm(granted ? 'granted' : 'denied');
       if (granted) setUsageDays(await forceRefreshUsage(7, chronotype));
     })();
   }, [chronotype]);
-  const [historyScrollTop, setHistoryScrollTop] = useState(0);
 
-
-  // 历史列表可视窗口：只渲染滚动位置附近的行
-  const historyWindow = (() => {
-    const visible = Math.ceil(HISTORY_VIEW_H / HISTORY_ROW_H) + HISTORY_OVERSCAN * 2;
-    const start = Math.max(0, Math.floor(historyScrollTop / HISTORY_ROW_H) - HISTORY_OVERSCAN);
-    const end = Math.min(records.length, start + visible);
-    return { start, end };
-  })();
 
   // Use up to last 7 days sorted chronologically
   const last7Records = nightsOnly(records).slice(0, 7).reverse();
@@ -525,7 +606,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                     <span className="w-4 h-[2px] rounded-full bg-rose-300" />75 警戒
                   </span>
                 </span>
-                <span className="text-slate-500">拖动或点按查看</span>
               </div>
             </div>
           </div>
@@ -830,68 +910,13 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
             {records.length === 0 ? (
               <EmptyState theme={theme} illustration="no-data" title="暂无数据记录" compact />
             ) : (
-              // 窗口化渲染（第 74 轮性能）：固定行高 + 滚动窗口，DOM 恒定为
-              // 可视行数 + 上下各 4 行 overscan——2000 条记录也只有 ~13 行节点，
-              // 不再是「加载更多」堆到 2 万节点
-              <div
-                data-testid="history-list"
-                className="overflow-y-auto no-scrollbar"
-                style={{ height: HISTORY_VIEW_H }}
-                onScroll={(e) => setHistoryScrollTop(e.currentTarget.scrollTop)}
-              >
-                <div className="relative" style={{ height: records.length * HISTORY_ROW_H }}>
-                  {records
-                    .slice(historyWindow.start, historyWindow.end)
-                    .map((r, i) => {
-                      const index = historyWindow.start + i;
-                      return (
-                        <div
-                          key={r.id}
-                          style={{ top: index * HISTORY_ROW_H, height: HISTORY_ROW_H }}
-                          className="absolute left-0 right-0 flex items-center justify-between hover:bg-slate-800/30 px-2 rounded-xl transition-colors group"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-white text-xs">{r.date}</span>
-                              {r.kind === 'nap' && <span className="text-[8px] font-black text-sky-300 bg-[#082f49]/80 px-1 py-0.5 rounded">😴 小睡</span>}
-                              <span className={`font-mono ${accentText} font-bold text-xs`}>{r.sleepScore}分</span>
-                            </div>
-                            <div className={`text-[11px] ${textMuted} flex items-center gap-2 mt-0.5 font-mono`}>
-                              <span>{r.bedtime} - {r.wakeTime}</span>
-                              <span>·</span>
-                              <span>{formatDurationChinese(r.durationMinutes)}</span>
-                              <span>·</span>
-                              <span className="text-emerald-400">深睡 {r.deepSleepMinutes}m</span>
-                            </div>
-                          </div>
-
-                          {/* Delete Button */}
-                          {onDeleteRecord && (
-                            <button
-                              type="button"
-                              aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {
-                                  onDeleteRecord(r.id);
-                                }
-                              }}
-                              title="删除此条记录"
-                              className={`p-2 ${textMuted} hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
-            {records.length > historyWindow.end && (
-              <p className={`text-center text-[10px] ${textMuted} pt-2`}>
-                向下滚动查看更多（共 {records.length} 条）
-              </p>
+              // 窗口化渲染收在 HistoryList（见其注释）：滚动只重渲染列表自身
+              <HistoryList
+                records={records}
+                onDeleteRecord={onDeleteRecord}
+                textMuted={textMuted}
+                accentText={accentText}
+              />
             )}
           </div>
         )}
@@ -1116,3 +1141,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
     </div>
   );
 };
+
+// memo（第 81 轮性能）：App 级任意状态变化（toast/横幅/键盘）此前会把
+// 五个已挂载分区连同最重的趋势页全量重渲染；props 均为稳定引用后跳过
+export const TrendsTab = React.memo(TrendsTabInner);

@@ -218,7 +218,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
                       className="w-full h-full object-cover"
                     />
                     {stars > 0 && (
-                      <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-amber-500/90 text-[8px] font-black text-[#020617]">
+                      <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-amber-500/90 text-[9px] font-black text-[#020617]">
                         ★ {stars + 1}
                       </span>
                     )}
@@ -232,7 +232,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
 
                 {/* 底部信息栏 */}
                 <div className="pt-2 px-0.5 space-y-0.5">
-                  <div className="flex items-center justify-between text-[8px]">
+                  <div className="flex items-center justify-between text-[9px]">
                     <span className="font-mono text-[#94a3b8]">No.{String(card.index).padStart(2, '0')}</span>
                     <span className="text-[#94a3b8]">{card.country}</span>
                   </div>
@@ -240,7 +240,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
                     {isUnlocked ? card.title : '待探索梦境'}
                   </p>
                   {isUnlocked && (
-                    <p className="text-[8px] text-amber-300/90 flex items-center gap-1 truncate">
+                    <p className="text-[9px] text-amber-300/90 flex items-center gap-1 truncate">
                       <span>{card.souvenir.emoji}</span>
                       <span>{card.souvenir.name}</span>
                     </p>
@@ -258,7 +258,7 @@ export const TravelCodexModal: React.FC<Props> = ({ onClose }) => {
             >
               <Compass className="w-5 h-5" />
               <span className="text-[9px] font-bold">更多大洲</span>
-              <span className="text-[8px]">插画筹备中</span>
+              <span className="text-[9px]">插画筹备中</span>
             </div>
           )}
         </div>

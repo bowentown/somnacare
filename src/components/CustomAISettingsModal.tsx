@@ -313,7 +313,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <HardDrive className="w-4 h-4 text-emerald-400" />
-                  <span className="font-bold text-white">本地医学规则引擎 (Phase 0 深度增强)</span>
+                  <span className="font-bold text-white">本地医学规则引擎</span>
                 </div>
                 <span className="text-[10px] text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-600">
                   0MB 即刻可用 · 零延迟
@@ -321,18 +321,8 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
               </div>
 
               <p className="text-[11px] text-slate-300 leading-relaxed">
-                遵循失眠认知行为治疗（CBT-I）与美国国家睡眠基金会（NSF）指南。内置意图分类器、生命危机熔断安全护栏，并结合当夜深睡、潜伏期与作息真实插值。
+                按 CBT-I 失眠认知行为治疗指南本地推理，结合你当夜的真实数据作答，含危机安全护栏。
               </p>
-
-              <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/60 text-[11px] text-emerald-300 space-y-1">
-                <div className="font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>已集成十大临床睡眠意图与生命安全护栏</span>
-                </div>
-                <p className="text-slate-300 text-[10px]">
-                  覆盖深睡提升、20分钟离床重置、早醒皮质醇应对、咖啡因腺苷代谢、危机热线即时阻断。
-                </p>
-              </div>
             </div>
           )}
 
@@ -645,7 +635,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
           {/* Privacy & Key Security Notice */}
           <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
-            🛡️ **存储与安全提示**：自配的 API Key 以明文形式保存在您当前设备浏览器的 LocalStorage 中，不会上传存储至我们的服务器；请勿在他人共用的公用设备上保存敏感 Key。
+            🛡️ 存储与安全提示：自配的 API Key 以明文形式保存在您当前设备浏览器的 LocalStorage 中，不会上传存储至我们的服务器；请勿在他人共用的公用设备上保存敏感 Key。
           </div>
         </div>
 

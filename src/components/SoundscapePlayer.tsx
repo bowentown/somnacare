@@ -96,26 +96,45 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
   const playerA11y = useModalA11y(true, onClose, '白噪音伴眠');
   const breathA11y = useModalA11y(showBreath, () => setShowBreath(false), '呼吸练习');
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
+  // 定时关闭按"墙钟截止时刻"计算（第 81 轮审计 P1）：此前每秒 -1 计数，
+  // 息屏后 WebView 计时器冻结，30 分钟到点停不下（整夜播放或恢复后乱停）。
+  // 截止时刻 + 每秒对账 Date.now()，恢复可见时立即补结算
+  const [timerDeadline, setTimerDeadline] = useState<number | null>(null);
   const [timerRemainingSeconds, setTimerRemainingSeconds] = useState<number | null>(null);
   const isPlaying = Object.keys(active).length > 0;
 
   useEffect(() => {
-    let interval: number;
-    if (isPlaying && timerRemainingSeconds !== null && timerRemainingSeconds > 0) {
-      interval = window.setInterval(() => {
-        setTimerRemainingSeconds((prev) => {
-          if (prev && prev > 1) {
-            return prev - 1;
-          }
-          // Timer finished
-          sleepAudio.stopAllLayers(true);
-          setActive({});
-          return null;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, timerRemainingSeconds]);
+    if (!isPlaying || timerDeadline === null) return;
+    const stopNow = () => {
+      sleepAudio.stopAllLayers(true);
+      setActive({});
+      setTimerDeadline(null);
+      setTimerRemainingSeconds(null);
+    };
+    let interval: number | undefined;
+    const tick = (): boolean => {
+      const remain = Math.round((timerDeadline - Date.now()) / 1000);
+      if (remain <= 0) {
+        stopNow();
+        return true;
+      }
+      setTimerRemainingSeconds(remain);
+      return false;
+    };
+    if (tick()) return;
+    interval = window.setInterval(() => {
+      if (tick() && interval !== undefined) clearInterval(interval);
+    }, 1000);
+    // 回到前台/解锁：计时器冻结期间到过的点在此刻立即补结算
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      if (interval !== undefined) clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [isPlaying, timerDeadline]);
 
   // 关闭混音器面板会卸载本组件——此前音频整夜继续播、30 分钟定时关闭随组件
   // 一起消失且重开后永不恢复。把截止时刻提到引擎层（模块单例），组件卸载
@@ -137,7 +156,8 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
     } else {
       sleepAudio.startLayer(track.soundType, 0.6);
       setActive((prev) => ({ ...prev, [track.soundType]: 0.6 }));
-      if (timerMinutes && timerRemainingSeconds === null) {
+      if (timerMinutes && timerDeadline === null) {
+        setTimerDeadline(Date.now() + timerMinutes * 60000);
         setTimerRemainingSeconds(timerMinutes * 60);
       }
     }
@@ -156,14 +176,19 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
       next[type] = vol;
     }
     setActive(next);
-    if (timerMinutes) setTimerRemainingSeconds(timerMinutes * 60);
+    if (timerMinutes) {
+      setTimerDeadline(Date.now() + timerMinutes * 60000);
+      setTimerRemainingSeconds(timerMinutes * 60);
+    }
   };
 
   const handleSetTimer = (mins: number | null) => {
     setTimerMinutes(mins);
-    if (mins) {
+    if (mins && isPlaying) {
+      setTimerDeadline(Date.now() + mins * 60000);
       setTimerRemainingSeconds(mins * 60);
     } else {
+      setTimerDeadline(null);
       setTimerRemainingSeconds(null);
     }
   };
@@ -321,6 +346,8 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
           onClick={() => {
             sleepAudio.stopAllLayers(true);
             setActive({});
+            setTimerDeadline(null);
+            setTimerRemainingSeconds(null);
           }}
           className={`w-full py-2.5 rounded-2xl ${theme.accentBg} ${theme.accentFg} text-xs font-black cursor-pointer active:scale-[0.98] transition-transform`}
         >

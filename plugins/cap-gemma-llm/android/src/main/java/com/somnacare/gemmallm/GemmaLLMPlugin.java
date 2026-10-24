@@ -277,7 +277,8 @@ public class GemmaLLMPlugin extends Plugin {
     public void appUpdateDownload(PluginCall call) {
         String url = call.getData().optString("url", "");
         String sha256 = call.getData().optString("sha256", "");
-        call.resolve(AppUpdateManager.enqueue(getContext(), url, sha256));
+        boolean allowMetered = call.getData().optBoolean("allowMetered", false);
+        call.resolve(AppUpdateManager.enqueue(getContext(), url, sha256, allowMetered));
     }
 
     @PluginMethod

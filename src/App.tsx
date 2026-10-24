@@ -17,10 +17,11 @@ import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
-import { ActiveSleepModal } from './components/ActiveSleepModal';
+import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components/ActiveSleepModal';
 import { ManualLogModal } from './components/ManualLogModal';
 import { APP_THEMES } from './utils/themeStyles';
 import { isNativePlatform, syncAlarmsToNative } from './utils/nativeAlarmScheduler';
+import { subscribeAppResume } from './utils/appResume';
 import { CustomAlarmSetting } from './types/sleep';
 import { sleepAudio } from './utils/audioSynth';
 import { applyEyeCare, eyeCareInAppStyles, isInEyeCareWindow } from './utils/eyeCare';
@@ -52,7 +53,7 @@ const PANE_LABELS: Record<string, string> = {
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('today');
-  const [isActiveSleepOpen, setIsActiveSleepOpen] = useState(false);
+  const [isActiveSleepOpen, setIsActiveSleepOpen] = useState(() => hasRecoverableActiveSleepSession());
   const [isManualLogOpen, setIsManualLogOpen] = useState(false);
   // 手动补录预填（提议式记录的"改一下"通路）
   const [manualLogPrefill, setManualLogPrefill] = useState<{ date: string; bedtime: string; wakeTime: string } | null>(null);
@@ -382,6 +383,22 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 时区跳变后重同步闹钟（第 81 轮审计 P2）：原生铃闹由 BootReceiver 的
+  // TIMEZONE_CHANGED 自动重排，但 Capacitor 一次性通知锚定绝对时刻——
+  // 跨时区后仍指旧本地时刻。回前台检测到时区偏移变化就全量重排一次
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let lastOffset = new Date().getTimezoneOffset();
+    const unsubscribe = subscribeAppResume(() => {
+      const offset = new Date().getTimezoneOffset();
+      if (offset === lastOffset) return;
+      lastOffset = offset;
+      syncAlarmsToNative(userProfile.alarms || []);
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userProfile.alarms]);
+
   // 鲸鱼娘速览卡点行后拉起 App：读取并清除原生写入的目标分区
   useEffect(() => {
     if (!isNativePlatform()) return;
@@ -505,8 +522,6 @@ export const App: React.FC = () => {
       if (!userProfile.bedtimeReminderEnabled) return;
       try {
         if (localStorage.getItem('somnacare_bedtime_start')) return;
-        const today = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-        if (localStorage.getItem('somnacare_reminder_fired') === today) return;
         const [th, tm] = (userProfile.targetBedtime || '23:30').split(':').map(Number);
         const now = new Date();
         const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -516,7 +531,15 @@ export const App: React.FC = () => {
         const lateEvening = nowMin >= targetMin && nowMin <= targetMin + 15;
         const pastMidnight = nowMin + 1440 >= targetMin && nowMin + 1440 <= targetMin + 15;
         if (lateEvening || pastMidnight) {
-          localStorage.setItem('somnacare_reminder_fired', today);
+          // 去重键=本夜的夜归属日（凌晨窗口归前一晚）。此前用自然日：
+          // 00:05 补提醒存下"新的一天"，当晚 23:50 的提醒被误判已发，
+          // 且 23:52→00:04 同一夜会触发两次（第 81 轮审计）
+          const nightDate = pastMidnight
+            ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+            : now;
+          const nightKey = `${nightDate.getFullYear()}-${String(nightDate.getMonth() + 1).padStart(2, '0')}-${String(nightDate.getDate()).padStart(2, '0')}`;
+          if (localStorage.getItem('somnacare_reminder_fired') === nightKey) return;
+          localStorage.setItem('somnacare_reminder_fired', nightKey);
           setBedtimeReminder('ask');
         }
       } catch {
@@ -743,11 +766,12 @@ export const App: React.FC = () => {
   // 后弹的短提示会被先前长提示的回调提前收掉
   const toastTimerRef = useRef<number>(0);
   const adSkipWarnedRef = useRef(false);
-  const showToast = (msg: string, durationMs = 3200) => {
+  // useCallback：作为 memo 分区 props 的依赖须稳定（第 81 轮性能）
+  const showToast = useCallback((msg: string, durationMs = 3200) => {
     setToastMessage(msg);
     window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToastMessage(null), durationMs);
-  };
+  }, []);
 
   // 广告跳过服务被系统关闭时，本次会话首次前台恢复给一次提示
   useEffect(() => {
@@ -926,7 +950,9 @@ export const App: React.FC = () => {
     showToast('已载入 7 天演示数据（原记录已被替换）');
   };
 
-  const handleDeleteRecord = (id: string) => {
+  // useCallback（第 81 轮性能）：TrendsTab 已 memo，本回调须为稳定引用，
+  // 否则 App 任意状态变化（toast/横幅）仍会连带趋势页全量重渲染
+  const handleDeleteRecord = useCallback((id: string) => {
     const victim = records.find((r) => r.id === id);
     if (victim) {
       // 删除的夜/小睡不再驱动旅行能量（第 51 轮审计：账本须随真值回退）。
@@ -949,7 +975,7 @@ export const App: React.FC = () => {
       window.clearTimeout(undoTimerRef.current);
       undoTimerRef.current = window.setTimeout(() => setUndoDeleted(null), 5000);
     }
-  };
+  }, [records, showToast]);
 
   const handleUndoDelete = () => {
     if (!undoDeleted) return;

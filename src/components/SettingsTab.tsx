@@ -16,6 +16,7 @@ import {
 import { UserProfile, CustomAlarmSetting, CustomAIConfig, SleepRecord, SleepStageSegment } from '../types/sleep';
 import { AlarmManager } from './AlarmManager';
 import { CustomAISettingsModal } from './CustomAISettingsModal';
+import { Switch } from './ui';
 import { createPortal } from 'react-dom';
 import { APP_THEMES, ThemeConfig } from '../utils/themeStyles';
 import { loadShadowStore, shadowStats, HIT_THRESHOLD_MIN } from '../utils/modelShadow';
@@ -651,7 +652,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className={`flex items-center justify-between gap-3 ${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5`}>
           <div className="min-w-0">
             <p className="text-xs font-bold text-slate-200">环境光</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">随本地时段微调色温 · 极光缓慢流动</p>
           </div>
           <button
             type="button"
@@ -787,10 +787,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </div>
         )}
 
-        {!adSkipNative && (
-          <p className="px-5 pb-4 -mt-1 text-[10px] text-slate-400">安装 APK 后可用</p>
-        )}
-
         {adSkipNative && adSkip.enabled && !adSkip.serviceEnabled && (
           <button
             type="button"
@@ -826,7 +822,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               </button>
             </div>
             {batteryIgnored !== null && (
-              <p className={`text-[10px] ${batteryIgnored ? 'text-emerald-400' : 'text-slate-500'}`}>
+              <p className={`text-[10px] ${batteryIgnored ? 'text-emerald-400' : 'text-slate-400'}`}>
                 电池优化：{batteryIgnored ? '已豁免' : '未豁免'}
               </p>
             )}
@@ -865,7 +861,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                   </div>
                 )}
                 {adSkip.diag.length === 0 ? (
-                  <p className="text-[10px] text-slate-500 font-mono">
+                  <p className="text-[10px] text-slate-400 font-mono">
                     暂无记录——打开一个带广告的应用后再回来看
                   </p>
                 ) : (
@@ -884,7 +880,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     Shizuku 守护
                     <span className="ml-1 font-normal text-slate-500">可选</span>
                   </p>
-                  <p className={`text-[10px] ${shizuku.granted ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  <p className={`text-[10px] ${shizuku.granted ? 'text-emerald-400' : 'text-slate-400'}`}>
                     {shizukuStatusText}
                   </p>
                 </div>
@@ -911,11 +907,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </button>
               </div>
               {shizukuMsg && <p className="text-[10px] text-amber-300 leading-relaxed">{shizukuMsg}</p>}
-              <p className="text-[9px] text-slate-500 leading-relaxed">
+              <p className="text-[9px] text-slate-400 leading-relaxed">
                 需保持 Shizuku 运行；重启后未启动则不可用。
               </p>
             </div>
-            <p className="text-[9px] text-slate-500 leading-relaxed">
+            <p className="text-[9px] text-slate-400 leading-relaxed">
               更稳：允许自启动 + 锁定最近任务；开关变灰需在应用信息里允许受限设置。
             </p>
           </div>
@@ -993,7 +989,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               )}
               {shadow.withOutcome === 0 && (
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                  模型输出会按夜自动存档；你每次确认提议或手动补录后，这里会算出提议时刻与实际记录的误差。
+                  确认一次提议或手动补录后，这里会算出提议时刻与实际记录的误差。
                 </p>
               )}
               {recent.length > 0 && (
@@ -1008,7 +1004,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                       <div key={e.date} className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[10px] font-mono`}>
                         <span className="text-slate-400 shrink-0">{e.date.slice(5)}</span>
                         <span className="text-slate-300">{eng ? `${eng.bed} → ${eng.wake}` : '—'}{adjust}</span>
-                        <span className={`shrink-0 ${e.negative ? 'text-rose-400' : e.outcome ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        <span className={`shrink-0 ${e.negative ? 'text-rose-400' : e.outcome ? 'text-emerald-400' : 'text-slate-400'}`}>
                           {e.outcome ? `记录 ${e.outcome.bed}→${e.outcome.wake}` : tag}
                         </span>
                       </div>
@@ -1017,10 +1013,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </div>
               )}
               <p className="text-[9px] text-slate-400 leading-relaxed">
-                需要开启使用情况访问且积累 ≥7 天数据，模型才会介入提议。误差 = 提议时刻与你最终确认/补录时刻的差异（按圆周口径，跨午夜安全）。
+                需要开启使用情况访问且积累 ≥7 天数据，模型才会介入提议。
               </p>
               {chainDiag && (
-                <pre className="whitespace-pre-wrap text-[10px] font-mono text-slate-300 bg-black/25 rounded-xl p-3 leading-relaxed border border-slate-700">{chainDiag}</pre>
+                <pre className="whitespace-pre-wrap break-all text-[10px] font-mono text-slate-300 bg-black/25 rounded-xl p-3 leading-relaxed border border-slate-700 max-h-40 overflow-y-auto">{chainDiag}</pre>
               )}
             </div>
           );
@@ -1055,24 +1051,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ${petOpen ? 'rotate-180' : ''}`} />
           </button>
           {petNative && (
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                aria-label="开启或关闭大肥鱼桌宠"
-                checked={petOn}
-                disabled={petBusy}
-                onChange={(e) => void handlePetToggle(e.target.checked)}
-                className="sr-only peer"
-              />
-              {/* 开关选中色用主题 accentBg（themeStyles 里的字面类会被 Tailwind 生成）：
-                  受控组件直接按 petOn 切换，不再依赖 peer-checked 的固定色 */}
-              <div className={`relative w-11 h-6 rounded-full transition-colors ${petOn ? theme.accentBg : 'bg-slate-600'}`}>
-                <span
-                  className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all"
-                  style={{ left: petOn ? '22px' : '2px' }}
-                />
-              </div>
-            </label>
+            <Switch
+              checked={petOn}
+              disabled={petBusy}
+              onChange={(next) => void handlePetToggle(next)}
+              ariaLabel="开启或关闭大肥鱼桌宠"
+              onClass={theme.accentBg}
+            />
           )}
         </div>
 
@@ -1204,10 +1189,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             配置与探查
           </button>
         </div>
-
-        <p className="text-xs text-slate-300 font-medium">
-          云端直连 · 端侧小模型 · 本地规则引擎，三级自由切换
-        </p>
       </div>
 
 

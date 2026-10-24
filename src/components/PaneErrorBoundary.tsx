@@ -44,7 +44,7 @@ export class PaneErrorBoundary extends Component<Props, State> {
           <p className="text-[11px] text-slate-400 leading-relaxed">
             这一分区的数据显示出了问题，其他分区不受影响。
             {this.state.error?.message && (
-              <span className="block mt-1 font-mono text-[10px] text-slate-500 break-all">
+              <span className="block mt-1 font-mono text-[10px] text-slate-400 break-all">
                 {this.state.error.message}
               </span>
             )}

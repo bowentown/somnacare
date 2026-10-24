@@ -143,7 +143,7 @@ export const PondCard: React.FC<{
   }, [streak]);
 
   return (
-    <div className={`${theme.cardBg} rounded-2xl border ${theme.cardBorder} overflow-hidden`}>
+    <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} overflow-hidden`}>
       <canvas
         ref={canvasRef}
         width={W}

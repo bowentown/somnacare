@@ -60,7 +60,11 @@ const SELFIE_SRC = `${import.meta.env.BASE_URL || '/'}whale-selfie.png`;
 const SELFIE_SRC_SAKURA = `${import.meta.env.BASE_URL || '/'}whale-selfie-sport.png`;
 
 /** 配图卡（CSS 渲染零依赖，致敬 dsh-plugin-moments 的九宫格混合图卡）。 */
-const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment }) => {
+const CardView: React.FC<{
+  type: MomentCard;
+  moment: Moment;
+  selfieCtx: { rotated?: TravelPostcard; isSakura: boolean };
+}> = ({ type, moment, selfieCtx }) => {
   if (type === 'postcard') {
     return (
       <div className="w-full py-1">
@@ -69,16 +73,8 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
     );
   }
   if (type === 'selfie') {
-    // 皮肤值只有 'default' / 'sakura'——此前判的是改名前的 'sport'，恒为
-    // false，自拍卡永远不跟随服装。走 petOverlay 的单一真相源
-    const isSakura = getPetSkin() === 'sakura';
-    // 自拍轮换：已解锁的旅行明信片按日期轮换当"旅行自拍"（同一天稳定、
-    // 隔天换图）；一张都没解锁时回退默认自拍。用缩略图省流量
-    const unlocked = loadTravelState()
-      .unlockedCardIds.map((id) => getPostcardById(id))
-      .filter((c): c is TravelPostcard => !!c);
-    const dayKey = toLocalDateString().split('-').reduce((a, p) => a + Number(p), 0);
-    const rotated = unlocked.length > 0 ? unlocked[dayKey % unlocked.length] : undefined;
+    // 皮肤跟随 petOverlay 单一真相源；轮换明信片由父级算好传入
+    const { rotated, isSakura } = selfieCtx;
     const src = rotated ? thumbUrlOf(rotated.imageUrl) : (isSakura ? SELFIE_SRC_SAKURA : SELFIE_SRC);
     return (
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-sky-500/30 to-blue-900/40 border border-slate-700/60 aspect-square flex items-center justify-center">
@@ -141,7 +137,7 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
             <p className="text-2xl font-black text-white leading-none">
               {goodDays}<span className="text-xs text-slate-400 font-bold">/{elapsedDays}</span>
             </p>
-            <p className="text-[8px] text-slate-400 mt-0.5">晚达标</p>
+            <p className="text-[9px] text-slate-400 mt-0.5">晚达标</p>
           </div>
           <span className="text-[9px] font-mono text-emerald-300">{pct}%</span>
         </div>
@@ -151,7 +147,7 @@ const CardView: React.FC<{ type: MomentCard; moment: Moment }> = ({ type, moment
               <span key={i} className={`flex-1 h-1.5 rounded-full ${slotTone(s)}`} />
             ))}
           </div>
-          <p className="text-[8px] text-slate-400 mt-0.5 whitespace-nowrap">
+          <p className="text-[9px] text-slate-400 mt-0.5 whitespace-nowrap">
             {missed !== null && missed > 0 ? `${missed} 晚未记录` : '每晚都有记录'}
           </p>
         </div>
@@ -202,6 +198,19 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
 
 
   const travelProgress = getTravelProgress();
+
+  // 自拍轮换上下文提升（第 81 轮性能）：此前每张自拍卡每次渲染都要
+  // JSON.parse 一次旅行状态；评论输入打字会触发父级重渲染，逐卡重复解析
+  const selfieCtx = React.useMemo(() => {
+    const unlocked = loadTravelState()
+      .unlockedCardIds.map((id) => getPostcardById(id))
+      .filter((c): c is TravelPostcard => !!c);
+    const dayKey = toLocalDateString().split('-').reduce((a, p) => a + Number(p), 0);
+    return {
+      rotated: unlocked.length > 0 ? unlocked[dayKey % unlocked.length] : undefined,
+      isSakura: getPetSkin() === 'sakura',
+    };
+  }, [moments]);
 
   const hasAi =
     (!!userProfile?.aiConfig?.provider === true &&
@@ -372,7 +381,7 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
               </div>
               <div className="flex-1 min-w-0 space-y-1.5">
                 <p className="text-[11px] font-black text-sky-300">蓝色大肥鱼</p>
-                <p className="text-xs text-slate-100 leading-relaxed whitespace-pre-wrap">{stripMd(m.text)}</p>
+                <p className="text-xs text-slate-100 leading-relaxed whitespace-pre-wrap break-words">{stripMd(m.text)}</p>
 
                 {/* 配图卡：九宫格布局（1 张大图 / 2-3 张并排 / 明信片独占） */}
                 {m.cards.length > 0 && (
@@ -386,7 +395,7 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
                       : 'grid-cols-3'
                   }`}>
                     {m.cards.map((c, i) => (
-                      <CardView key={i} type={c} moment={m} />
+                      <CardView key={i} type={c} moment={m} selfieCtx={selfieCtx} />
                     ))}
                   </div>
                 )}
@@ -465,7 +474,7 @@ export const MomentsOverlay: React.FC<Props> = ({ records, userProfile, onClose 
                       onKeyDown={(e) => { if (e.key === 'Enter') void sendComment(m.id); }}
                       placeholder="和她说点什么……"
                       maxLength={80}
-                      className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-[11px] text-white placeholder:text-slate-600 outline-none focus:border-sky-500"
+                      className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-[11px] text-white placeholder:text-slate-400 outline-none focus:border-sky-500"
                     />
                     <button
                       type="button"

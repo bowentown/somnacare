@@ -56,6 +56,8 @@ export interface DownloadStatus {
   bytesDownloaded: number;
   totalBytes: number;
   reason?: string;
+  /** paused 时的机器可读原因：wifi=等待 Wi-Fi（可改用流量）network=无网 retry=稍后重试 */
+  pausedReason?: 'wifi' | 'network' | 'retry';
   versionName?: string;
   versionCode?: number;
 }
@@ -75,12 +77,16 @@ function toInt(value: unknown): number {
 
 function normalizeStatus(raw: any): DownloadStatus {
   const status = typeof raw?.status === 'string' ? raw.status : 'missing';
+  const pausedReason = raw?.pausedReason;
   return {
     downloadId: toInt(raw?.downloadId),
     status: status as DownloadPhase,
     bytesDownloaded: toInt(raw?.bytesDownloaded),
     totalBytes: toInt(raw?.totalBytes),
     ...(typeof raw?.reason === 'string' && raw.reason ? { reason: raw.reason } : {}),
+    ...(pausedReason === 'wifi' || pausedReason === 'network' || pausedReason === 'retry'
+      ? { pausedReason }
+      : {}),
     ...(typeof raw?.versionName === 'string' ? { versionName: raw.versionName } : {}),
     ...(typeof raw?.versionCode === 'number' ? { versionCode: raw.versionCode } : {}),
   };
@@ -270,13 +276,18 @@ export interface StartDownloadResult {
   reason?: string;
 }
 
-export async function startUpdateDownload(asset: UpdateAsset): Promise<StartDownloadResult> {
+export async function startUpdateDownload(
+  asset: UpdateAsset,
+  opts?: { allowMetered?: boolean },
+): Promise<StartDownloadResult> {
   const pl = plugin();
   if (!pl?.appUpdateDownload) return { ok: false, reason: '当前环境不支持安装 APK' };
   try {
     const res = await pl.appUpdateDownload({
       url: asset.url,
       sha256: asset.sha256 ?? '',
+      // 默认仅 Wi-Fi：APK 通常 60-100MB，移动流量需用户在卡上显式选择
+      allowMetered: opts?.allowMetered === true,
     });
     const downloadId = toInt(res?.downloadId);
     if (res?.ok === true && downloadId > 0) return { ok: true, downloadId };
