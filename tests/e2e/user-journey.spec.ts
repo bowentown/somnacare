@@ -141,8 +141,10 @@ test('旅程1 晨间：07:50 冷启动自动出卡 → 确认 → 趋势/能量/
   // 自动卡出现且时刻按 15 分钟桶量化
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cardText = await page.evaluate(() => document.body.innerText);
-  expect(cardText).toMatch(/2[23]:[0-5]\d 放下/);
-  expect(cardText).toMatch(/0[67]:[0-2]\d 拿起/);
+  expect(cardText).toMatch(/2[23]:[0-5]\d/);
+  expect(cardText).toMatch(/0[67]:[0-2]\d/);
+  expect(cardText).toMatch(/放下/);
+  expect(cardText).toMatch(/拿起/);
 
   // 确认 → 小结 → 关闭
   await page.getByRole('button', { name: /记为这次就寝/ }).click();

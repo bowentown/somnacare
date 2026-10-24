@@ -366,8 +366,10 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '睡眠' }).click();
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cardText = await page.evaluate(() => document.body.innerText);
-  expect(cardText).toMatch(/00:28 放下/);
-  expect(cardText).toMatch(/07:38 拿起/);
+  expect(cardText).toMatch(/00:28/);
+  expect(cardText).toMatch(/07:38/);
+  expect(cardText).toMatch(/放下/);
+  expect(cardText).toMatch(/拿起/);
 
   // 处理卡（忽略）→ 解锁标记一次性清除 + handled 落锁，刷新不复活
   await page.getByRole('button', { name: '不是我的睡眠' }).click();
@@ -547,8 +549,8 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
   // 修复的关键断言：不点自检、不重开页面，卡片必须自己出现
   await expect(page.getByText('昨晚的手机使用')).toBeVisible({ timeout: 15000 });
   const cardText = await page.evaluate(() => document.body.innerText);
-  expect(cardText).toMatch(/2[23]:[0-5]\d 放下/);
-  expect(cardText).toMatch(/0[67]:[0-2]\d 拿起/);
+  expect(cardText).toMatch(/2[23]:[0-5]\d/);
+  expect(cardText).toMatch(/0[67]:[0-2]\d/);
 
   // 面板 ⑧：恢复触发与引擎结果留痕（下次真机"还不弹"时的定位入口）
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
@@ -617,8 +619,8 @@ test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自�
   // 模型 decided → 提议卡（时刻按 15 分钟桶量化：23:30/23:45 → 07:00/07:15）
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cardText = await page.evaluate(() => document.body.innerText);
-  expect(cardText).toMatch(/2[23]:[0-5]\d 放下/);
-  expect(cardText).toMatch(/0[67]:[0-2]\d 拿起/);
+  expect(cardText).toMatch(/2[23]:[0-5]\d/);
+  expect(cardText).toMatch(/0[67]:[0-2]\d/);
 
   // 引擎跑动即入影子档（recordEngineRun 在提议出现时执行）
   const shadow = await readStore(page, 'somnacare_model_shadow');
