@@ -33,6 +33,8 @@ import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import {
   getAdSkipStatus,
   getShizukuStatus,
+  copyAdSkipDiag,
+  getAdSkipStats,
   isBatteryOptimizationIgnored,
   openAdSkipAccessibilitySettings,
   openShizukuApp,
@@ -40,6 +42,7 @@ import {
   requestBatteryOptimizationExemption,
   requestShizukuPermission,
   setAdSkipEnabled,
+  type AdSkipAppStat,
   type AdSkipStatus,
   type ShizukuStatus,
 } from '../utils/adSkip';
@@ -126,11 +129,18 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   });
   const [shizukuBusy, setShizukuBusy] = useState(false);
   const [shizukuMsg, setShizukuMsg] = useState<string | null>(null);
+  const [adSkipMsg, setAdSkipMsg] = useState<string | null>(null);
   const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
+  const [adSkipStats, setAdSkipStats] = useState<AdSkipAppStat[]>([]);
   const refreshAdSkip = async () => {
-    const st = await getAdSkipStatus();
+    const [st, stats] = await Promise.all([getAdSkipStatus(), getAdSkipStats()]);
     setAdSkip(st);
+    setAdSkipStats(stats);
     return st;
+  };
+  const handleCopyDiag = async () => {
+    const ok = await copyAdSkipDiag();
+    setAdSkipMsg(ok ? '诊断信息已复制，粘贴发给开发者即可' : '复制失败，请截图运行日志代替');
   };
   const refreshSystemGuard = async () => {
     const [sh, battery] = await Promise.all([
@@ -827,14 +837,33 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <div className="pt-2 border-t border-slate-700/50 space-y-1">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[10px] font-bold text-slate-300">运行日志</p>
-                  <button
-                    type="button"
-                    onClick={() => void refreshAdSkip()}
-                    className="text-[10px] text-slate-400 underline cursor-pointer"
-                  >
-                    刷新
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyDiag()}
+                      className="text-[10px] text-slate-400 underline cursor-pointer"
+                    >
+                      复制诊断
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void refreshAdSkip()}
+                      className="text-[10px] text-slate-400 underline cursor-pointer"
+                    >
+                      刷新
+                    </button>
+                  </div>
                 </div>
+                {/* 按应用命中榜（第 74 轮）：一眼看出哪些应用在持续被跳过 */}
+                {adSkipStats.length > 0 && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-slate-400 font-mono pb-1">
+                    {adSkipStats.slice(0, 5).map((s) => (
+                      <span key={s.pkg} className="tabular-nums">
+                        {s.label} ×{s.hits}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {adSkip.diag.length === 0 ? (
                   <p className="text-[10px] text-slate-500 font-mono">
                     暂无记录——打开一个带广告的应用后再回来看
@@ -844,6 +873,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 {adSkip.diag.join('\n')}
                   </pre>
                 )}
+                {adSkipMsg && <p className="text-[10px] text-emerald-300 leading-relaxed">{adSkipMsg}</p>}
               </div>
             )}
 

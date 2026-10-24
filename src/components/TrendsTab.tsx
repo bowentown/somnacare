@@ -87,6 +87,12 @@ const STAGE_LABELS = {
   awake: '清醒',
 } as const;
 
+/** 历史记录窗口化（第 74 轮性能）：固定行高 64px、可视 320px（5 行），
+ *  上下各 4 行 overscan——2000 条记录也只有 ~13 行 DOM 节点 */
+const HISTORY_ROW_H = 64;
+const HISTORY_VIEW_H = 320;
+const HISTORY_OVERSCAN = 4;
+
 export const TrendsTab: React.FC<TrendsTabProps> = ({
   records,
   onDeleteRecord,
@@ -128,8 +134,16 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
       if (granted) setUsageDays(await forceRefreshUsage(7, chronotype));
     })();
   }, [chronotype]);
-  const [historyLimit, setHistoryLimit] = useState(50);
+  const [historyScrollTop, setHistoryScrollTop] = useState(0);
 
+
+  // 历史列表可视窗口：只渲染滚动位置附近的行
+  const historyWindow = (() => {
+    const visible = Math.ceil(HISTORY_VIEW_H / HISTORY_ROW_H) + HISTORY_OVERSCAN * 2;
+    const start = Math.max(0, Math.floor(historyScrollTop / HISTORY_ROW_H) - HISTORY_OVERSCAN);
+    const end = Math.min(records.length, start + visible);
+    return { start, end };
+  })();
 
   // Use up to last 7 days sorted chronologically
   const last7Records = nightsOnly(records).slice(0, 7).reverse();
@@ -805,59 +819,72 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
 
         {/* Collapsible Content */}
         {isHistoryExpanded && (
-          <div className="mt-3 pt-3 border-t border-slate-700/60 divide-y divide-slate-800 text-xs animate-tab-fade-in">
+          <div className="mt-3 pt-3 border-t border-slate-700/60 text-xs animate-tab-fade-in">
             {records.length === 0 ? (
               <div className={`py-4 text-center ${textMuted}`}>暂无数据记录</div>
             ) : (
-              // 单帧渲染 2000 条 ≈ 2 万 DOM 节点会卡顿：分页展示
-              records.slice(0, historyLimit).map((r) => (
-                <div
-                  key={r.id}
-                  className="py-3 flex items-center justify-between hover:bg-slate-800/30 px-2 rounded-xl transition-colors group"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-xs">{r.date}</span>
-                      {r.kind === 'nap' && <span className="text-[8px] font-black text-sky-300 bg-[#082f49]/80 px-1 py-0.5 rounded">😴 小睡</span>}
-                      <span className={`font-mono ${accentText} font-bold text-xs`}>{r.sleepScore}分</span>
-                    </div>
-                    <div className={`text-[11px] ${textMuted} flex items-center gap-2 mt-0.5 font-mono`}>
-                      <span>{r.bedtime} - {r.wakeTime}</span>
-                      <span>·</span>
-                      <span>{formatDurationChinese(r.durationMinutes)}</span>
-                      <span>·</span>
-                      <span className="text-emerald-400">深睡 {r.deepSleepMinutes}m</span>
-                    </div>
-                  </div>
-
-                  {/* Delete Button */}
-                  {onDeleteRecord && (
-                    <button
-                      type="button"
-                      aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {
-                          onDeleteRecord(r.id);
-                        }
-                      }}
-                      title="删除此条记录"
-                      className={`p-2 ${textMuted} hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))
-            )}
-            {records.length > historyLimit && (
-              <button
-                type="button"
-                onClick={() => setHistoryLimit((v) => v + 50)}
-                className={`w-full py-2 text-center text-[10px] font-bold ${textMuted} hover:text-white cursor-pointer`}
+              // 窗口化渲染（第 74 轮性能）：固定行高 + 滚动窗口，DOM 恒定为
+              // 可视行数 + 上下各 4 行 overscan——2000 条记录也只有 ~13 行节点，
+              // 不再是「加载更多」堆到 2 万节点
+              <div
+                data-testid="history-list"
+                className="overflow-y-auto no-scrollbar"
+                style={{ height: HISTORY_VIEW_H }}
+                onScroll={(e) => setHistoryScrollTop(e.currentTarget.scrollTop)}
               >
-                加载更多（已显示 {historyLimit} / {records.length} 条）
-              </button>
+                <div className="relative" style={{ height: records.length * HISTORY_ROW_H }}>
+                  {records
+                    .slice(historyWindow.start, historyWindow.end)
+                    .map((r, i) => {
+                      const index = historyWindow.start + i;
+                      return (
+                        <div
+                          key={r.id}
+                          style={{ top: index * HISTORY_ROW_H, height: HISTORY_ROW_H }}
+                          className="absolute left-0 right-0 flex items-center justify-between hover:bg-slate-800/30 px-2 rounded-xl transition-colors group"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white text-xs">{r.date}</span>
+                              {r.kind === 'nap' && <span className="text-[8px] font-black text-sky-300 bg-[#082f49]/80 px-1 py-0.5 rounded">😴 小睡</span>}
+                              <span className={`font-mono ${accentText} font-bold text-xs`}>{r.sleepScore}分</span>
+                            </div>
+                            <div className={`text-[11px] ${textMuted} flex items-center gap-2 mt-0.5 font-mono`}>
+                              <span>{r.bedtime} - {r.wakeTime}</span>
+                              <span>·</span>
+                              <span>{formatDurationChinese(r.durationMinutes)}</span>
+                              <span>·</span>
+                              <span className="text-emerald-400">深睡 {r.deepSleepMinutes}m</span>
+                            </div>
+                          </div>
+
+                          {/* Delete Button */}
+                          {onDeleteRecord && (
+                            <button
+                              type="button"
+                              aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {
+                                  onDeleteRecord(r.id);
+                                }
+                              }}
+                              title="删除此条记录"
+                              className={`p-2 ${textMuted} hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+            {records.length > historyWindow.end && (
+              <p className={`text-center text-[10px] ${textMuted} pt-2`}>
+                向下滚动查看更多（共 {records.length} 条）
+              </p>
             )}
           </div>
         )}

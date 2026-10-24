@@ -159,6 +159,84 @@ public class GemmaLLMPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** 按应用命中统计（第 74 轮）：包名映射成应用名，按次数降序，最多 20 条 */
+    @PluginMethod
+    public void adSkipStats(PluginCall call) {
+        Context ctx = getContext();
+        JSArray apps = new JSArray();
+        java.util.Map<String, Integer> hits = AdSkipService.hitsByPackage(ctx);
+        java.util.List<String> sorted = new java.util.ArrayList<>(hits.keySet());
+        sorted.sort((a, b) -> hits.get(b) - hits.get(a));
+        PackageManager pm = ctx.getPackageManager();
+        int shown = 0;
+        for (String pkg : sorted) {
+            if (shown >= 20) break;
+            shown++;
+            JSObject item = new JSObject();
+            item.put("pkg", pkg);
+            String label = pkg;
+            try {
+                CharSequence cs = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
+                if (cs != null && cs.length() > 0) label = cs.toString();
+            } catch (Exception ignored) {
+                // 应用已卸载：显示包名
+            }
+            item.put("label", label);
+            item.put("hits", hits.get(pkg));
+            apps.put(item);
+        }
+        JSObject ret = new JSObject();
+        ret.put("apps", apps);
+        ret.put("total", AdSkipService.hitsByPackage(ctx).values().stream().mapToInt(Integer::intValue).sum());
+        call.resolve(ret);
+    }
+
+    /** 一键复制诊断（第 74 轮）：版本/服务状态/命中/最近日志/按应用统计 → 剪贴板 */
+    @PluginMethod
+    public void adSkipCopyDiag(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            Context ctx = getContext();
+            StringBuilder sb = new StringBuilder();
+            sb.append("SomnaCare 广告跳过诊断\n");
+            try {
+                android.content.pm.PackageInfo info = ctx.getPackageManager()
+                        .getPackageInfo(ctx.getPackageName(), 0);
+                sb.append("版本: ").append(info.versionName)
+                        .append(" (").append(android.os.Build.VERSION.SDK_INT >= 28
+                                ? info.getLongVersionCode() : info.versionCode).append(")\n");
+            } catch (Exception ignored) {
+            }
+            sb.append("开关: ").append(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getBoolean(AdSkipService.KEY_ENABLED, false))
+                    .append(" / 服务: ").append(isAdSkipServiceEnabled()).append('\n');
+            sb.append("累计点击: ").append(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getInt(AdSkipService.KEY_HITS, 0)).append('\n');
+            sb.append("\n最近日志:\n");
+            for (String line : AdSkipService.diagSnapshot()) sb.append(line).append('\n');
+            sb.append("\n按应用命中:\n");
+            java.util.Map<String, Integer> hits = AdSkipService.hitsByPackage(ctx);
+            java.util.List<String> sorted = new java.util.ArrayList<>(hits.keySet());
+            sorted.sort((a, b) -> hits.get(b) - hits.get(a));
+            for (String pkg : sorted) sb.append(pkg).append(' ').append(hits.get(pkg)).append('\n');
+
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null) {
+                ret.put("ok", false);
+                ret.put("reason", "剪贴板服务不可用");
+                call.resolve(ret);
+                return;
+            }
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("somnacare-ad-skip-diag", sb.toString()));
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("reason", e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void adSkipOpenSettings(PluginCall call) {
         try {

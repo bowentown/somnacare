@@ -67,6 +67,18 @@ jobs:
           # 构建不静默中断（回退会留下明显日志）
           npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
+      # 第 74 轮：构建期自动刷新 GKD 广告规则到订阅最新版。
+      # 失败不阻塞发版：回退仓库已提交版本，规则可以旧，构建不能挂
+      - name: Refresh GKD ad-skip rules (best-effort)
+        run: |
+          if npx tsx tools/refresh-gkd-rules.mts \
+            && npx tsx tools/verify-ad-skip.mts > /dev/null 2>&1; then
+            echo "规则已刷新到订阅最新版并通过安全审计"
+          else
+            echo "::warning::GKD 规则刷新失败或未通过审计，回退仓库已提交版本"
+            git checkout -- plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json || true
+          fi
+
       - name: Run Guardrails (wiring / theme / contrast)
         run: npm run verify
       - name: Build Local Offline Dist

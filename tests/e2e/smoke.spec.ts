@@ -32,14 +32,25 @@ const seed = async (page: import('@playwright/test').Page) => {
   await page.waitForTimeout(4200);   // 开屏动画播完
 };
 
-test('五个分区同时渲染（滑动轨道常驻）', async ({ page }) => {
+test('分区懒渲染：首帧只渲染当前分区，访问后挂载且常驻', async ({ page }) => {
+  // 第 74 轮性能改造：滑动轨道常驻（布局不变），分区内容按需挂载——
+  // 首帧只有「今天」，趋势/AI/护眼/偏好在首次访问时挂载并保留
   await seed(page);
   const texts = await page.evaluate(() => document.body.innerText);
   expect(texts).toMatch(/早安|午后小睡|今晚准备入睡|该睡了/);   // 睡眠主卡（时段自适应标题）
-  expect(texts).toContain('趋势与结构');        // 趋势
-  expect(texts).toContain('大肥鱼的朋友圈');    // AI 顾问
-  expect(texts).toContain('护眼滤镜');          // 护眼
-  expect(texts).toContain('界面主题');          // 偏好
+  expect(texts).not.toContain('大肥鱼的朋友圈');   // 未访问的分区不渲染
+
+  const visit = async (tab: string, marker: string) => {
+    await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: tab, exact: true }).click();
+    await page.waitForTimeout(400);
+    const t = await page.evaluate(() => document.body.innerText);
+    expect(t).toContain(marker);
+  };
+  await visit('AI顾问', '大肥鱼的朋友圈');
+  await visit('护眼', '护眼滤镜');
+  await visit('偏好', '界面主题');
+  // 回到今天：访问过的分区保持挂载，今天的内容仍在（梦境漫游=池塘入口，非时段自适应）
+  await visit('睡眠', '梦境漫游');
 });
 
 test('得分曲线几何自洽：100 分点在 90 分绿线上方', async ({ page }) => {

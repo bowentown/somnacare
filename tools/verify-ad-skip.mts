@@ -265,6 +265,21 @@ ok('桥接：状态 / 开关 / 设置页三个原生方法',
   && plugin.includes('public void adSkipSetEnabled')
   && plugin.includes('public void adSkipOpenSettings')
   && plugin.includes('AdSkipService'));
+ok('按应用命中统计 + 一键复制诊断（原生记账 → 插件回传 → 设置页展示）',
+  service.includes('recordHit(pkg)')
+  && service.includes('static java.util.Map<String, Integer> hitsByPackage')
+  && plugin.includes('public void adSkipStats')
+  && plugin.includes('public void adSkipCopyDiag')
+  && plugin.includes('setPrimaryClip')
+  && js.includes('getAdSkipStats')
+  && js.includes('copyAdSkipDiag')
+  && settings.includes('adSkipStats')
+  && settings.includes('复制诊断'));
+ok('CI 构建期自动刷新 GKD 规则（失败回退已提交版本，规则可以旧构建不能挂）',
+  workflow.includes('tools/refresh-gkd-rules.mts')
+  && workflow.includes('git checkout -- plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json')
+  && generator.includes('export function runImport')
+  && generator.includes('invokedDirectly'));
 ok('JS：状态 / 开关 / 设置页封装',
   js.includes('getAdSkipStatus')
   && js.includes('setAdSkipEnabled')

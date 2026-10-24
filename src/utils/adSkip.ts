@@ -67,6 +67,46 @@ export async function openAdSkipAccessibilitySettings(): Promise<void> {
   }
 }
 
+// ── 按应用命中统计 + 一键复制诊断（第 74 轮） ─────────────────────
+
+export interface AdSkipAppStat {
+  pkg: string;
+  label: string;
+  hits: number;
+}
+
+export async function getAdSkipStats(): Promise<AdSkipAppStat[]> {
+  const pl = plugin();
+  if (!pl?.adSkipStats) return [];
+  try {
+    const res = await pl.adSkipStats();
+    if (!Array.isArray(res?.apps)) return [];
+    return res.apps
+      .filter((a: any) => typeof a?.pkg === 'string')
+      .map((a: any) => ({
+        pkg: String(a.pkg),
+        label: typeof a.label === 'string' && a.label ? a.label : String(a.pkg),
+        hits: typeof a.hits === 'number' ? a.hits : 0,
+      }))
+      .filter((a: AdSkipAppStat) => a.hits > 0)
+      .sort((x: AdSkipAppStat, y: AdSkipAppStat) => y.hits - x.hits);
+  } catch {
+    return [];
+  }
+}
+
+/** 诊断文本（版本/状态/最近日志/按应用统计）复制到剪贴板，发给开发者定位问题 */
+export async function copyAdSkipDiag(): Promise<boolean> {
+  const pl = plugin();
+  if (!pl?.adSkipCopyDiag) return false;
+  try {
+    const res = await pl.adSkipCopyDiag();
+    return res?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Shizuku 守护（第 61 轮，可选） ───────────────────────────────
 // Shizuku 以 shell 身份运行，能写回 secure settings；但它本身必须在运行，
 // 而且无法阻止 OEM 的电池/自启动清理。这里只提供"用户点一下修回来"，

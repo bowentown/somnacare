@@ -20,7 +20,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import JSON5 from 'json5';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -712,12 +712,9 @@ function isClickAction(rule: Json): boolean {
   return action === 'click' || action === 'clickNode' || action === 'clickCenter';
 }
 
-function main(): void {
-  const inputArg = process.argv[2];
-  if (!inputArg) {
-    console.error('用法: npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5 [selector-library.json]');
-    process.exit(1);
-  }
+/** 从本地 dist 文件构建规则表并写入 assets（CI 刷新脚本复用同一实现） */
+export function runImport(distPath: string, libraryPath?: string): void {
+  const inputArg = distPath;
   const dist = JSON5.parse(readFileSync(resolve(inputArg), 'utf-8')) as Json;
 
   // ── 全局开屏组（dist.globalGroups） ──
@@ -741,7 +738,7 @@ function main(): void {
   }
 
   // ── 全局选择器库（可选；v667 起的 SDK 级卡片关闭规则） ──
-  const libraryArg = process.argv[3];
+  const libraryArg = libraryPath;
   let librarySplash = 0;
   let libraryAlways = 0;
   if (libraryArg) {
@@ -883,4 +880,14 @@ function main(): void {
   console.log(`  → ${OUTPUT}`);
 }
 
-main();
+// 仅直接执行时跑 main；被 refresh-gkd-rules 导入时只暴露 runImport
+const invokedDirectly = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (invokedDirectly) {
+  const inputArg = process.argv[2];
+  if (!inputArg) {
+    console.error('用法: npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5 [selector-library.json]');
+    process.exit(1);
+  }
+  runImport(inputArg, process.argv[3]);
+}

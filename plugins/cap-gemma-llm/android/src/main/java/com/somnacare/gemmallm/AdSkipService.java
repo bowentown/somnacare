@@ -143,6 +143,49 @@ public class AdSkipService extends AccessibilityService {
             return new ArrayList<>(DIAG);
         }
     }
+
+    /** 按应用累计命中次数（第 74 轮）：设置页展示 + 随诊断一起复制给开发者 */
+    private static final String KEY_HITS_BY_PKG = "ad_skip_hits_by_pkg";
+    private static final int HITS_BY_PKG_MAX = 120;
+
+    private void recordHit(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        try {
+            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String raw = sp.getString(KEY_HITS_BY_PKG, "");
+            org.json.JSONObject obj = raw.isEmpty() ? new org.json.JSONObject() : new org.json.JSONObject(raw);
+            obj.put(pkg, obj.optInt(pkg, 0) + 1);
+            if (obj.length() > HITS_BY_PKG_MAX) {
+                // 超限时丢掉计数最少的条目，保持常驻体积可控
+                java.util.List<String> keys = new ArrayList<>();
+                java.util.Iterator<String> it = obj.keys();
+                while (it.hasNext()) keys.add(it.next());
+                keys.sort((a, b) -> obj.optInt(a, 0) - obj.optInt(b, 0));
+                for (int i = 0; i < keys.size() - HITS_BY_PKG_MAX; i++) obj.remove(keys.get(i));
+            }
+            sp.edit().putString(KEY_HITS_BY_PKG, obj.toString()).apply();
+        } catch (Exception ignored) {
+            // 统计失败不影响跳过本身
+        }
+    }
+
+    /** 按应用命中统计（package → 次数），供插件回传 */
+    static java.util.Map<String, Integer> hitsByPackage(Context context) {
+        java.util.Map<String, Integer> out = new java.util.HashMap<>();
+        try {
+            String raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY_HITS_BY_PKG, "");
+            if (raw.isEmpty()) return out;
+            org.json.JSONObject obj = new org.json.JSONObject(raw);
+            java.util.Iterator<String> it = obj.keys();
+            while (it.hasNext()) {
+                String key = it.next();
+                out.put(key, obj.optInt(key, 0));
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** 启动窗口内的主动轮询：事件稀疏时保证开屏按钮仍被扫到（窗口外自动停止调度） */
     private final Runnable splashPoller = new Runnable() {
@@ -342,6 +385,7 @@ public class AdSkipService extends AccessibilityService {
             inAppClickTimes.addLast(lastClickAt);
             SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
+            recordHit(pkg);
             return true;
         }
         return false;

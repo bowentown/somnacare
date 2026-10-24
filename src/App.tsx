@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bell,
@@ -120,6 +120,30 @@ export const App: React.FC = () => {
   const [bedtimeReminder, setBedtimeReminder] = useState<BedtimeReminderPhase | null>(null);
   const [sleepStartSignal, setSleepStartSignal] = useState(0);
   const TAB_ORDER: NavTab[] = ['today', 'trends', 'coach', 'eyecare', 'settings'];
+  // 分区懒渲染（第 74 轮性能）：首帧只渲染当前分区，其余按需挂载且挂载后常驻。
+  // 此前五分区全量常驻——趋势页的 Recharts、护眼层、AI 面板都在开屏动画窗口里
+  // 抢主线程，冷启动帧预算被白白吃掉。相邻分区在空闲/手势开始时预热，滑动不空白。
+  const [mountedPanes, setMountedPanes] = useState<Set<NavTab>>(() => new Set<NavTab>(['today']));
+  const mountPane = useCallback((id: NavTab) => {
+    setMountedPanes((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+  const preheatNeighbors = useCallback((id: NavTab) => {
+    const i = TAB_ORDER.indexOf(id);
+    if (i > 0) mountPane(TAB_ORDER[i - 1]);
+    if (i >= 0 && i < TAB_ORDER.length - 1) mountPane(TAB_ORDER[i + 1]);
+  }, [mountPane]);
+  useEffect(() => {
+    mountPane(activeTab);
+    // 邻居预热推迟到开屏动画之后（1.9s 淡出 + 余量），避免首帧竞争；
+    // 用户提前滑动时，手势开始那一刻也会立即预热（见轨道 onPointerDown）
+    const t = window.setTimeout(() => preheatNeighbors(activeTab), 2600);
+    return () => window.clearTimeout(t);
+  }, [activeTab, mountPane, preheatNeighbors]);
   const trackRef = useRef<HTMLDivElement>(null);
   const listenerCleanupRef = useRef<(() => void) | null>(null);
   // 最近一次划动抬手的时刻：swallowClick 的时间窗判定用。
@@ -1120,6 +1144,11 @@ export const App: React.FC = () => {
             ref={trackRef}
             className="flex h-full swipe-track"
             style={{ width: `${TAB_ORDER.length * 100}%` }}
+            // 不能在 pointerdown 里同步预热：React 会在手势派发中重渲染整树，
+            // Recharts 的 SVG 随即重建、事件目标脱离文档，轨道的
+            // closest('[data-no-swipe]') 判定翻转会把图表拖拽误判成翻页
+            // （与图表自身的 pointerdown 注释同一坑，第 74 轮实测）。推迟一拍。
+            onPointerDown={() => setTimeout(() => preheatNeighbors(activeTab), 0)}
           >
             {TAB_ORDER.map((id) => (
               <div
@@ -1128,6 +1157,7 @@ export const App: React.FC = () => {
                 style={{ width: `${100 / TAB_ORDER.length}%` }}
               >
                 <div className="p-4 space-y-4">
+                  {mountedPanes.has(id) && (
                   <PaneErrorBoundary label={PANE_LABELS[id] ?? id}>
                   {id === 'today' && (
                     <TodayTab
@@ -1216,6 +1246,7 @@ export const App: React.FC = () => {
                     />
                   )}
                   </PaneErrorBoundary>
+                  )}
                 </div>
               </div>
             ))}
