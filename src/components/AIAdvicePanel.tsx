@@ -717,7 +717,7 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
             <Camera className="w-3.5 h-3.5 text-sky-400" />
           </h3>
           <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
-            她每天根据你的真实睡眠数据发动态，AI 好友来毒舌，你可以评论——她会傲娇地回
+            每天发动态 · AI 好友毒舌点评
           </p>
         </div>
         <span className="text-[10px] font-black text-sky-300 shrink-0">进入 ›</span>

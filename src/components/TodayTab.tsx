@@ -454,7 +454,6 @@ export const TodayTab: React.FC<TodayTabProps> = ({
         <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
           <div>
             <span className="text-xs font-bold text-slate-200 block">深夜救援</span>
-            <span className="text-[10px] text-slate-500 block mt-0.5">半夜玩手机超 15 分钟时，弹窗劝你继续睡</span>
           </div>
           <button
             type="button"

@@ -27,8 +27,8 @@ ok('原生：queryAppUsage 按自然日返回每应用前台分钟（<1 分钟�
 ok('JS：queryAppUsage 封装 + 类型', usageSignal.includes('queryAppUsage') && usageSignal.includes('AppUsageEntry'));
 ok('UI：数字健康台区块（分类 chips + Top5 横条）',
   tab.includes('数字健康台') && tab.includes('categoryTotals') && tab.includes('todayApps.slice(0, 5)'));
-ok('UI：隐私声明在场（本地分类、不上传）',
-  tab.includes('分类规则在本机运行，不上传任何数据'));
+// 第 80 轮（用户裁决）：解释性小字删除——隐私口径在 README 与权限表
+ok('UI：无解释小字（干净）', !tab.includes('应用时长来自系统使用记录'));
 ok('UI：复用 StatCard/Progress 视觉语法（Phase 0 组件层）',
   tab.includes('<StatCard') && !tab.includes('暂无睡眠数据</span>'));
 

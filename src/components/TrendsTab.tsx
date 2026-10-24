@@ -538,10 +538,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2.5`}>
               <div className="flex items-start justify-between gap-2 text-[10px]">
                 <span className="text-slate-300 font-mono min-w-0 leading-tight">
-                  {/* 诚实声明：分期由时长/作息模型估算，无硬件测量——只作趋势参考 */}
-                  <span className="inline-block text-[8px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-400/30 px-1 py-0.5 rounded mb-1">
-                    模型估算 · 非测量
-                  </span>
                   {activeStage ? (
                     <>
                       <span className="text-slate-400">{activeStage.record.date.slice(5)}</span>

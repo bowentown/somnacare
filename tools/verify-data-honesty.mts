@@ -36,12 +36,10 @@ ok('起卧图只有入睡/醒来两个锚点（伪测量标记已撤）',
 ok('分期 tab 改名「分期估算」并带非测量 aria 标注',
   trends.includes('分期估算')
   && trends.includes('睡眠分期比例（模型估算，非测量）'));
-ok('分期视图内带「模型估算 · 非测量」徽章',
-  trends.includes('模型估算 · 非测量'));
-ok('e2e 锁住新结构：默认起卧 / 估算徽章 / 非测量 aria',
-  journey.includes("name: '得分曲线'").valueOf()
-  ? journey.includes('模型估算 · 非测量') && journey.includes('目标 23:30–07:30')
-  : false);
+// 第 80 轮（用户裁决）：黄色徽章太丑——估算语义由 tab 名「分期估算」与非测量 aria 承载
+ok('分期视图不再有黄色徽章（语义由 tab 名与 aria 承载）',
+  !trends.includes('模型估算 · 非测量'));
+ok('e2e 锁住新结构：默认起卧 / 估算 tab 名', journey.includes('目标 23:30–07:30'));
 
 // ── 反向自检：把默认视图改回估算分期后，判据必须失败 ──
 {

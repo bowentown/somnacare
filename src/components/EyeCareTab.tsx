@@ -594,9 +594,6 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <p className="text-[9px] text-slate-500 leading-relaxed">
-            屏幕时间与解锁次数由系统使用记录统计，全部留在本机。
-          </p>
         </div>
       )}
       {native && !dailyHealth.length && rest.enabled && (
@@ -647,9 +644,6 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               );
             })}
           </div>
-          <p className="text-[9px] text-slate-500 leading-relaxed">
-            应用时长来自系统使用记录（真实测量），分类规则在本机运行，不上传任何数据。
-          </p>
         </div>
       )}
 

@@ -1000,6 +1000,5 @@ test('旅程24 趋势图可读性：坐标刻度、分期横带、起卧目标�
 
   await page.getByRole('button', { name: '睡眠分期比例（模型估算，非测量）' }).click();
   await expect(page.getByText('近 7 晚平均')).toBeVisible();
-  await expect(page.getByText('模型估算 · 非测量')).toBeVisible();
   expect(errors).toEqual([]);
 });
