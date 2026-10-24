@@ -16,7 +16,7 @@ import {
   setEyeRestEnabled,
   type EyeRestStatus,
 } from '../utils/eyeCare';
-import { queryDailyHealth, type DailyHealthDay } from '../utils/usageSignal';
+import { queryDailyHealth, queryAppUsage, type DailyHealthDay, type AppUsageEntry } from '../utils/usageSignal';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { EmptyState, StatCard } from './ui';
 
@@ -138,6 +138,38 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     小时: Math.round((d.screenMinutes / 60) * 10) / 10,
     解锁: d.unlocks,
   }));
+
+  // ── 数字健康台（第 78 轮，Phase 3）：每应用真实时长 + 本地分类 ──
+  const [appUsage, setAppUsage] = useState<AppUsageEntry[]>([]);
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  useEffect(() => {
+    if (!native) return;
+    void queryAppUsage(1).then(setAppUsage);
+  }, [native]);
+  const todayApps = appUsage
+    .filter((a) => a.date === todayKey)
+    .sort((a, b) => b.minutes - a.minutes);
+  const CATEGORY_RULES: Array<{ name: string; test: RegExp }> = [
+    { name: '社交', test: /tencent\.mm|weibo|instagram|facebook|twitter|xingin|snssdk|telegram|whatsapp|line\./i },
+    { name: '视频', test: /youtube|aweme|kuaishou|bili|netflix|iqiyi|douyu|huya|tiktok|musical/i },
+    { name: '阅读', test: /qidian|qreader|dragon\.read|duokan|ireader|weread|hwread|heytap\.reader|kuangxiangciweimao/i },
+    { name: '游戏', test: /game|unity|hypixel|netease\.|tencent\.games|miHoYo|mihoyo/i },
+  ];
+  const categoryOf = (pkg: string): string =>
+    CATEGORY_RULES.find((r) => r.test.test(pkg))?.name ?? '其他';
+  const categoryTotals = (() => {
+    const totals = new Map<string, number>();
+    for (const a of todayApps) {
+      const c = categoryOf(a.pkg);
+      totals.set(c, (totals.get(c) ?? 0) + a.minutes);
+    }
+    return [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+  // 展示包名短形式（无独立的应用名映射方法；完整包名在 title 里）
+  const appLabel = (pkg: string): string => {
+    const short = pkg.split('.').pop() ?? pkg;
+    return short.length > 12 ? short.slice(0, 12) : short;
+  };
 
   const handleToggle = async (next: boolean) => {
     if (next && native) {
@@ -575,6 +607,50 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
           hint="开启使用情况访问后，明天这里会出现第一份报告"
           compact
         />
+      )}
+
+      {/* 8. 数字健康台（第 78 轮，Phase 3）：每应用真实分钟 + 本地分类 */}
+      {native && todayApps.length > 0 && (
+        <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+          <div className="flex items-center gap-2">
+            <Pipette className="w-4 h-4 text-violet-300" />
+            <h3 className="text-sm font-bold text-white">数字健康台</h3>
+            <span className="text-[10px] text-slate-500 font-mono">今日</span>
+          </div>
+          {categoryTotals.length > 0 && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-300">
+              {categoryTotals.map(([name, minutes]) => (
+                <span key={name} className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-full px-2 py-0.5 font-mono tabular-nums`}>
+                  {name} {minutes >= 60 ? `${Math.floor(minutes / 60)}h${minutes % 60}m` : `${minutes}m`}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            {todayApps.slice(0, 5).map((a) => {
+              const maxMin = todayApps[0].minutes;
+              return (
+                <div key={a.pkg} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-20 truncate font-mono text-slate-400 shrink-0" title={a.pkg}>
+                    {appLabel(a.pkg)}
+                  </span>
+                  <div className={`flex-1 h-2 rounded-full ${theme.cardInnerBg} overflow-hidden`}>
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${Math.max(4, Math.round((a.minutes / maxMin) * 100))}%`, background: theme.accentHex }}
+                    />
+                  </div>
+                  <span className="w-14 text-right font-mono tabular-nums text-slate-300 shrink-0">
+                    {a.minutes >= 60 ? `${Math.floor(a.minutes / 60)}h${a.minutes % 60}m` : `${a.minutes}m`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[9px] text-slate-500 leading-relaxed">
+            应用时长来自系统使用记录（真实测量），分类规则在本机运行，不上传任何数据。
+          </p>
+        </div>
       )}
 
       {/* 7. 定时（默认关闭，按需开启） */}

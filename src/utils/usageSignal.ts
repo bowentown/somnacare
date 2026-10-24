@@ -141,6 +141,32 @@ export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
   }
 }
 
+// ── 每应用使用时长（第 78 轮，Phase 3）：真实测量，分类在 JS 侧做 ──
+
+export interface AppUsageEntry {
+  date: string;
+  pkg: string;
+  minutes: number;
+}
+
+export async function queryAppUsage(days = 1): Promise<AppUsageEntry[]> {
+  const pl = usage();
+  if (!pl?.queryAppUsage) return [];
+  try {
+    const res = await pl.queryAppUsage({ days });
+    if (!Array.isArray(res?.apps)) return [];
+    return res.apps
+      .filter((a: any) => a && typeof a.pkg === 'string' && typeof a.date === 'string')
+      .map((a: any) => ({
+        date: a.date,
+        pkg: a.pkg,
+        minutes: typeof a.minutes === 'number' ? a.minutes : 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function cachedUsageDays(): UsageDay[] {
   try {
     const raw = localStorage.getItem(CACHE_KEY);

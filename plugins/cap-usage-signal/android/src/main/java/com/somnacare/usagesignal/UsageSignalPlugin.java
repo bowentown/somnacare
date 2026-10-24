@@ -323,4 +323,51 @@ public class UsageSignalPlugin extends Plugin {
             call.reject("查询每日屏幕健康失败: " + e.getMessage());
         }
     }
+    /**
+     * 每应用使用时长（第 78 轮，Phase 3）：按自然日的每应用前台分钟数，
+     * 真实测量（UsageStats 聚合）。分类（社交/视频等）在 JS 侧做，
+     * 便于随时调整规则而不动原生。
+     */
+    @PluginMethod
+    public void queryAppUsage(PluginCall call) {
+        if (!hasUsageAccess()) {
+            call.reject("缺少使用情况访问权限");
+            return;
+        }
+        int days = call.getInt("days", 1);
+        if (days < 1) days = 1;
+        if (days > 7) days = 7;
+        try {
+            Context ctx = getContext();
+            UsageStatsManager usm =
+                    (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) {
+                call.resolve(new JSObject());
+                return;
+            }
+            long now = System.currentTimeMillis();
+            java.text.DateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            java.util.Calendar dayCal = java.util.Calendar.getInstance();
+            java.util.List<android.app.usage.UsageStats> stats =
+                    usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - days * DAY_MS, now);
+            JSArray arr = new JSArray();
+            for (android.app.usage.UsageStats s : stats) {
+                if (s == null) continue;
+                long ft = s.getTotalTimeInForeground();
+                if (ft < 60_000L) continue;   // 不足 1 分钟的应用不进报告
+                dayCal.setTimeInMillis(s.getFirstTimeStamp());
+                JSObject item = new JSObject();
+                item.put("date", df.format(dayCal.getTime()));
+                item.put("pkg", s.getPackageName());
+                item.put("minutes", (int) Math.round(ft / 60000.0));
+                arr.put(item);
+            }
+            JSObject ret = new JSObject();
+            ret.put("apps", arr);
+            ret.put("observedUntil", now);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("查询每应用使用失败: " + e.getMessage());
+        }
+    }
 }
