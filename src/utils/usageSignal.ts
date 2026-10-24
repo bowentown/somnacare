@@ -170,11 +170,15 @@ export interface WindDownResult {
   windowEnd: number;
 }
 
-export async function queryWindDownApps(nightKey: string, windowMinutes = 60): Promise<WindDownResult | null> {
+export async function queryWindDownApps(
+  nightKey: string,
+  chronotype: 'night' | 'day' | 'irregular' = 'night',
+  windowMinutes = 60,
+): Promise<WindDownResult | null> {
   const pl = usage();
   if (!pl?.queryWindDownApps) return null;
   try {
-    const res = await pl.queryWindDownApps({ nightKey, windowMinutes });
+    const res = await pl.queryWindDownApps({ nightKey, chronotype, windowMinutes });
     if (!Array.isArray(res?.apps)) return null;
     return {
       apps: res.apps

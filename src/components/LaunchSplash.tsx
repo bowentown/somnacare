@@ -215,22 +215,26 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
         <div
           className="absolute left-0 right-0 flex flex-col items-center"
           style={{
-            top: 'calc(38% + 168px)',
+            // 与倒影波纹留出呼吸空间（第 83 轮视觉巡检：此前只隔 6px，
+            // 文字像粘在波纹上；小屏上涟漪还会出界被裁成两道竖弧）
+            top: 'calc(38% + 184px)',
             opacity: 0,
             animation: 'splash-rise 500ms ease-out 820ms both',
           }}
         >
-          {/* 文字涟漪（第 82 轮，恢复并升级）：宣传语像落在水面，
-              三圈椭圆自文字中心荡开——只动 transform/opacity，合成器友好 */}
+          {/* 文字涟漪（第 82 轮恢复，第 83 轮修正）：椭圆圈以文字落脚点
+              为中心荡开，宽度受视口约束（min(76vw, 290px)）——固定 250px
+              在 360px 小屏会左右出界，被裁成两道贴边竖弧，毫无涟漪感。
+              只动 transform/opacity，合成器友好 */}
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="absolute left-1/2 top-1/2 rounded-[50%] pointer-events-none"
+              className="absolute left-1/2 rounded-[50%] pointer-events-none"
               style={{
-                width: 250,
-                height: 96,
-                marginLeft: -125,
-                marginTop: -48,
+                width: 'min(76vw, 290px)',
+                height: 64,
+                marginLeft: 'calc(min(76vw, 290px) / -2)',
+                marginTop: 18,            // 椭圆中心压在文字基线下方 → 涟漪从落脚点荡开
                 border: `1px solid ${mc.lit}`,
                 willChange: 'transform, opacity',
                 animation: `splash-slogan-ripple 1300ms ease-out ${880 + i * 180}ms both`,

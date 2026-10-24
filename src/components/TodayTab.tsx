@@ -104,12 +104,12 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;
-    void queryWindDownApps(windDownKey)
+    void queryWindDownApps(windDownKey, userProfile.chronotype ?? 'night')
       .then((r) => { if (!cancelled && r) setWindDown(r); })
       .catch(() => { /* 无权限/不支持：卡片不出现 */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windDownKey, records.length]);
+  }, [windDownKey, records.length, userProfile.chronotype]);
   const [goalOpen, setGoalOpen] = useState(false);
   // 睡前提醒的悬浮窗授权态：null=未检查。此前开关只翻布尔、不申请任何权限，
   // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效

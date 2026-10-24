@@ -32,14 +32,19 @@ ok('原生：queryWindDownApps 存在且窗口钳制在 15–120 分钟',
   plugin.includes('public void queryWindDownApps')
   && plugin.includes('windowMin < 15') && plugin.includes('windowMin > 120'));
 {
-  // 夜归属规则与 queryDailyUsage 同步（12 点前归前一夜 + 放下窗口 18–06）：
+  // 夜归属规则与 queryDailyUsage 同步（12 点前归前一夜 + 放下窗口按作息分窗）：
   // 两套实现并存，规则表达式必须成对出现（各出现 ≥2 次）
   const shift = plugin.match(/hour < 12/g)?.length ?? 0;
   const shiftCal = plugin.match(/cal\.add\(Calendar\.HOUR_OF_DAY, -12\)/g)?.length ?? 0;
   const putDown = plugin.match(/hour >= 18 \|\| hour < 6/g)?.length ?? 0;
-  ok('原生：夜归属/放下窗口规则与 queryDailyUsage 成对同口径（shift×2 + putDown×2）',
-    shift >= 2 && shiftCal >= 2 && putDown >= 2,
-    `shift=${shift} shiftCal=${shiftCal} putDown=${putDown}`);
+  const dayWin = plugin.match(/hour >= 6 && hour < 18/g)?.length ?? 0;
+  ok('原生：夜归属/放下窗口规则与 queryDailyUsage 成对同口径（shift×2 + putDown×2 + 日间窗×2）',
+    shift >= 2 && shiftCal >= 2 && putDown >= 2 && dayWin >= 2,
+    `shift=${shift} shiftCal=${shiftCal} putDown=${putDown} dayWin=${dayWin}`);
+  ok('原生：queryWindDownApps 接受 chronotype（白睡者放下窗口 06–18）',
+    plugin.includes('String chronotype = call.getString("chronotype", "night")'));
+  const todaySrc = read('src/components/TodayTab.tsx');
+  ok('UI：首页查询透传用户作息类型', /queryWindDownApps\(windDownKey, userProfile\.chronotype/.test(todaySrc));
 }
 ok('原生：名字解析不出跳过整条（appLabel null 复用，绝不显示包名碎片）',
   /String label = appLabel\(ctx, e\.getKey\(\)\);[\s\S]{0,120}if \(label == null\) continue;/.test(plugin));

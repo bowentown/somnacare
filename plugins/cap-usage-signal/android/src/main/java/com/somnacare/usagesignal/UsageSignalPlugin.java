@@ -360,6 +360,8 @@ public class UsageSignalPlugin extends Plugin {
             return;
         }
         String nightKey = call.getString("nightKey", "");
+        String chronotype = call.getString("chronotype", "night");
+        boolean isDay = "day".equals(chronotype);
         int windowMin = call.getInt("windowMinutes", 60);
         if (windowMin < 15) windowMin = 15;
         if (windowMin > 120) windowMin = 120;
@@ -394,9 +396,11 @@ public class UsageSignalPlugin extends Plugin {
                 long t = ev.getTimeStamp();
                 cal.setTimeInMillis(t);
                 int hour = cal.get(Calendar.HOUR_OF_DAY);
-                if (hour < 12) cal.add(Calendar.HOUR_OF_DAY, -12);
+                if (!isDay && hour < 12) cal.add(Calendar.HOUR_OF_DAY, -12);
                 String key = df.format(cal.getTime());
-                if (key.equals(nightKey) && off && (hour >= 18 || hour < 6)) {
+                // 放下窗口与 queryDailyUsage 同规则：夜间作息 18:00–次日 06:00；
+                // 白天作息（白睡者主睡在白天）06:00–18:00
+                if (key.equals(nightKey) && off && (isDay ? (hour >= 6 && hour < 18) : (hour >= 18 || hour < 6))) {
                     windowEnd = t;   // 取最后一次（放下 = 熄屏序列的结尾）
                 }
             }
