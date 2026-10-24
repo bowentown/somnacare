@@ -67,7 +67,8 @@ const sources = listFiles(SRC, /\.(tsx?|ts)$/).map((f) => readFileSync(f, 'utf-8
 // theme-* 由 `theme-${currentTheme.id}` 动态拼出（App.tsx / documentElement），
 // 字面查不到属预期；新增强制拼接类名时在这里登记并写明拼接点
 const DYNAMIC_PREFIXES = ['theme-'];
-const CSS_ORPHAN_KNOWN: string[] = [];
+// Recharts 的 svg/包装器类名由库运行时输出（第 79 轮：其焦点圈压制规则）
+const CSS_ORPHAN_KNOWN: string[] = ['recharts-wrapper', 'recharts-surface'];
 
 const orphans = findOrphanClasses(defined, sources, DYNAMIC_PREFIXES, CSS_ORPHAN_KNOWN);
 if (orphans.length > 0) {

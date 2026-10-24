@@ -101,7 +101,9 @@ const today = read('src/components/TodayTab.tsx');
 ok(types.includes('nightRescueEnabled?: boolean'), 'Web：UserProfile.nightRescueEnabled 字段');
 ok(app.includes('nightRescueSet') && app.includes('!== false'), 'Web：App 同步走桥且默认开启（!== false 语义）');
 ok(today.includes('深夜救援') && today.includes('nightRescueEnabled'), 'Web：TodayTab 开关在场');
-ok(today.includes('15 分钟规则'), 'Web：开关副文案讲清功能（15 分钟规则）');
+// 第 79 轮：开关副文案改为大白话（半夜玩手机超 15 分钟时弹窗劝睡），
+// 不再要求用户看懂 CBT-I 术语
+ok(today.includes('半夜玩手机超 15 分钟时，弹窗劝你继续睡'), 'Web：开关副文案讲清功能（大白话）');
 
 // 反向自检：把门删掉后同一谓词必须变红（防"谓词恒真"）
 const mutated = receiver.replace(

@@ -211,24 +211,25 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, CLINICAL_W, coverH);
 
-  // 月牙标记：金色圆 + 封面色偏移圆
+  // 右上角月牙标记：小而干净，放在文字区之外（右上角只留图形，不排文字）
+  const moonX = CLINICAL_W - M - 26;
   ctx.fillStyle = GOLD;
   ctx.beginPath();
-  ctx.arc(930, 92, 30, 0, Math.PI * 2);
+  ctx.arc(moonX, 78, 24, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = COVER_2;
+  ctx.fillStyle = COVER;
   ctx.beginPath();
-  ctx.arc(943, 81, 27, 0, Math.PI * 2);
+  ctx.arc(moonX + 11, 69, 21, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.beginPath();
-  ctx.arc(985, 62, 2, 0, Math.PI * 2);
+  ctx.arc(moonX - 44, 58, 2, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(998, 96, 1.2, 0, Math.PI * 2);
+  ctx.arc(moonX - 32, 98, 1.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // 品牌行
+  // 品牌行（左）——右上角不再排任何文字，杜绝与图形重叠
   ctx.textAlign = 'left';
   ctx.fillStyle = GOLD;
   ctx.font = `600 22px ${SANS}`;
@@ -236,10 +237,6 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = `400 20px ${SANS}`;
   ctx.fillText('极光睡眠', M + 124, 88);
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,0.42)';
-  ctx.font = `500 17px ${MONO}`;
-  ctx.fillText('SLEEP REPORT', CLINICAL_W - M, 88);
 
   // 标题（衬线）
   ctx.textAlign = 'left';

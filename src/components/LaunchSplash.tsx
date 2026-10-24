@@ -218,7 +218,9 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
             top: 'calc(38% + 178px)',
             letterSpacing: '0.42em',
             opacity: 0,
-            animation: 'splash-rise 750ms ease-out 2150ms both',
+            // 2150ms 入场是旧 3.5s 开屏的时序；现在 1.9s 就淡出——
+            // 宣传语必须在淡出前完整可见：900ms 入场，1650ms 成形
+            animation: 'splash-rise 750ms ease-out 900ms both',
           }}
         >
           懂睡眠，更懂你

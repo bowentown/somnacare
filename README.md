@@ -10,7 +10,7 @@
 
 [![Build APK](https://github.com/bowentown/somnacare/actions/workflows/build-apk.yml/badge.svg)](../../actions/workflows/build-apk.yml)
 [![Release](https://img.shields.io/badge/下载-最新%20Release-blue)](../../releases/latest)
-[![Guardrails](https://img.shields.io/badge/护栏-26%20条%20·%20313%20断言-green)](#-质量与验证)
+[![Guardrails](https://img.shields.io/badge/护栏-37%20条%20·%20500%2B%20断言-green)](#-质量与验证)
 
 <img src="docs/screenshots/sleep-tab.png" width="180" />&nbsp;<img src="docs/screenshots/trends-tab.png" width="180" />&nbsp;<img src="docs/screenshots/ai-tab.png" width="180" />&nbsp;<img src="docs/screenshots/eyecare-tab.png" width="180" />&nbsp;<img src="docs/screenshots/sound-mixer.png" width="180" />
 
@@ -71,18 +71,19 @@ npm run dev          # http://localhost:3000
 
 ---
 
-### 📊 趋势与洞察
+### 📊 趋势与洞察（只对真实测量做洞察）
 
-<p align="center"><img src="docs/screenshots/trends-tab.png" width="260" alt="趋势分区" /></p>
-<p align="center"><sub>得分曲线 · 分期比例 · 起卧时段 · 本周睡眠小结</sub></p>
+<p align="center"><img src="docs/screenshots/trends-circadian.png" width="260" alt="起卧时段 · 默认视图" /></p>
+<p align="center"><sub>起卧时段（默认）· 得分曲线 · 分期估算 · 历史记录 · 近期小结</sub></p>
 
-- **7 天得分曲线**：Y 轴 50/75/90/100 刻度、75–100 目标带、90/75 参考线、7 晚均值与缺数据断点；
-- **分期比例**：每晚一条 100% 横带，深睡/浅睡/REM/清醒直接标注，附 7 晚平均；
-- **起卧时段**：哑铃区间图 + 目标作息窗口 + 精确起卧时刻，一眼看出作息漂移；
-- **就诊摘要**：1080×1440 Canvas 报告，底色与强调色跟随当前主题，可切换是否包含具体时刻；导出图不含梦境/心情/习惯。
-- **本周睡眠小结**：平均评分、日均时长、场均深睡、**就寝波动 ±Xm**（作息一致性，绿色=稳 / 红色=波动大）；
-- **本周达标战报**：按"已度过天数 − 有记录天数"如实统计，没记录的夜晚不会被凭空消失；
-- **手机使用对照**：每天的放下手机/拿起时刻与夜间亮屏次数（仅聚合数据，基于屏幕亮灭，非睡眠监测），带日期标注。
+**数据诚实原则**：深睡/浅睡/REM 是无硬件的模型估算，App 不拿它冒充测量——主视图只放真实数据，估算降级为参考并明确标注。
+
+- **起卧时段（默认视图）**：哑铃图——入睡点（主题色）与醒来点（白）细线相连，偏离目标 ≥45 分钟的晚上整条染琥珀；目标作息窗 + 就寝/醒来均值与偏差；
+- **得分曲线**：Recharts 面积图，Y 轴 50/75/90/100 刻度、75–100 目标带、90/75 参考线、7 晚均值与缺数据断点，点按/拖动逐晚查看；
+- **分期估算**：100% 堆叠横条 + 浮层给分钟数，视图内标注"模型估算 · 非测量"；
+- **历史记录**：窗口化渲染，几千条记录也只渲染可视行，滚动流畅；删除支持 5 秒撤销；
+- **近期睡眠小结**：平均评分/日均时长/平均效率 + 作息规律度 + 连续达标战报；
+- **就诊摘要**：1080×1440 Canvas 报告，主题跟随，导出图不含梦境/心情/习惯。
 
 ---
 
@@ -120,16 +121,18 @@ npm run dev          # http://localhost:3000
 
 ---
 
-### 👁 护眼滤镜
+### 👁 护眼健康台
 
-<p align="center"><img src="docs/screenshots/eyecare-tab.png" width="260" alt="护眼分区" /></p>
-<p align="center"><sub>四场景预设 · 调色盘 · 自动日变 · 快捷磁贴</sub></p>
+<p align="center"><img src="docs/screenshots/eyecare-health.png" width="260" alt="护眼健康台" /></p>
+<p align="center"><sub>四场景预设 · 20-20-20 远眺提醒 · 用眼日报 · 数字健康台</sub></p>
 
 - 全局护眼滤镜（所有应用上方生效）：暖色减蓝 + 屏幕减光双层，可暗至低于系统最低亮度；
 - 四场景预设（夜间 / 阅读 / 游戏 / 助眠）+ 调色盘自定义颜色；
+- **20-20-20 远眺提醒**：连续用屏 20 分钟（亮屏/熄屏事件真实测量）→ 全屏远眺引导 20 秒，点按可提前结束；滤镜关着也能独立运行；
+- **用眼日报**：近 7 天每日屏幕时间与解锁次数（系统使用记录统计），今日大数字卡 + 7 天柱状图；
+- **数字健康台**：今日应用时长 Top5（真实应用名）+ 社交/视频/阅读/游戏分类时长，分类规则本机运行；
 - **自动日变**：白天自动减弱、渐强时段可自定义（默认 19–23 点渐强至满档）；
-- **下拉快捷磁贴**：通知栏一键开关护眼，不必打开 App；
-- 定时开关支持跨午夜时段；通知栏一键关闭；滤镜层触摸穿透，不影响任何应用操作。
+- **下拉快捷磁贴**：通知栏一键开关护眼；定时开关支持跨午夜时段；滤镜层触摸穿透。
 
 ---
 
@@ -142,7 +145,7 @@ npm run dev          # http://localhost:3000
 - **每周睡眠分享卡**：Canvas 生成的可保存长图，只含聚合数字，生成前可预览；
 - **应用内更新**：偏好页「应用更新」→ 显式检查 GitHub 最新 Release，展示版本说明与安装包大小；下载后原生校验**包名 / versionCode / 签名证书 / SHA-256** 才交给系统安装器（只在点击时联网，不后台上传任何数据）；
 - **广告跳过**：参考 [GKD_subscription](https://github.com/Lin-arm/GKD_subscription) 的广告规则（第 67 轮起按**完整关系链**求值：`@/</>/+/-/距离/祖先/index` 全语义，631 应用规则中 606 个应用的 1415 条可安全导入，另含全局选择器库的 SDK 卡片关闭规则），按包名 / Activity / 启动时限执行；开屏规则在启动窗口内生效（第 68 轮起**主动轮询 8 秒**——开屏 SDK 常只渲染一次不发事件；同包悬浮窗一并扫描），应用内弹窗/卡片广告在前台期间以滚动窗口限次生效（3 分钟 ≤4 次、单次会话 ≤8 次）；点击目标受 tier 绝对尺寸封顶与包裹比例双重约束，`ACTION_CLICK` 无效时用**坐标手势**兜底（SDK 自绘关闭按钮常是 clickable=false），常驻全局规则要求广告词锚点 + 目标 ≤25%×12%，并排除常见桌面；无障碍服务按系统规范声明 `exported="true"`，并提供电池优化白名单入口；装了 Shizuku 的高级用户可在服务被系统关掉后「一键修回」（Shizuku 本身需在运行，无法阻止 OEM 清理）。
-  - 规则由 `tools/import-gkd-splash.mts` 从订阅的 `dist/gkd.json5` 与 `dist/gkd-667-selector-library.json` 生成（无锚点的纯结构链会被丢弃，宁可少几条也不误点）；订阅里没有规则的应用（如好游快爆）只走通用兜底；按用户要求参考该订阅，相关版权责任由使用者承担。
+  - 规则由 `tools/import-gkd-splash.mts` 从订阅的 `dist/gkd.json5` 与选择器库生成（无锚点的纯结构链会被丢弃，宁可少几条也不误点）；**CI 构建时自动拉取订阅最新版重建规则表**（刷新后跑安全审计，不过关自动回退仓库内置版本）；订阅里没有规则的应用只走通用兜底；按用户要求参考该订阅，相关版权责任由使用者承担。
 
 ---
 
@@ -196,7 +199,7 @@ npm run dev          # http://localhost:3000
 ## 🧬 技术栈
 
 - **前端**：React 19 + TypeScript + Vite + Tailwind CSS；Web Audio API 实时合成 9 种音效；品牌视觉（图标/开屏/启动屏）由 `tools/` 下的手写 PNG/SVG 生成器产出
-- **图表**：评分趋势使用 [Recharts](https://github.com/recharts/recharts)（MIT，React 19）；图表语法参考 shadcn/ui Charts / Tremor / Observable Plot，分期与起卧图使用自定义 SVG
+- **图表与 UI**：评分/分期/日报图表使用 [Recharts](https://github.com/recharts/recharts)（MIT）；组件层与图表语法参考 shadcn/ui Charts / Tremor / Observable Plot；空态插画来自 [unDraw](https://undraw.co)（免费商用免署名，主色随主题）
 - **原生封装**：Capacitor 8（minSdk 24），GitHub Actions 全自动出包
 - **端侧 LLM**：Web 路径 [wllama](https://github.com/transformersjs/wllama)（llama.cpp WASM）+ Qwen3-0.6B；原生路径自定义插件封装 Google MediaPipe LLM Inference（Gemma 3 1B int4，mmap 加载、断点续传、停滞看门狗、流式生成）
 - **全局滤镜**：前台服务 + `TYPE_APPLICATION_OVERLAY` 双悬浮层，窗口级 alpha 按 Android 12+ 非信任触摸豁免规范控制，真实物理分辨率全屏覆盖
@@ -205,7 +208,7 @@ npm run dev          # http://localhost:3000
 
 这个项目把"验证体系"当作与功能同等重要的部分来建设：
 
-- **33 条静态护栏**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
+- **37 条静态护栏（500+ 项断言）**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
 - **53 条 Playwright e2e**：五分区渲染、自动提议全链路（含 LLM 端点 mock 的"编数字拒收"）、授权即时生效、备份往返、主题持久、全分区漫游零未捕获异常看门狗；
 - **变异测试方法论**：对护栏本身做变异测试（破坏代码看护栏会不会红），按结果把"验字符串"升级为"验代码形态与调用点"；
 - **服务端冒烟**：鉴权结构不变量、fail-open 部署折中的可发现性锁、兜底回复数据完整性。
@@ -222,7 +225,7 @@ somnacare/
 ├── plugins/cap-gemma-llm/ # 本地插件（MediaPipe Gemma、护眼服务、到点提醒、
 │   │                      # 桌宠行为系统、图标切换）
 ├── plugins/cap-usage-signal/ # 使用行为信号（亮屏事件聚合，自动提议数据源）
-├── tools/                 # 图标/启动屏生成器、manifest 注入、33 条静态护栏
+├── tools/                 # 图标/启动屏生成器、GKD 规则导入/刷新、37 条静态护栏
 ├── native-resources/      # 全密度图标、四主题图标、自适应前景、铃声
 ├── docs/screenshots/      # README 截图
 ├── tests/e2e/             # Playwright：smoke / 提议链路 / 全应用流程 / 朋友圈
@@ -235,7 +238,7 @@ somnacare/
 npm install --legacy-peer-deps
 npm run dev          # http://localhost:3000
 
-npm run verify       # 33 条静态护栏
+npm run verify       # 37 条静态护栏（500+ 断言，关键护栏带反向自检）
 npm run build        # Web 产物（PWA 可直接部署 dist/）
 npx playwright test  # 53 条浏览器 e2e
 
@@ -258,6 +261,22 @@ APK 由 CI 用**固定签名**构建：签名密钥存放在 GitHub Secrets（`A
 ## ⚠️ 免责声明
 
 本项目为个人作品，仅供学习与个人使用（MIT）。所有睡眠分析结果均为模型估算值，不构成医疗诊断或治疗建议；如有睡眠障碍请咨询专业医生。
+
+## 📸 截图维护
+
+`docs/screenshots/` 下的截图用于本 README。界面迭代后按下表重截（390×844 或真机等比）：
+
+| 文件名 | 内容 |
+|---|---|
+| `sleep-tab.png` / `sleep-auto-mode.jpg` | 睡眠分区（手动/自动记录） |
+| `trends-circadian.png` | 趋势 · 起卧时段（默认视图：哑铃点线 + 目标窗 + 均值） |
+| `trends-tab.png` | 趋势 · 得分曲线或分期估算 |
+| `eyecare-health.png` | 护眼 · 用眼日报 + 数字健康台 |
+| `eyecare-tab.png` | 护眼 · 滤镜与场景预设 |
+| `ai-tab.png` | AI 顾问 |
+| `sound-mixer.png` | 助眠音景混音器 |
+| `auto-proposal-card.png` / `proposal-selfcheck.jpg` | 自动提议卡 / 自检面板 |
+| `moments-postcard.jpg` | 大肥鱼的朋友圈 |
 
 ## 📄 License
 

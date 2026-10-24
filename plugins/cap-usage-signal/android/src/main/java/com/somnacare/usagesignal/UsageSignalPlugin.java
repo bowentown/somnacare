@@ -323,6 +323,18 @@ public class UsageSignalPlugin extends Plugin {
             call.reject("查询每日屏幕健康失败: " + e.getMessage());
         }
     }
+    /** 应用显示名（PackageManager；拿不到时回退包名尾段） */
+    private static String appLabel(Context ctx, String pkg) {
+        try {
+            CharSequence cs = ctx.getPackageManager().getApplicationLabel(
+                    ctx.getPackageManager().getApplicationInfo(pkg, 0));
+            if (cs != null && cs.length() > 0) return cs.toString();
+        } catch (Exception ignored) {
+        }
+        int dot = pkg.lastIndexOf('.');
+        return dot >= 0 && dot + 1 < pkg.length() ? pkg.substring(dot + 1) : pkg;
+    }
+
     /**
      * 每应用使用时长（第 78 轮，Phase 3）：按自然日的每应用前台分钟数，
      * 真实测量（UsageStats 聚合）。分类（社交/视频等）在 JS 侧做，
@@ -356,9 +368,11 @@ public class UsageSignalPlugin extends Plugin {
                 long ft = s.getTotalTimeInForeground();
                 if (ft < 60_000L) continue;   // 不足 1 分钟的应用不进报告
                 dayCal.setTimeInMillis(s.getFirstTimeStamp());
+                String pkg = s.getPackageName();
                 JSObject item = new JSObject();
                 item.put("date", df.format(dayCal.getTime()));
-                item.put("pkg", s.getPackageName());
+                item.put("pkg", pkg);
+                item.put("label", appLabel(ctx, pkg));
                 item.put("minutes", (int) Math.round(ft / 60000.0));
                 arr.put(item);
             }

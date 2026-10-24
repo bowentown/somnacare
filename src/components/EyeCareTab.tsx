@@ -165,10 +165,10 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     }
     return [...totals.entries()].sort((a, b) => b[1] - a[1]);
   })();
-  // 展示包名短形式（无独立的应用名映射方法；完整包名在 title 里）
-  const appLabel = (pkg: string): string => {
-    const short = pkg.split('.').pop() ?? pkg;
-    return short.length > 12 ? short.slice(0, 12) : short;
+  // 应用显示名由原生 PackageManager 提供（真实应用名），title 保留完整包名
+  const appLabel = (a: AppUsageEntry): string => {
+    const name = a.label && a.label !== a.pkg ? a.label : (a.pkg.split('.').pop() ?? a.pkg);
+    return name.length > 10 ? name.slice(0, 10) : name;
   };
 
   const handleToggle = async (next: boolean) => {
@@ -631,8 +631,8 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
               const maxMin = todayApps[0].minutes;
               return (
                 <div key={a.pkg} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-20 truncate font-mono text-slate-400 shrink-0" title={a.pkg}>
-                    {appLabel(a.pkg)}
+                  <span className="w-20 truncate text-slate-300 shrink-0" title={a.pkg}>
+                    {appLabel(a)}
                   </span>
                   <div className={`flex-1 h-2 rounded-full ${theme.cardInnerBg} overflow-hidden`}>
                     <div

@@ -146,6 +146,7 @@ export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
 export interface AppUsageEntry {
   date: string;
   pkg: string;
+  label: string;
   minutes: number;
 }
 
@@ -160,6 +161,7 @@ export async function queryAppUsage(days = 1): Promise<AppUsageEntry[]> {
       .map((a: any) => ({
         date: a.date,
         pkg: a.pkg,
+        label: typeof a.label === 'string' && a.label ? a.label : String(a.pkg),
         minutes: typeof a.minutes === 'number' ? a.minutes : 0,
       }));
   } catch {

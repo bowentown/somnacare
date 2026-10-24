@@ -1,4 +1,13 @@
 @import "tailwindcss";
+
+/* 图表焦点圈（第 79 轮）：Recharts 的 svg/包装器自带 tabindex，点按后
+   浏览器默认画一圈粗白焦点框——图例/tooltip 已是交互反馈，焦点圈纯噪音 */
+.recharts-wrapper:focus,
+.recharts-wrapper *:focus,
+.recharts-surface:focus,
+[data-testid$='-chart'] :focus {
+  outline: none;
+}
 @import "@fontsource/space-grotesk/400.css";
 @import "@fontsource/space-grotesk/500.css";
 @import "@fontsource/space-grotesk/700.css";
