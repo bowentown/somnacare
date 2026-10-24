@@ -432,21 +432,25 @@ public class UsageSignalPlugin extends Plugin {
                 totals.merge(e.getKey(), Math.max(0, windowEnd - e.getValue()), Long::sum);
             }
 
-            java.util.List<JSObject> list = new java.util.ArrayList<>();
+            // 用普通行数据排序：JSObject.getInt 抛受检 JSONException，
+            // Comparator lambda 里不能带（第 82 轮 CI 编译实证）
+            java.util.List<String[]> rows = new java.util.ArrayList<>();   // [pkg, label, minutes]
             for (java.util.Map.Entry<String, Long> e : totals.entrySet()) {
                 int minutes = (int) Math.round(e.getValue() / 60000.0);
                 if (minutes < 1) continue;
                 String label = appLabel(ctx, e.getKey());
                 if (label == null) continue;   // 名字解析不出（已卸载/不可见）→ 跳过
-                JSObject o = new JSObject();
-                o.put("pkg", e.getKey());
-                o.put("label", label);
-                o.put("minutes", minutes);
-                list.add(o);
+                rows.add(new String[]{ e.getKey(), label, String.valueOf(minutes) });
             }
-            list.sort((a, b) -> b.getInt("minutes") - a.getInt("minutes"));
+            rows.sort((a, b) -> Integer.parseInt(b[2]) - Integer.parseInt(a[2]));
             JSArray arr = new JSArray();
-            for (JSObject o : list) arr.put(o);
+            for (String[] r : rows) {
+                JSObject o = new JSObject();
+                o.put("pkg", r[0]);
+                o.put("label", r[1]);
+                o.put("minutes", Integer.parseInt(r[2]));
+                arr.put(o);
+            }
             JSObject ret = new JSObject();
             ret.put("apps", arr);
             ret.put("windowEnd", windowEnd);
