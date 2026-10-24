@@ -265,8 +265,13 @@ test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡�
   // 模型拒绝（先验错位）→ 启发式回退出卡
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cardText = await page.evaluate(() => document.body.innerText);
-  expect(cardText).toMatch(/02:[0-5]\d 放下/);
-  expect(cardText).toMatch(/10:[0-5]\d 拿起/);
+
+  // innerText 对 flex 行/列的空白处理是布局敏感的（同一 DOM 在不同渲染
+  // 环境会给出 \n 或空格）——逐值断言而非连排断言
+  expect(cardText).toMatch(/02:[0-5]\d/);
+  expect(cardText).toMatch(/放下/);
+  expect(cardText).toMatch(/10:[0-5]\d/);
+  expect(cardText).toMatch(/拿起/);
 
   // 自检面板：⑤ 应报"已放行启发式回退"，⑦ 应报能出提议（与组件一致）
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
