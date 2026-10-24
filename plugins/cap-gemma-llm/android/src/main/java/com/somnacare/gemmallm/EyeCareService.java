@@ -150,17 +150,6 @@ public class EyeCareService extends Service {
     }
 
     @Override
-    public void onDestroy() {
-        try {
-            unregisterReceiver(screenReceiver);
-        } catch (Exception ignored) {
-        }
-        if (restHandler != null) restHandler.removeCallbacks(restPoll);
-        dismissRestOverlay();
-        super.onDestroy();
-    }
-
-    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
             // 铁律先行：startForegroundService 拉起的实例（含 ACTION_STOP——
@@ -594,6 +583,13 @@ public class EyeCareService extends Service {
             removeOverlayInternal();
         } catch (Exception ignored) {
         }
+        // 20-20-20 清理：接收器/轮询/远眺引导层（第 77 轮）
+        try {
+            unregisterReceiver(screenReceiver);
+        } catch (Exception ignored) {
+        }
+        if (restHandler != null) restHandler.removeCallbacks(restPoll);
+        dismissRestOverlay();
         super.onDestroy();
     }
 }

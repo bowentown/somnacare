@@ -41,6 +41,8 @@ ok('20-20-20：今日最长连续落盘（用眼日报用，日期键控）',
 ok('20-20-20：滤镜关闭时保活服务（STOP 不停服，零透明度窗口）',
   service.includes('if (!restEnabled) {\n                    stopForeground(STOP_FOREGROUND_REMOVE);')
   && plugin.includes('EXTRA_WARM_ALPHA, 0f)'));
+ok('服务完整性：onDestroy 只定义一次（CI 曾抓到重复定义的编译失败）',
+  (service.match(/public void onDestroy\(/g) ?? []).length === 1);
 ok('20-20-20：开关桥接（读取/设置 + APPLY extras 传递）',
   plugin.includes('public void eyeCareRestGet')
   && plugin.includes('public void eyeCareRestSet')
