@@ -57,6 +57,7 @@ import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
 import { hapticStep } from '../utils/haptics';
+import { EmptyState, StatCard } from './ui';
 
 interface TrendsTabProps {
   records: SleepRecord[];
@@ -397,12 +398,13 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
         {/* 空态（第 51 轮审计）：无任何夜睡记录时三种视图都只剩参考线空壳，
             视觉如坏图——统一以空态文案替代三视图 */}
         {nightsOnly(records).length === 0 && (
-          <div className="relative h-40 rounded-2xl border border-dashed border-slate-600 bg-black/20 flex flex-col items-center justify-center gap-1.5 animate-tab-fade-in">
-            <span className="text-sm font-black text-slate-300">暂无睡眠数据</span>
-            <span className="text-[10px] text-slate-500 leading-relaxed text-center px-6">
-              记录第一晚后这里就会出现曲线
-            </span>
-          </div>
+          <EmptyState
+            theme={theme}
+            illustration="no-data"
+            title="暂无睡眠数据"
+            hint="记录第一晚后这里就会出现曲线"
+            className="animate-tab-fade-in"
+          />
         )}
         {nightsOnly(records).length > 0 && (<>
         {/* View Mode 1: Quality Score Trend */}
@@ -821,7 +823,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
         {isHistoryExpanded && (
           <div className="mt-3 pt-3 border-t border-slate-700/60 text-xs animate-tab-fade-in">
             {records.length === 0 ? (
-              <div className={`py-4 text-center ${textMuted}`}>暂无数据记录</div>
+              <EmptyState theme={theme} illustration="no-data" title="暂无数据记录" compact />
             ) : (
               // 窗口化渲染（第 74 轮性能）：固定行高 + 滚动窗口，DOM 恒定为
               // 可视行数 + 上下各 4 行 overscan——2000 条记录也只有 ~13 行节点，
@@ -942,23 +944,22 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
               </p>
             ) : (
             <div className="grid grid-cols-3 gap-2.5">
-              <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3`}>
-                <span className={`text-[10px] ${textMuted} block mb-0.5`}>平均评分</span>
-                <span className={`text-xl font-black font-mono ${theme.accentText} tabular-nums`}>{sum.avgScore}</span>
-              </div>
-              <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3`}>
-                <span className={`text-[10px] ${textMuted} block mb-0.5`}>日均时长</span>
-                <span className="text-xl font-black font-mono text-white tabular-nums">
+              <StatCard theme={theme} label="平均评分" value={sum.avgScore} />
+              <StatCard
+                theme={theme}
+                label="日均时长"
+                valueClassName="text-white"
+                value={<>
                   {Math.floor(sum.avgDurationMin / 60)}<span className="text-sm">H</span>
                   {sum.avgDurationMin % 60}<span className="text-sm">M</span>
-                </span>
-              </div>
-              <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3`}>
-                <span className={`text-[10px] ${textMuted} block mb-0.5`}>平均效率</span>
-                <span className="text-xl font-black font-mono text-emerald-400 tabular-nums">
-                  {avgEfficiency}<span className="text-sm">%</span>
-                </span>
-              </div>
+                </>}
+              />
+              <StatCard
+                theme={theme}
+                label="平均效率"
+                valueClassName="text-emerald-400"
+                value={<>{avgEfficiency}<span className="text-sm">%</span></>}
+              />
             </div>
             )}
             {sum.regularity ? (

@@ -33,7 +33,7 @@ for (const f of files) {
     const base = join(dirname(f), m[1]);
     for (const cand of [base, base + '.ts', base + '.tsx', join(base, 'index.ts'), join(base, 'index.tsx')]) {
       try {
-        statSync(cand);
+        if (!statSync(cand).isFile()) continue;   // 目录导入（如 './ui'）按 index.* 解析
         imported.add(cand);
         break;
       } catch { /* 候选路径不存在，试下一个 */ }
@@ -53,7 +53,7 @@ while (queue.length > 0) {
     const base = join(dirname(f), m[1]);
     for (const cand of [base, base + '.ts', base + '.tsx', join(base, 'index.ts'), join(base, 'index.tsx')]) {
       try {
-        statSync(cand);
+        if (!statSync(cand).isFile()) continue;
         if (!reachable.has(cand)) queue.push(cand);
         break;
       } catch { /* 候选路径不存在 */ }
