@@ -115,6 +115,32 @@ export async function refreshUsageDays(days = 7, chronotype: 'night' | 'day' | '
   return cachedUsageDays();
 }
 
+// ── 每日屏幕健康（第 77 轮，Phase 2）：真实测量的前台分钟数与解锁次数 ──
+
+export interface DailyHealthDay {
+  date: string;
+  screenMinutes: number;
+  unlocks: number;
+}
+
+export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
+  const pl = usage();
+  if (!pl?.queryDailyHealth) return [];
+  try {
+    const res = await pl.queryDailyHealth({ days });
+    if (!Array.isArray(res?.days)) return [];
+    return res.days
+      .filter((d: any) => d && typeof d.date === 'string')
+      .map((d: any) => ({
+        date: d.date,
+        screenMinutes: typeof d.screenMinutes === 'number' ? d.screenMinutes : 0,
+        unlocks: typeof d.unlocks === 'number' ? d.unlocks : 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function cachedUsageDays(): UsageDay[] {
   try {
     const raw = localStorage.getItem(CACHE_KEY);

@@ -7,6 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
@@ -40,6 +42,7 @@ public class EyeCareService extends Service {
     public static final String EXTRA_WARM_COLOR = "warmColor"; // #RRGGBB
     public static final String EXTRA_WARM_ALPHA = "warmAlpha"; // 0.0 - 1.0
     public static final String EXTRA_DIM_ALPHA = "dimAlpha";   // 0.0 - 1.0
+    public static final String EXTRA_REST_ENABLED = "restEnabled"; // 20-20-20 远眺提醒
 
     private static final String CHANNEL_ID = "somnacare-eyecare";
     private static final int NOTIFICATION_ID = 20260928;
@@ -54,6 +57,49 @@ public class EyeCareService extends Service {
     private static String lastColorHex = null;
     private static float lastWarm = 0f;
     private static float lastDim = 0f;
+
+    // ── 20-20-20 远眺提醒（第 77 轮，Phase 2）：每连续用屏 20 分钟弹 20 秒
+    // 全屏远眺引导。连续时长由 SCREEN_ON/OFF 动态接收器真实测量——
+    // 不是模型估算。滤镜关闭时也能独立运行（零透明度窗口保活服务）。──
+    static final String KEY_REST_ENABLED = "eye_202020_enabled";
+    static final String KEY_EYE_MAX_TODAY = "eye_usage_max_today";   // {"date":"YYYY-MM-DD","maxMin":n}
+    private static final long REST_INTERVAL_MS = 20 * 60_000L;       // 连续用屏 20 分钟
+    private static final long REST_DURATION_MS = 20_000L;           // 引导持续 20 秒
+    private static final long REST_POLL_MS = 15_000L;
+    private static boolean restEnabled = false;
+    private static long screenOnAt = -1L;          // 最近一次亮屏的 elapsedRealtime
+    private static long lastRestShownAt = 0L;
+    private static View restOverlay;
+    private static WindowManager.LayoutParams restLp;
+    private static android.os.Handler restHandler;
+    private static final java.text.DateFormat REST_DATE_FMT =
+            new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+    private final android.content.BroadcastReceiver screenReceiver = new android.content.BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            try {
+                String action = intent == null ? null : intent.getAction();
+                if (Intent.ACTION_SCREEN_ON.equals(action)) {
+                    screenOnAt = android.os.SystemClock.elapsedRealtime();
+                } else if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                    accumulateContinuousUsage();
+                    dismissRestOverlay();
+                    screenOnAt = -1L;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    };
+    private final Runnable restPoll = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                pollRest();
+            } catch (Exception ignored) {
+            }
+            if (restHandler != null) restHandler.postDelayed(this, REST_POLL_MS);
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -87,6 +133,31 @@ public class EyeCareService extends Service {
             if (dm != null) dm.registerDisplayListener(displayListener, null);
         } catch (Exception ignored) {
         }
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            filter.addAction(Intent.ACTION_SCREEN_OFF);
+            registerReceiver(screenReceiver, filter);
+            restEnabled = getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                    .getBoolean(KEY_REST_ENABLED, false);
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            screenOnAt = pm != null && pm.isInteractive()
+                    ? android.os.SystemClock.elapsedRealtime() : -1L;
+            restHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            restHandler.postDelayed(restPoll, REST_POLL_MS);
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        try {
+            unregisterReceiver(screenReceiver);
+        } catch (Exception ignored) {
+        }
+        if (restHandler != null) restHandler.removeCallbacks(restPoll);
+        dismissRestOverlay();
+        super.onDestroy();
     }
 
     @Override
@@ -105,14 +176,20 @@ public class EyeCareService extends Service {
                 // 关闭只改开关位，保留用户选的颜色/强度——悬浮窗与磁贴再开时
                 // 才能沿用用户的选择，而不是回落到默认暖黄
                 persistState(getApplicationContext(), false, lastColorHex, lastWarm, lastDim);
-                stopForeground(STOP_FOREGROUND_REMOVE);
-                stopSelf();
+                if (!restEnabled) {
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                }
+                // 20-20-20 开启时保活：远眺提醒不依赖滤镜，服务继续常驻
                 return START_NOT_STICKY;
             }
 
             String warmColor = intent != null ? intent.getStringExtra(EXTRA_WARM_COLOR) : null;
             float warmAlpha = intent != null ? clamp01(intent.getFloatExtra(EXTRA_WARM_ALPHA, 0f)) : 0f;
             float dimAlpha = intent != null ? clamp01(intent.getFloatExtra(EXTRA_DIM_ALPHA, 0f)) : 0f;
+            if (intent != null && intent.hasExtra(EXTRA_REST_ENABLED)) {
+                setRestEnabled(getApplicationContext(), intent.getBooleanExtra(EXTRA_REST_ENABLED, false));
+            }
 
             applyOverlay(this, warmColor, warmAlpha, dimAlpha);
         } catch (Exception ignored) {
@@ -128,6 +205,139 @@ public class EyeCareService extends Service {
     /** 滤镜层是否正在显示（磁贴状态源，同进程内可靠） */
     public static boolean isActive() {
         return warmLayer != null || dimLayer != null;
+    }
+
+    /** 20-20-20 开关（供插件调用；滤镜关/开两种状态都即时生效） */
+    public static void setRestEnabled(Context context, boolean enabled) {
+        restEnabled = enabled;
+        try {
+            context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_REST_ENABLED, enabled).apply();
+        } catch (Exception ignored) {
+        }
+        if (!enabled) dismissRestOverlay();
+    }
+
+    public static boolean isRestEnabled(Context context) {
+        return restEnabled || context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                .getBoolean(KEY_REST_ENABLED, false);
+    }
+
+    /** 轮询：连续用屏 ≥20 分钟且未展示过 → 弹 20 秒远眺引导 */
+    private void pollRest() {
+        if (!restEnabled || screenOnAt < 0) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - screenOnAt < REST_INTERVAL_MS) return;
+        if (restOverlay != null) return;
+        if (now - lastRestShownAt < 60_000L) return;
+        showRestOverlay();
+    }
+
+    /** 熄屏时把本次连续用屏时长记入"今日最长连续"（真实测量，用眼日报用） */
+    private void accumulateContinuousUsage() {
+        if (screenOnAt < 0) return;
+        long minutes = (android.os.SystemClock.elapsedRealtime() - screenOnAt) / 60_000L;
+        if (minutes <= 0) return;
+        try {
+            SharedPreferences sp = getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);
+            String today = REST_DATE_FMT.format(new java.util.Date());
+            org.json.JSONObject obj;
+            String raw = sp.getString(KEY_EYE_MAX_TODAY, "");
+            obj = raw.isEmpty() ? new org.json.JSONObject() : new org.json.JSONObject(raw);
+            if (!today.equals(obj.optString("date"))) {
+                obj = new org.json.JSONObject();
+                obj.put("date", today);
+            }
+            if (minutes > obj.optInt("maxMin", 0)) obj.put("maxMin", (int) minutes);
+            sp.edit().putString(KEY_EYE_MAX_TODAY, obj.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 20 秒全屏远眺引导：可点按提前结束，倒计时归零自动消失 */
+    private void showRestOverlay() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            if (wm == null || !Settings.canDrawOverlays(this)) return;
+            windowManager = wm;
+            dismissRestOverlay();
+            lastRestShownAt = android.os.SystemClock.elapsedRealtime();
+
+            android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+            box.setOrientation(android.widget.LinearLayout.VERTICAL);
+            box.setGravity(android.view.Gravity.CENTER);
+            box.setBackgroundColor(0xF2060B1A);
+            box.setClickable(true);
+            int pad = (int) (40 * getResources().getDisplayMetrics().density);
+            box.setPadding(pad, pad, pad, pad);
+
+            android.widget.TextView title = new android.widget.TextView(this);
+            title.setText("20·20·20 远眺");
+            title.setTextColor(0xFFF1F5F9);
+            title.setTextSize(22);
+            title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            android.widget.TextView tip = new android.widget.TextView(this);
+            tip.setText("望向 6 米外的地方，让眼睛休息 20 秒");
+            tip.setTextColor(0xFF94A3B8);
+            tip.setTextSize(14);
+            tip.setPadding(0, (int) (12 * getResources().getDisplayMetrics().density), 0, 0);
+            android.widget.TextView countdown = new android.widget.TextView(this);
+            countdown.setTextColor(0xFFFBBF24);
+            countdown.setTextSize(40);
+            countdown.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+            countdown.setPadding(0, (int) (24 * getResources().getDisplayMetrics().density), 0, 0);
+            box.addView(title);
+            box.addView(tip);
+            box.addView(countdown);
+            box.setOnClickListener(v -> dismissRestOverlay());
+
+            int[] size = realDisplaySize(wm);
+            restLp = new WindowManager.LayoutParams(
+                    size[0], size[1],
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            restLp.gravity = Gravity.TOP | Gravity.START;
+            if (Build.VERSION.SDK_INT >= 28) {
+                restLp.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
+            wm.addView(box, restLp);
+            restOverlay = box;
+
+            final long endAt = android.os.SystemClock.elapsedRealtime() + REST_DURATION_MS;
+            final android.widget.TextView counter = countdown;
+            final Runnable ticker = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        long left = endAt - android.os.SystemClock.elapsedRealtime();
+                        if (left <= 0 || restOverlay == null) {
+                            dismissRestOverlay();
+                            return;
+                        }
+                        counter.setText(String.format(java.util.Locale.US, "%d s",
+                                (int) Math.ceil(left / 1000.0)));
+                        if (restHandler != null) restHandler.postDelayed(this, 500);
+                    } catch (Exception ignored) {
+                    }
+                }
+            };
+            counter.setText("20 s");
+            if (restHandler != null) restHandler.postDelayed(ticker, 500);
+        } catch (Exception ignored) {
+            // 悬浮窗失败不抛出
+        }
+    }
+
+    private static void dismissRestOverlay() {
+        if (restOverlay != null && windowManager != null) {
+            removeViewSafe(restOverlay);
+        }
+        restOverlay = null;
+        restLp = null;
+        if (screenOnAt >= 0) screenOnAt = android.os.SystemClock.elapsedRealtime();
     }
 
     /** 持久化当前开关与参数（快捷设置磁贴在进程外/冷启动时使用） */

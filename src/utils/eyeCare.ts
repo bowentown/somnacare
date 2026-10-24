@@ -143,6 +143,40 @@ function scheduleNativeApply(cfg: EyeCareConfig) {
  * 连续调用（拖动滑杆）会自动节流合并；force=true 用于节流的尾随执行。
  * 返回当前是否实际处于生效状态。
  */
+// ── 20-20-20 远眺提醒（第 77 轮，Phase 2） ─────────────────────
+
+export interface EyeRestStatus {
+  enabled: boolean;
+  serviceAlive: boolean;
+  maxTodayRaw: string;
+}
+
+export async function getEyeRestStatus(): Promise<EyeRestStatus> {
+  const g = gemma();
+  if (!g?.eyeCareRestGet) return { enabled: false, serviceAlive: false, maxTodayRaw: '' };
+  try {
+    const res = await g.eyeCareRestGet();
+    return {
+      enabled: res?.enabled === true,
+      serviceAlive: res?.serviceAlive === true,
+      maxTodayRaw: typeof res?.maxTodayRaw === 'string' ? res.maxTodayRaw : '',
+    };
+  } catch {
+    return { enabled: false, serviceAlive: false, maxTodayRaw: '' };
+  }
+}
+
+export async function setEyeRestEnabled(enabled: boolean): Promise<boolean> {
+  const g = gemma();
+  if (!g?.eyeCareRestSet) return false;
+  try {
+    const res = await g.eyeCareRestSet({ enabled });
+    return res?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function applyEyeCare(cfg: EyeCareConfig | undefined, force = false): Promise<boolean> {
   const g = gemma();
   if (!g || !cfg) return false;

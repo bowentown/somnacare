@@ -12,7 +12,13 @@ import {
   isInEyeCareWindow,
   applyEyeCare,
   stopEyeCareNow,
+  getEyeRestStatus,
+  setEyeRestEnabled,
+  type EyeRestStatus,
 } from '../utils/eyeCare';
+import { queryDailyHealth, type DailyHealthDay } from '../utils/usageSignal';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
+import { EmptyState, StatCard } from './ui';
 
 interface EyeCareTabProps {
   userProfile: UserProfile;
@@ -98,6 +104,40 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
   const inWindow = isInEyeCareWindow(cfg, now);
   const active = cfg.enabled && inWindow;
   const styles = eyeCareInAppStyles(cfg);
+
+  // 20-20-20 远眺提醒 + 用眼日报（第 77 轮，Phase 2）：真实测量
+  const [rest, setRest] = useState<EyeRestStatus>({ enabled: false, serviceAlive: false, maxTodayRaw: '' });
+  const [dailyHealth, setDailyHealth] = useState<DailyHealthDay[]>([]);
+  useEffect(() => {
+    if (!native) return;
+    void getEyeRestStatus().then(setRest);
+    void queryDailyHealth(7).then(setDailyHealth);
+  }, [native]);
+
+  const toggleRest = async () => {
+    const next = !rest.enabled;
+    const ok = await setEyeRestEnabled(next);
+    if (ok) {
+      setRest((prev) => ({ ...prev, enabled: next }));
+      onToast(next ? '20-20-20 已开启：连续用屏 20 分钟会提醒你远眺' : '20-20-20 已关闭');
+    } else {
+      onToast('当前环境不支持（需安装 APK）');
+    }
+  };
+  const todayHealth = dailyHealth.length > 0 ? dailyHealth[dailyHealth.length - 1] : null;
+  const maxToday = (() => {
+    try {
+      const obj = JSON.parse(rest.maxTodayRaw || '{}');
+      return typeof obj.maxMin === 'number' ? obj.maxMin : null;
+    } catch {
+      return null;
+    }
+  })();
+  const healthChart = dailyHealth.map((d) => ({
+    label: d.date.slice(5),
+    小时: Math.round((d.screenMinutes / 60) * 10) / 10,
+    解锁: d.unlocks,
+  }));
 
   const handleToggle = async (next: boolean) => {
     if (next && native) {
@@ -444,7 +484,100 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
         </div>
       </div>
 
-      {/* 5. 定时（默认关闭，按需开启） */}
+      {/* 5. 20-20-20 远眺提醒（第 77 轮，Phase 2）：连续用屏 20 分钟 → 20 秒远眺引导。
+          连续时长由 SCREEN_ON/OFF 真实测量，不是估算。滤镜关闭也能独立运行。 */}
+      {native && (
+        <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Eye className="w-4 h-4 text-sky-300 shrink-0" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white">20-20-20 远眺提醒</h3>
+                <p className="text-[10px] text-slate-400 truncate">
+                  连续用屏 20 分钟 → 提醒远眺 20 秒
+                </p>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                aria-label="开关 20-20-20 远眺提醒"
+                checked={rest.enabled}
+                onChange={() => void toggleRest()}
+                className="sr-only peer"
+              />
+              <div className={`relative w-10 h-5 rounded-full transition-colors ${rest.enabled ? 'bg-sky-500' : 'bg-slate-600'}`}>
+                <span
+                  className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
+                  style={{ left: rest.enabled ? '18px' : '2px' }}
+                />
+              </div>
+            </label>
+          </div>
+          {rest.enabled && maxToday !== null && (
+            <p className="text-[10px] text-slate-400">
+              今日最长连续用屏 <span className="text-amber-300 font-bold">{maxToday} 分钟</span>
+              {maxToday >= 20 ? '——多起来看看远处 👀' : ''}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 6. 用眼日报（第 77 轮，Phase 2）：UsageStats 真实测量的每日屏幕分钟与解锁 */}
+      {native && dailyHealth.length > 0 && (
+        <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-emerald-300" />
+            <h3 className="text-sm font-bold text-white">用眼日报</h3>
+            <span className="text-[10px] text-slate-500 font-mono">近 7 天</span>
+          </div>
+          {todayHealth && (
+            <div className="grid grid-cols-2 gap-2.5">
+              <StatCard
+                theme={theme}
+                label="今日屏幕时间"
+                value={<>{Math.floor(todayHealth.screenMinutes / 60)}<span className="text-sm">H</span>{todayHealth.screenMinutes % 60}<span className="text-sm">M</span></>}
+                valueClassName="text-white"
+              />
+              <StatCard
+                theme={theme}
+                label="今日解锁"
+                value={todayHealth.unlocks}
+                valueClassName="text-sky-300"
+              />
+            </div>
+          )}
+          <div data-testid="eye-health-chart" aria-label="近 7 天每日屏幕小时数" className="w-full" style={{ height: 120 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={healthChart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="label" axisLine={false} tickLine={false} tickMargin={4}
+                  tick={{ fill: 'rgba(148,163,184,0.9)', fontSize: 9 }} />
+                <Tooltip
+                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                  contentStyle={{ background: 'rgba(2,6,23,0.95)', border: '1px solid rgba(100,116,139,0.5)', borderRadius: 12, fontSize: 11 }}
+                  formatter={((v: unknown, name: unknown) => [name === '小时' ? `${v} 小时` : `${v} 次`, String(name)]) as never}
+                />
+                <Bar dataKey="小时" fill={theme.accentHex} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="text-[9px] text-slate-500 leading-relaxed">
+            屏幕时间与解锁次数由系统使用记录统计，全部留在本机。
+          </p>
+        </div>
+      )}
+      {native && !dailyHealth.length && rest.enabled && (
+        <EmptyState
+          theme={theme}
+          illustration="screen-time"
+          title="用眼日报还在积累"
+          hint="开启使用情况访问后，明天这里会出现第一份报告"
+          compact
+        />
+      )}
+
+      {/* 7. 定时（默认关闭，按需开启） */}
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

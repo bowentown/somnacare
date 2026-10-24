@@ -241,4 +241,86 @@ public class UsageSignalPlugin extends Plugin {
             call.reject("查询亮屏事件失败: " + e.getMessage());
         }
     }
+
+    /**
+     * 每日屏幕健康（第 77 轮，Phase 2）：近 N 天的每日前台总时长（分钟）
+     * 与解锁次数——真实测量（UsageStats 聚合 + USER_PRESENT 事件计数），
+     * 供护眼页的「用眼日报」展示。与 queryDailyUsage 的夜归属口径不同：
+     * 这里按自然日聚合（用眼健康按"哪一天"看）。
+     */
+    @PluginMethod
+    public void queryDailyHealth(PluginCall call) {
+        if (!hasUsageAccess()) {
+            call.reject("缺少使用情况访问权限");
+            return;
+        }
+        int days = call.getInt("days", 7);
+        if (days < 1) days = 1;
+        if (days > 14) days = 14;
+        try {
+            Context ctx = getContext();
+            UsageStatsManager usm =
+                    (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) {
+                call.resolve(new JSObject());
+                return;
+            }
+            long now = System.currentTimeMillis();
+            java.text.DateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            java.util.Calendar dayCal = java.util.Calendar.getInstance();
+            dayCal.set(java.util.Calendar.HOUR_OF_DAY, 0);
+            dayCal.set(java.util.Calendar.MINUTE, 0);
+            dayCal.set(java.util.Calendar.SECOND, 0);
+            dayCal.set(java.util.Calendar.MILLISECOND, 0);
+
+            // 前台总时长：UsageStats 按日聚合（系统已按自然日分桶）
+            java.util.Map<String, Long> screenByDay = new java.util.HashMap<>();
+            java.util.List<android.app.usage.UsageStats> stats =
+                    usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - days * DAY_MS, now);
+            for (android.app.usage.UsageStats s : stats) {
+                if (s == null) continue;
+                long ft = s.getTotalTimeInForeground();
+                if (ft <= 0) continue;
+                dayCal.setTimeInMillis(s.getFirstTimeStamp());
+                String key = df.format(dayCal.getTime());
+                Long prev = screenByDay.get(key);
+                screenByDay.put(key, (prev == null ? 0L : prev) + ft);
+            }
+
+            // 解锁次数：USER_PRESENT 事件按自然日计数（5s 去重同 queryScreenOnEvents）
+            java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
+            UsageEvents events = usm.queryEvents(now - days * DAY_MS, now);
+            UsageEvents.Event ev = new UsageEvents.Event();
+            long lastPresentTs = -1;
+            while (events.hasNextEvent()) {
+                events.getNextEvent(ev);
+                if (ev.getEventType() != 1) continue;   // EVENT_USER_PRESENT（旧 API 无命名常量）
+                if (lastPresentTs >= 0 && ev.getTimeStamp() - lastPresentTs < 5000) continue;
+                lastPresentTs = ev.getTimeStamp();
+                dayCal.setTimeInMillis(ev.getTimeStamp());
+                String key = df.format(dayCal.getTime());
+                unlocksByDay.merge(key, 1, Integer::sum);
+            }
+
+            JSArray arr = new JSArray();
+            for (int i = days - 1; i >= 0; i--) {
+                java.util.Calendar d = (java.util.Calendar) dayCal.clone();
+                d.add(java.util.Calendar.DAY_OF_YEAR, -i);
+                String key = df.format(d.getTime());
+                Long screenMs = screenByDay.get(key);
+                if (screenMs == null) continue;   // 无数据的自然日跳过
+                JSObject item = new JSObject();
+                item.put("date", key);
+                item.put("screenMinutes", (int) Math.round(screenMs / 60000.0));
+                item.put("unlocks", unlocksByDay.getOrDefault(key, 0));
+                arr.put(item);
+            }
+            JSObject ret = new JSObject();
+            ret.put("days", arr);
+            ret.put("observedUntil", now);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("查询每日屏幕健康失败: " + e.getMessage());
+        }
+    }
 }

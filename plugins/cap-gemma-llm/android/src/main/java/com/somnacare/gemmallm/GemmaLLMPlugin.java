@@ -519,7 +519,10 @@ public class GemmaLLMPlugin extends Plugin {
                     .setAction(EyeCareService.ACTION_APPLY)
                     .putExtra(EyeCareService.EXTRA_WARM_COLOR, warmColor)
                     .putExtra(EyeCareService.EXTRA_WARM_ALPHA, warmAlpha)
-                    .putExtra(EyeCareService.EXTRA_DIM_ALPHA, dimAlpha);
+                    .putExtra(EyeCareService.EXTRA_DIM_ALPHA, dimAlpha)
+                    .putExtra(EyeCareService.EXTRA_REST_ENABLED,
+                            getContext().getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                                    .getBoolean(EyeCareService.KEY_REST_ENABLED, false));
             if (android.os.Build.VERSION.SDK_INT >= 26) {
                 getContext().startForegroundService(intent);
             } else {
@@ -531,6 +534,52 @@ public class GemmaLLMPlugin extends Plugin {
         } catch (Exception e) {
             call.reject("启动护眼滤镜失败: " + e.getMessage());
         }
+    }
+
+    /** 20-20-20 远眺提醒开关状态 */
+    @PluginMethod
+    public void eyeCareRestGet(PluginCall call) {
+        JSObject ret = new JSObject();
+        Context ctx = getContext();
+        ret.put("enabled", ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                .getBoolean(EyeCareService.KEY_REST_ENABLED, false));
+        ret.put("serviceAlive", EyeCareService.isActive()
+                || ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                        .getBoolean("eyecare_on", false));
+        String maxRaw = ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                .getString(EyeCareService.KEY_EYE_MAX_TODAY, "");
+        ret.put("maxTodayRaw", maxRaw == null ? "" : maxRaw);
+        call.resolve(ret);
+    }
+
+    /** 20-20-20 开关：写偏好 + 通知运行中的服务即时生效；关滤镜时也要把服务拉起 */
+    @PluginMethod
+    public void eyeCareRestSet(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        JSObject ret = new JSObject();
+        try {
+            Context ctx = getContext();
+            EyeCareService.setRestEnabled(ctx, enabled);
+            boolean filterOn = ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+                    .getBoolean("eyecare_on", false);
+            if (enabled && !filterOn) {
+                // 滤镜关着也要跑服务：零透明度窗口保活，只做 20-20-20
+                android.content.Intent intent = new android.content.Intent(ctx, EyeCareService.class)
+                        .setAction(EyeCareService.ACTION_APPLY)
+                        .putExtra(EyeCareService.EXTRA_WARM_COLOR, "#FFB26B")
+                        .putExtra(EyeCareService.EXTRA_WARM_ALPHA, 0f)
+                        .putExtra(EyeCareService.EXTRA_DIM_ALPHA, 0f)
+                        .putExtra(EyeCareService.EXTRA_REST_ENABLED, true);
+                if (android.os.Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(intent);
+                else ctx.startService(intent);
+            }
+            ret.put("ok", true);
+            ret.put("enabled", enabled);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("reason", e.getMessage());
+        }
+        call.resolve(ret);
     }
 
     /**
