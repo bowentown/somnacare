@@ -109,7 +109,9 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
   const textSecondary = theme?.textSecondary || 'text-slate-300';
   const accentBg = theme.accentBg;
   const accentFg = theme?.accentFg || 'text-white';
-  const [viewMode, setViewMode] = useState<MetricViewMode>('quality');
+  // 默认视图 = 起卧时段（Phase 1 数据诚实重构）：主视图只放真实测量的
+  // 数据（用户记录的起卧 + usage 真实放下手机）；估算分期降为次要 tab
+  const [viewMode, setViewMode] = useState<MetricViewMode>('circadian');
   const [hoveredRecord, setHoveredRecord] = useState<SleepRecord | null>(null);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [showShare, setShowShare] = useState(false);
@@ -350,6 +352,34 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
     ? Math.round(sleepRows.reduce((sum, row) => sum + Math.abs(row.start - targetStart), 0) / sleepRows.length)
     : null;
 
+  // ── 真实放下手机锚点（第 76 轮，Phase 1 数据诚实重构）──
+  // usage 信号的 dateKey 与记录的夜归属同口径（放下手机那一夜的日期，
+  // 跨午夜归前一天）——lastActive 就是"真实放下手机"的时刻，不是估算。
+  const lastActiveByDate = new Map(
+    usageDays
+      .filter((d) => typeof d.lastActive === 'string' && d.lastActive.length > 0)
+      .map((d) => [d.date, d.lastActive] as const),
+  );
+  const phoneDownRows = sleepRows.map((row) => {
+    const lastActive = lastActiveByDate.get(row.record.date) ?? null;
+    if (lastActive === null) return { ...row, phoneDown: null as number | null, lossMin: null as number | null };
+    const down = toRangeMinutes(lastActive);
+    return { ...row, phoneDown: down, lossMin: down - row.start };
+  });
+  const lossRows = phoneDownRows.filter((r) => r.lossMin !== null) as Array<
+    typeof phoneDownRows[number] & { lossMin: number; phoneDown: number }
+  >;
+  const avgLossMin = lossRows.length
+    ? Math.round(lossRows.reduce((sum, r) => sum + Math.max(0, r.lossMin), 0) / lossRows.length)
+    : null;
+  // 屏幕日落：真实放下手机早于目标就寝 +15 分钟宽限 的晚数
+  const screenSunsetOk = targetStart !== null
+    ? lossRows.filter((r) => r.phoneDown <= targetStart + 15).length
+    : 0;
+  const worstLoss = lossRows.length
+    ? lossRows.reduce((worst, r) => (r.lossMin > worst.lossMin ? r : worst), lossRows[0])
+    : null;
+
   return (
     <div className={`space-y-3 pb-28 ${theme.textPrimary}`}>
       {/* Visual Trends Container */}
@@ -372,17 +402,6 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('stages')}
-              className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
-                viewMode === 'stages'
-                  ? accentBg + ' ' + accentFg + ' shadow'
-                  : `${textMuted} hover:text-white`
-              }`}
-            >
-              分期比例
-            </button>
-            <button
-              type="button"
               onClick={() => setViewMode('circadian')}
               className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
                 viewMode === 'circadian'
@@ -391,6 +410,18 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
               }`}
             >
               起卧时段
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('stages')}
+              aria-label="睡眠分期比例（模型估算，非测量）"
+              className={`px-2 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
+                viewMode === 'stages'
+                  ? accentBg + ' ' + accentFg + ' shadow'
+                  : `${textMuted} hover:text-white`
+              }`}
+            >
+              分期估算
             </button>
           </div>
         </div>
@@ -534,6 +565,10 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2.5`}>
               <div className="flex items-start justify-between gap-2 text-[10px]">
                 <span className="text-slate-300 font-mono min-w-0 leading-tight">
+                  {/* 诚实声明：分期由时长/作息模型估算，无硬件测量——只作趋势参考 */}
+                  <span className="inline-block text-[8px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-400/30 px-1 py-0.5 rounded mb-1">
+                    模型估算 · 非测量
+                  </span>
                   {activeStage ? (
                     <>
                       <span className="text-slate-400">{activeStage.record.date.slice(5)}</span>
@@ -700,9 +735,11 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                 </div>
 
                 <div className="relative z-10 space-y-1">
-                  {sleepRows.map(({ record, start, end }) => {
+                  {phoneDownRows.map(({ record, start, end, phoneDown, lossMin }) => {
                     const isHovered = activeRecord?.id === record.id;
                     const offTarget = isOffTarget(start);
+                    const downPct = phoneDown !== null ? rangePct(phoneDown) : null;
+                    const downClamped = downPct !== null ? Math.min(99, Math.max(1, downPct)) : null;
                     const left = rangePct(start);
                     const right = rangePct(end);
                     const dotLeft = Math.min(99, Math.max(1, left));
@@ -717,7 +754,7 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                         type="button"
                         onClick={() => { hapticStep(); setHoveredRecord(record); }}
                         aria-label={`${record.date} 就寝 ${record.bedtime}，醒来 ${record.wakeTime}${offTarget ? '，偏离目标' : ''}`}
-                        title={`就寝 ${record.bedtime}${bedDev !== null ? `（比目标${bedDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(bedDev / 5) * 5)} 分）` : ''}，醒来 ${record.wakeTime}${wakeDev !== null ? `（比目标${wakeDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(wakeDev / 5) * 5)} 分）` : ''}`}
+                        title={`就寝 ${record.bedtime}${bedDev !== null ? `（比目标${bedDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(bedDev / 5) * 5)} 分）` : ''}，醒来 ${record.wakeTime}${wakeDev !== null ? `（比目标${wakeDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(wakeDev / 5) * 5)} 分）` : ''}${lossMin !== null ? `；放下手机比就寝${lossMin >= 0 ? `晚 ${lossMin}` : `早 ${-lossMin}`} 分钟` : ''}`}
                         className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-8"
                       >
                         <span className={`w-9 text-[10px] font-mono shrink-0 tabular-nums ${
@@ -759,6 +796,18 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                               boxShadow: isHovered ? '0 0 0 3px rgba(241,245,249,0.25)' : '0 0 0 2px rgba(2,6,23,0.9)',
                             }}
                           />
+                          {/* 真实放下手机时刻（usage 测量，非估算）：琥珀空心环 */}
+                          {downClamped !== null && (
+                            <span
+                              className="absolute w-2.5 h-2.5 rounded-full pointer-events-none"
+                              style={{
+                                top: 'calc(50% - 5px)',
+                                left: `calc(${downClamped}% - 5px)`,
+                                border: '2px solid #fbbf24',
+                                background: 'rgba(2,6,23,0.9)',
+                              }}
+                            />
+                          )}
                         </span>
 
                         <span className={`w-[74px] text-right text-[9px] font-mono shrink-0 tabular-nums ${
@@ -787,11 +836,40 @@ export const TrendsTab: React.FC<TrendsTabProps> = ({
                     偏离目标≥45分 ×{offTargetCount}
                   </span>
                 )}
+                {lossRows.length > 0 && (
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full border-2 border-amber-400 bg-slate-950" />
+                    真实放下手机
+                  </span>
+                )}
                 <span className="ml-auto font-mono tabular-nums">
                   {avgStart !== null && avgEnd !== null && `均值 ${fmtClock(avgStart)}→${fmtClock(avgEnd)}`}
                   {avgBedDev !== null && ` · 目标偏差±${avgBedDev}分`}
                 </span>
               </div>
+
+              {/* 睡眠机会流失（Phase 1 数据诚实重构）：
+                  记录的就寝 vs 真实放下手机（usage 测量）之间的差值——
+                  全部是真实测量，不是模型估算 */}
+              {lossRows.length > 0 && (
+                <div className={`grid grid-cols-2 gap-2.5 pt-2 border-t ${innerBorder}`}>
+                  <StatCard
+                    theme={theme}
+                    label="上床后继续玩手机 · 平均"
+                    value={avgLossMin !== null && avgLossMin > 0 ? `${avgLossMin} 分钟` : '≈0'}
+                    hint={worstLoss && worstLoss.lossMin > 0
+                      ? `最严重 ${worstLoss.record.date.slice(5)} 晚 ${worstLoss.lossMin} 分钟`
+                      : '记录的就寝时间和放下手机基本一致'}
+                  />
+                  <StatCard
+                    theme={theme}
+                    label="屏幕日落达标（早于就寝+15分）"
+                    value={`${screenSunsetOk}/${lossRows.length} 晚`}
+                    valueClassName={screenSunsetOk >= Math.ceil(lossRows.length / 2) ? 'text-emerald-400' : 'text-amber-400'}
+                    hint="真实放下手机早于目标就寝的晚数"
+                  />
+                </div>
+              )}
             </div>
           </div>
           );

@@ -56,6 +56,8 @@ test('分区懒渲染：首帧只渲染当前分区，访问后挂载且常驻',
 test('得分曲线几何自洽：100 分点在 90 分绿线上方', async ({ page }) => {
   await seed(page);
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '趋势' }).click();
+  // Phase 1：默认视图是起卧时段，切到得分曲线
+  await page.getByRole('button', { name: '得分曲线' }).click();
   await page.waitForTimeout(600);
   const geo = await page.evaluate(() => {
     // 90 分参考线（emerald stroke）与 100 分数据点（cy 最小的 circle）。

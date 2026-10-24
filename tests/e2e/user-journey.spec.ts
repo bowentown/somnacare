@@ -779,6 +779,8 @@ test('旅程19 晚间折叠：评分卡收为小卡 → 可展开；趋势图可
   await expect(page.getByText('总睡眠时长')).toBeVisible();
 
   await navTo(page, '趋势');
+  // Phase 1：默认视图已是起卧时段，拖拽测试先切到得分曲线
+  await page.getByRole('button', { name: '得分曲线' }).click();
   const chart = page.getByTestId('score-chart');
   await expect(chart).toBeVisible();
   await page.waitForTimeout(500);   // 等分区滑动落位后再取坐标
@@ -984,19 +986,20 @@ test('旅程24 趋势图可读性：坐标刻度、分期横带、起卧目标�
   await page.waitForTimeout(4200);
 
   await navTo(page, '趋势');
+  // Phase 1 数据诚实重构：默认视图 = 起卧时段（真实测量），分期降为估算 tab
+  const trendCard = page.getByText('趋势与结构').locator('xpath=ancestor::div[contains(@class,"rounded-3xl")][1]');
+  await expect(trendCard.getByText('目标 23:30–07:30')).toBeVisible();
+  await expect(trendCard.getByText(/\d{2}:\d{2}→\d{2}:\d{2}/).first()).toBeVisible();
+
+  await page.getByRole('button', { name: '得分曲线' }).click();
   const chart = page.getByTestId('score-chart');
   await expect(chart).toBeVisible();
   const axisText = await chart.locator('text').allTextContents();
   expect(axisText).toEqual(expect.arrayContaining(['100', '90', '75', '50']));
   await expect(page.getByText(/均值 \d+/)).toBeVisible();
 
-  await page.getByRole('button', { name: '分期比例' }).click();
+  await page.getByRole('button', { name: '睡眠分期比例（模型估算，非测量）' }).click();
   await expect(page.getByText('近 7 晚平均')).toBeVisible();
-  await expect(page.getByText(/深睡 \d+%/)).toBeVisible();
-
-  await page.getByRole('button', { name: '起卧时段' }).click();
-  const trendCard = page.getByText('趋势与结构').locator('xpath=ancestor::div[contains(@class,"rounded-3xl")][1]');
-  await expect(trendCard.getByText('目标 23:30–07:30')).toBeVisible();
-  await expect(trendCard.getByText(/\d{2}:\d{2}→\d{2}:\d{2}/).first()).toBeVisible();
+  await expect(page.getByText('模型估算 · 非测量')).toBeVisible();
   expect(errors).toEqual([]);
 });
