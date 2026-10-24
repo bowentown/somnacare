@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Hourglass,
   Plus,
   Play,
   ArrowRight,
@@ -18,6 +19,7 @@ import { SoundscapePlayer } from './SoundscapePlayer';
 import { Music2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
 import { isNativePlatform, requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
+import { queryWindDownApps, type WindDownResult } from '../utils/usageSignal';
 import { localDateOffset } from '../utils/dateUtils';
 import { getDayPhase } from '../utils/dayPhase';
 import { computeWeekReport } from '../utils/weekReport';
@@ -71,9 +73,13 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   onOpenCodex,
   celebrateSignal,
 }) => {
-  // 首页主卡只显示夜睡（小睡另有紧凑行）——旧数据无 kind 视为夜睡
-  const latestRecord = nightsOnly(records)[0] || null;
-  const todayNaps = napsOnly(records).filter((r) => r.date === toLocalDateString());
+  // 首页主卡只显示夜睡（小睡另有紧凑行）——旧数据无 kind 视为夜睡。
+  // useMemo（第 82 轮性能）：60s 时钟每跳一次都全表扫两遍，纯浪费
+  const latestRecord = useMemo(() => nightsOnly(records)[0] || null, [records]);
+  const todayNaps = useMemo(
+    () => napsOnly(records).filter((r) => r.date === toLocalDateString()),
+    [records]
+  );
   // 昼夜双布局（第 57 轮）：晚上把"开始/音景/目标"放前面，昨晚评分折叠到最后
   const [phaseNow, setPhaseNow] = useState(() => new Date());
   useEffect(() => {
@@ -89,6 +95,21 @@ export const TodayTab: React.FC<TodayTabProps> = ({
   const travel = useMemo(() => loadTravelState(), [records]);
   const travelProgress = useMemo(() => getTravelProgress(), [records]);
   const streak = useMemo(() => computeWeekReport(records).streak, [records]);
+
+  // ── 放下手机前的一小时（第 82 轮，取代数字健康台）：昨夜最后一次熄屏
+  //    前 60 分钟每应用前台分钟——系统"屏幕使用时间"给全天 totals，这里
+  //    只看与入睡相邻的最后一段。无权限/无数据 → 不渲染
+  const [windDown, setWindDown] = useState<WindDownResult | null>(null);
+  const windDownKey = useMemo(() => localDateOffset(-1), []);
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let cancelled = false;
+    void queryWindDownApps(windDownKey)
+      .then((r) => { if (!cancelled && r) setWindDown(r); })
+      .catch(() => { /* 无权限/不支持：卡片不出现 */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windDownKey, records.length]);
   const [goalOpen, setGoalOpen] = useState(false);
   // 睡前提醒的悬浮窗授权态：null=未检查。此前开关只翻布尔、不申请任何权限，
   // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效
@@ -329,6 +350,47 @@ export const TodayTab: React.FC<TodayTabProps> = ({
           hint="点下方「晨起手动补录」记下第一晚"
         />
       )}
+
+      {/* 放下手机前的一小时（第 82 轮）：昨夜睡前最后 60 分钟的真实画面 */}
+      {windDown && windDown.apps.length > 0 && (() => {
+        const totalMin = windDown.apps.reduce((a, x) => a + x.minutes, 0);
+        const putDown = new Date(windDown.windowEnd);
+        const hm = `${String(putDown.getHours()).padStart(2, '0')}:${String(putDown.getMinutes()).padStart(2, '0')}`;
+        return (
+          <div
+            className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}
+            data-testid="winddown-card"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Hourglass className={`w-4 h-4 ${theme.accentText}`} />
+                <h3 className="text-sm font-bold text-white">放下手机前的一小时</h3>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono shrink-0">{hm} 放下</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-3xl font-black font-mono tabular-nums ${theme.accentText}`}>{totalMin}</span>
+              <span className="text-xs text-slate-300">分钟还在亮屏</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {windDown.apps.slice(0, 4).map((a) => (
+                <span
+                  key={a.pkg}
+                  className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-full px-2.5 py-1 text-[11px] text-slate-200 font-bold`}
+                >
+                  {a.label}
+                  <span className={`ml-1 font-mono ${theme.accentText}`}>{a.minutes}m</span>
+                </span>
+              ))}
+            </div>
+            {totalMin >= 55 && (
+              <p className="text-[10px] text-amber-300 leading-relaxed">
+                放下前手机几乎没停过——大脑可能需要更久才能平静下来。
+              </p>
+            )}
+          </div>
+        );
+      })()}
       </div>
 
       {/* 4. Action Cards for Manual Log & Bedside Monitor */}

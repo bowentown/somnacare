@@ -74,8 +74,14 @@ const openAt = async (page: Page, h: number, m: number): Promise<Date> => {
   return fixed;
 };
 
-const navTo = (page: Page, tab: string) =>
-  page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: tab }).click();
+// 导航 = 点按 + 等吸附动画落定（SNAP_MS=300 + 余量）。轨道用指数缓出
+// （前 100ms 走完 ~80%），Playwright 的两帧稳定判定会在动画尾段提前放行——
+// 紧跟着的页内点击会与目标错位，落在隔壁控件上静默失效（第 82 轮 旅程19
+// 两次复现的根因）。把"落定"算进导航语义，所有用例统一受益。
+const navTo = async (page: Page, tab: string) => {
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: tab }).click();
+  await page.waitForTimeout(380);
+};
 
 /** 安装"原生桥"mock（CustomPlatform 通道，isNativePlatform 恒 true） */
 const mockNativeUsage = async (

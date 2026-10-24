@@ -766,6 +766,12 @@ export const App: React.FC = () => {
   // 后弹的短提示会被先前长提示的回调提前收掉
   const toastTimerRef = useRef<number>(0);
   const adSkipWarnedRef = useRef(false);
+  // 档案更新的唯一入口（第 82 轮性能）：此前三处内联箭头，每个 App 渲染
+  // 都是新引用——EyeCareTab/SettingsTab 等 memo 分区被无效击穿
+  const handleUpdateProfile = useCallback(
+    (updated: Partial<UserProfile>) => setUserProfile((prev) => ({ ...prev, ...updated })),
+    []
+  );
   // useCallback：作为 memo 分区 props 的依赖须稳定（第 81 轮性能）
   const showToast = useCallback((msg: string, durationMs = 3200) => {
     setToastMessage(msg);
@@ -1192,7 +1198,7 @@ export const App: React.FC = () => {
                       onOpenActiveSleep={() => setIsActiveSleepOpen(true)}
                       onOpenManualLog={() => setIsManualLogOpen(true)}
                       onOpenManualLogPrefilled={(p) => { setManualLogPrefill(p); setIsManualLogOpen(true); }}
-                      onUpdateProfile={(updated) => setUserProfile((prev) => ({ ...prev, ...updated }))}
+                      onUpdateProfile={handleUpdateProfile}
                       startSignal={sleepStartSignal}
                       onNavigateToTrends={() => setActiveTab('trends')}
                       onSaveRecord={handleSaveManualRecord}
@@ -1224,7 +1230,7 @@ export const App: React.FC = () => {
                   {id === 'eyecare' && (
                     <EyeCareTab
                       userProfile={userProfile}
-                      onUpdateProfile={(updated) => setUserProfile((prev) => ({ ...prev, ...updated }))}
+                      onUpdateProfile={handleUpdateProfile}
                       onToast={showToast}
                       theme={currentTheme}
                     />
@@ -1234,7 +1240,7 @@ export const App: React.FC = () => {
                     <SettingsTab
                       records={records}
                       userProfile={userProfile}
-                      onUpdateProfile={(updated) => setUserProfile((prev) => ({ ...prev, ...updated }))}
+                      onUpdateProfile={handleUpdateProfile}
                       onResetDemoData={handleResetDemoData}
                       onImportRecords={(imported) => {
             // 与"最近一晚 = records[0]"的契约对齐：导入升序备份此前会让首页/

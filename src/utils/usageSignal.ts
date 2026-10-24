@@ -141,34 +141,6 @@ export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
   }
 }
 
-// ── 每应用使用时长（第 78 轮，Phase 3）：真实测量，分类在 JS 侧做 ──
-
-export interface AppUsageEntry {
-  date: string;
-  pkg: string;
-  label: string;
-  minutes: number;
-}
-
-export async function queryAppUsage(days = 1): Promise<AppUsageEntry[]> {
-  const pl = usage();
-  if (!pl?.queryAppUsage) return [];
-  try {
-    const res = await pl.queryAppUsage({ days });
-    if (!Array.isArray(res?.apps)) return [];
-    return res.apps
-      .filter((a: any) => a && typeof a.pkg === 'string' && typeof a.date === 'string')
-      .map((a: any) => ({
-        date: a.date,
-        pkg: a.pkg,
-        label: typeof a.label === 'string' && a.label ? a.label : String(a.pkg),
-        minutes: typeof a.minutes === 'number' ? a.minutes : 0,
-      }));
-  } catch {
-    return [];
-  }
-}
-
 export function cachedUsageDays(): UsageDay[] {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -179,6 +151,43 @@ export function cachedUsageDays(): UsageDay[] {
       d && typeof d.date === 'string' && typeof d.lastActive === 'string');
   } catch {
     return [];
+  }
+}
+
+// ── 放下手机前的一小时（第 82 轮，取代数字健康台）──
+// 只看与入睡直接相邻的最后一段：系统"屏幕使用时间"给全天 totals，
+// 这里给"放下前 60 分钟你在刷什么"——睡眠 App 的独特视角。
+
+export interface WindDownApp {
+  pkg: string;
+  label: string;
+  minutes: number;
+}
+
+export interface WindDownResult {
+  apps: WindDownApp[];
+  /** 放下时刻 epoch ms（-1 = 该夜找不到放下事件） */
+  windowEnd: number;
+}
+
+export async function queryWindDownApps(nightKey: string, windowMinutes = 60): Promise<WindDownResult | null> {
+  const pl = usage();
+  if (!pl?.queryWindDownApps) return null;
+  try {
+    const res = await pl.queryWindDownApps({ nightKey, windowMinutes });
+    if (!Array.isArray(res?.apps)) return null;
+    return {
+      apps: res.apps
+        .filter((a: any) => a && typeof a.pkg === 'string' && typeof a.label === 'string' && a.label)
+        .map((a: any) => ({
+          pkg: a.pkg,
+          label: a.label,
+          minutes: typeof a.minutes === 'number' ? a.minutes : 0,
+        })),
+      windowEnd: typeof res.windowEnd === 'number' ? res.windowEnd : -1,
+    };
+  } catch {
+    return null;
   }
 }
 

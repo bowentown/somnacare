@@ -212,19 +212,54 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
           )}
         </div>
       ) : (
-        <p
-          className="absolute left-0 right-0 text-center text-[14px] text-slate-300 whitespace-nowrap"
+        <div
+          className="absolute left-0 right-0 flex flex-col items-center"
           style={{
-            top: 'calc(38% + 178px)',
-            letterSpacing: '0.42em',
+            top: 'calc(38% + 168px)',
             opacity: 0,
-            // 2150ms 入场是旧 3.5s 开屏的时序；现在 1.9s 就淡出——
-            // 宣传语必须在淡出前完整可见：900ms 入场，1650ms 成形
-            animation: 'splash-rise 750ms ease-out 900ms both',
+            animation: 'splash-rise 500ms ease-out 820ms both',
           }}
         >
-          懂睡眠，更懂你
-        </p>
+          {/* 文字涟漪（第 82 轮，恢复并升级）：宣传语像落在水面，
+              三圈椭圆自文字中心荡开——只动 transform/opacity，合成器友好 */}
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="absolute left-1/2 top-1/2 rounded-[50%] pointer-events-none"
+              style={{
+                width: 250,
+                height: 96,
+                marginLeft: -125,
+                marginTop: -48,
+                border: `1px solid ${mc.lit}`,
+                willChange: 'transform, opacity',
+                animation: `splash-slogan-ripple 1300ms ease-out ${880 + i * 180}ms both`,
+              }}
+            />
+          ))}
+          {/* 大字渐变 + 逐字浮现：1.4s 淡出前成形（末字 1280ms 入场） */}
+          <h1
+            className="relative text-[22px] font-black whitespace-nowrap"
+            style={{
+              letterSpacing: '0.38em',
+              backgroundImage: `linear-gradient(100deg, ${mc.lit} 0%, #ffffff 45%, ${mc.aur2} 100%)`,
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+              filter: `drop-shadow(0 0 14px ${mc.lit}55)`,
+            }}
+          >
+            {'懂睡眠，更懂你'.split('').map((ch, i) => (
+              <span
+                key={i}
+                className="inline-block"
+                style={{ animation: `splash-rise 460ms ease-out ${860 + i * 70}ms both` }}
+              >
+                {ch}
+              </span>
+            ))}
+          </h1>
+        </div>
       )}
     </div>
   );

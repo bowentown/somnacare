@@ -46,6 +46,13 @@ public class UsageSignalPlugin extends Plugin {
     private static final int EVT_KEYGUARD_SHOWN = 17;
     private static final int EVT_KEYGUARD_HIDDEN = 18;
 
+    // 前台切换事件（AOSP 事实：ACTIVITY_RESUMED==MOVE_TO_FOREGROUND==1、
+    // ACTIVITY_PAUSE==MOVE_TO_BACKGROUND==2；STOP(3) 是 API 29+ 才有的常量，
+    // minSdk 24 下按数值比较以避免直接引用高 API 常量）
+    private static final int EVT_FG_START = 1;
+    private static final int EVT_FG_PAUSE = 2;
+    private static final int EVT_FG_STOP = 3;
+
     private static final long DAY_MS = 86400000L;
 
     private boolean hasUsageAccess() {
@@ -339,19 +346,27 @@ public class UsageSignalPlugin extends Plugin {
     }
 
     /**
-     * 每应用使用时长（第 78 轮，Phase 3）：按自然日的每应用前台分钟数，
-     * 真实测量（UsageStats 聚合）。分类（社交/视频等）在 JS 侧做，
-     * 便于随时调整规则而不动原生。
+     * 「放下手机前的一小时」（第 82 轮，取代数字健康台）：给定某一夜的
+     * 夜归属键（yyyy-MM-dd），取该夜最后一次熄屏（放下）前 60 分钟窗口内
+     * 每应用的前台分钟数——系统"屏幕使用时间"给的是全天 totals，这里只看
+     * 与入睡直接相邻的最后一段，是睡眠 App 的独特视角。
+     *
+     * 夜归属与放下窗口的规则必须与 queryDailyUsage 完全一致（护栏锁同步）。
      */
     @PluginMethod
-    public void queryAppUsage(PluginCall call) {
+    public void queryWindDownApps(PluginCall call) {
         if (!hasUsageAccess()) {
             call.reject("缺少使用情况访问权限");
             return;
         }
-        int days = call.getInt("days", 1);
-        if (days < 1) days = 1;
-        if (days > 7) days = 7;
+        String nightKey = call.getString("nightKey", "");
+        int windowMin = call.getInt("windowMinutes", 60);
+        if (windowMin < 15) windowMin = 15;
+        if (windowMin > 120) windowMin = 120;
+        if (nightKey == null || nightKey.isEmpty()) {
+            call.reject("缺少夜归属键");
+            return;
+        }
         try {
             Context ctx = getContext();
             UsageStatsManager usm =
@@ -361,32 +376,83 @@ public class UsageSignalPlugin extends Plugin {
                 return;
             }
             long now = System.currentTimeMillis();
-            java.text.DateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
-            java.util.Calendar dayCal = java.util.Calendar.getInstance();
-            java.util.List<android.app.usage.UsageStats> stats =
-                    usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - days * DAY_MS, now);
-            JSArray arr = new JSArray();
-            for (android.app.usage.UsageStats s : stats) {
-                if (s == null) continue;
-                long ft = s.getTotalTimeInForeground();
-                if (ft < 60_000L) continue;   // 不足 1 分钟的应用不进报告
-                String pkg = s.getPackageName();
-                String label = appLabel(ctx, pkg);
-                if (label == null) continue;  // 名字解析不出（已卸载/不可见）→ 整条跳过，不显示碎片
-                dayCal.setTimeInMillis(s.getFirstTimeStamp());
-                JSObject item = new JSObject();
-                item.put("date", df.format(dayCal.getTime()));
-                item.put("pkg", pkg);
-                item.put("label", label);
-                item.put("minutes", (int) Math.round(ft / 60000.0));
-                arr.put(item);
+            long scanBegin = now - 3 * DAY_MS;
+
+            // 第一遍：找该夜的放下时刻（与 queryDailyUsage 同规则：
+            // 夜间作息 12:00 前的事件归前一夜；放下=熄屏且落在 18:00–次日 06:00）
+            UsageEvents events = usm.queryEvents(scanBegin, now);
+            UsageEvents.Event ev = new UsageEvents.Event();
+            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            Calendar cal = Calendar.getInstance();
+            long windowEnd = -1;
+            while (events.hasNextEvent()) {
+                events.getNextEvent(ev);
+                int type = ev.getEventType();
+                boolean on = type == EVT_SCREEN_INTERACTIVE || type == EVT_KEYGUARD_HIDDEN;
+                boolean off = type == EVT_SCREEN_NON_INTERACTIVE || type == EVT_KEYGUARD_SHOWN;
+                if (!on && !off) continue;
+                long t = ev.getTimeStamp();
+                cal.setTimeInMillis(t);
+                int hour = cal.get(Calendar.HOUR_OF_DAY);
+                if (hour < 12) cal.add(Calendar.HOUR_OF_DAY, -12);
+                String key = df.format(cal.getTime());
+                if (key.equals(nightKey) && off && (hour >= 18 || hour < 6)) {
+                    windowEnd = t;   // 取最后一次（放下 = 熄屏序列的结尾）
+                }
             }
+            if (windowEnd < 0) {
+                JSObject none = new JSObject();
+                none.put("apps", new JSArray());
+                call.resolve(none);
+                return;
+            }
+            long windowBegin = windowEnd - windowMin * 60000L;
+
+            // 第二遍：窗口内按前台切换事件配对计时（RESUMED→PAUSE/STOP）
+            UsageEvents fg = usm.queryEvents(windowBegin, windowEnd + 1000L);
+            java.util.HashMap<String, Long> pendingStart = new java.util.HashMap<>();
+            java.util.HashMap<String, Long> totals = new java.util.HashMap<>();
+            while (fg.hasNextEvent()) {
+                fg.getNextEvent(ev);
+                int type = ev.getEventType();
+                String pkg = ev.getPackageName();
+                if (pkg == null) continue;
+                long t = Math.max(windowBegin, Math.min(windowEnd, ev.getTimeStamp()));
+                if (type == EVT_FG_START) {
+                    pendingStart.putIfAbsent(pkg, Math.max(windowBegin, ev.getTimeStamp()));
+                } else if (type == EVT_FG_PAUSE || type == EVT_FG_STOP) {
+                    Long start = pendingStart.remove(pkg);
+                    // start 为 null 说明窗口开始时该应用已在前台——从窗口起点计
+                    long s = start != null ? start : windowBegin;
+                    totals.merge(pkg, Math.max(0, t - s), Long::sum);
+                }
+            }
+            // 窗口结束时仍在前台的应用（放下前停在最后一个应用上）：补记到放下时刻
+            for (java.util.Map.Entry<String, Long> e : pendingStart.entrySet()) {
+                totals.merge(e.getKey(), Math.max(0, windowEnd - e.getValue()), Long::sum);
+            }
+
+            java.util.List<JSObject> list = new java.util.ArrayList<>();
+            for (java.util.Map.Entry<String, Long> e : totals.entrySet()) {
+                int minutes = (int) Math.round(e.getValue() / 60000.0);
+                if (minutes < 1) continue;
+                String label = appLabel(ctx, e.getKey());
+                if (label == null) continue;   // 名字解析不出（已卸载/不可见）→ 跳过
+                JSObject o = new JSObject();
+                o.put("pkg", e.getKey());
+                o.put("label", label);
+                o.put("minutes", minutes);
+                list.add(o);
+            }
+            list.sort((a, b) -> b.getInt("minutes") - a.getInt("minutes"));
+            JSArray arr = new JSArray();
+            for (JSObject o : list) arr.put(o);
             JSObject ret = new JSObject();
             ret.put("apps", arr);
-            ret.put("observedUntil", now);
+            ret.put("windowEnd", windowEnd);
             call.resolve(ret);
         } catch (Exception e) {
-            call.reject("查询每应用使用失败: " + e.getMessage());
+            call.reject("查询睡前一小时失败: " + e.getMessage());
         }
     }
 }

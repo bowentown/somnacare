@@ -16,7 +16,7 @@ import {
   setEyeRestEnabled,
   type EyeRestStatus,
 } from '../utils/eyeCare';
-import { queryDailyHealth, queryAppUsage, type DailyHealthDay, type AppUsageEntry } from '../utils/usageSignal';
+import { queryDailyHealth, type DailyHealthDay } from '../utils/usageSignal';
 import { subscribeAppResume } from '../utils/appResume';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { EmptyState, StatCard, Switch } from './ui';
@@ -74,7 +74,7 @@ const hexToHue = (hex: string): number => {
 };
 
 
-export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfile, onToast, theme }) => {
+const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfile, onToast, theme }) => {
   const rawCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;
   const cfg: EyeCareConfig = LEGACY_PRESET_MAP[rawCfg.preset]
     ? { ...rawCfg, preset: LEGACY_PRESET_MAP[rawCfg.preset] }
@@ -147,40 +147,6 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     小时: Math.round((d.screenMinutes / 60) * 10) / 10,
     解锁: d.unlocks,
   }));
-
-  // ── 数字健康台（第 78 轮，Phase 3）：每应用真实时长 + 本地分类 ──
-  const [appUsage, setAppUsage] = useState<AppUsageEntry[]>([]);
-  useEffect(() => {
-    if (!native) return;
-    void queryAppUsage(1).then(setAppUsage).catch(() => setAppUsage([]));
-  }, [native]);
-  // 双保险（第 81 轮真机回归）：label 缺失或仍是包名/包名尾段的条目一律
-  // 不进列表——宁可少一行，绝不显示 "mm"/"sgame" 这类碎片（原生侧解析
-  // 不到时已跳过；这里挡住任何历史缓存/异常通路漏过来的脏数据）
-  const looksLikePkgFragment = (a: AppUsageEntry): boolean =>
-    !a.label || a.label === a.pkg || a.label === (a.pkg.split('.').pop() ?? a.pkg);
-  const todayApps = appUsage
-    .filter((a) => a.date === todayKey && !looksLikePkgFragment(a))
-    .sort((a, b) => b.minutes - a.minutes);
-  const CATEGORY_RULES: Array<{ name: string; test: RegExp }> = [
-    { name: '社交', test: /tencent\.mm|weibo|instagram|facebook|twitter|xingin|snssdk|telegram|whatsapp|line\./i },
-    { name: '视频', test: /youtube|aweme|kuaishou|bili|netflix|iqiyi|douyu|huya|tiktok|musical/i },
-    { name: '阅读', test: /qidian|qreader|dragon\.read|duokan|ireader|weread|hwread|heytap\.reader|kuangxiangciweimao/i },
-    { name: '游戏', test: /game|unity|hypixel|netease\.|tencent\.games|miHoYo|mihoyo/i },
-  ];
-  const categoryOf = (pkg: string): string =>
-    CATEGORY_RULES.find((r) => r.test.test(pkg))?.name ?? '其他';
-  const categoryTotals = (() => {
-    const totals = new Map<string, number>();
-    for (const a of todayApps) {
-      const c = categoryOf(a.pkg);
-      totals.set(c, (totals.get(c) ?? 0) + a.minutes);
-    }
-    return [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  })();
-  // 显示名直接用原生解析出的真实应用名；超长截断用码点安全的方式（不劈 emoji）
-  const appLabel = (a: AppUsageEntry): string =>
-    a.label.length > 12 ? `${Array.from(a.label).slice(0, 12).join('')}…` : a.label;
 
   const handleToggle = async (next: boolean) => {
     if (next && native) {
@@ -593,47 +559,6 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
         />
       )}
 
-      {/* 8. 数字健康台（第 78 轮，Phase 3）：每应用真实分钟 + 本地分类 */}
-      {native && todayApps.length > 0 && (
-        <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
-          <div className="flex items-center gap-2">
-            <Pipette className="w-4 h-4 text-violet-300" />
-            <h3 className="text-sm font-bold text-white">数字健康台</h3>
-            <span className="text-[10px] text-slate-400 font-mono">今日</span>
-          </div>
-          {categoryTotals.length > 0 && (
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-300">
-              {categoryTotals.map(([name, minutes]) => (
-                <span key={name} className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-full px-2 py-0.5 font-mono tabular-nums`}>
-                  {name} {minutes >= 60 ? `${Math.floor(minutes / 60)}h${minutes % 60}m` : `${minutes}m`}
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="space-y-1.5">
-            {todayApps.slice(0, 5).map((a) => {
-              const maxMin = todayApps[0].minutes;
-              return (
-                <div key={a.pkg} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-20 truncate text-slate-300 shrink-0" title={a.pkg}>
-                    {appLabel(a)}
-                  </span>
-                  <div className={`flex-1 h-2 rounded-full ${theme.cardInnerBg} overflow-hidden`}>
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${Math.max(4, Math.round((a.minutes / maxMin) * 100))}%`, background: theme.accentHex }}
-                    />
-                  </div>
-                  <span className="w-14 text-right font-mono tabular-nums text-slate-300 shrink-0">
-                    {a.minutes >= 60 ? `${Math.floor(a.minutes / 60)}h${a.minutes % 60}m` : `${a.minutes}m`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* 7. 定时（默认关闭，按需开启） */}
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
         <div className="flex items-center justify-between">
@@ -682,3 +607,7 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     </div>
   );
 };
+
+// memo（第 82 轮性能）：App 级状态变化（toast/横幅/键盘）不再连带护眼页
+// 全量重渲染；props 已在 App 侧稳定（handleUpdateProfile/showToast 均 useCallback）
+export const EyeCareTab = React.memo(EyeCareTabInner);

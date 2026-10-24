@@ -300,10 +300,17 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
   }, [records, insights]);
   const [localStage, setLocalStage] = useState<'loading' | 'generating' | null>(null);
   const localGenAbortRef = useRef<AbortController | null>(null);
-  // 新消息/流式 token 到来时跟随滚到底部（仅当用户本就停在底部附近）
+  // 新消息/流式 token 到来时跟随滚到底部（仅当用户本就停在底部附近）。
+  // rAF 合帧（第 82 轮性能）：流式每个 token 都触发本 effect，直接设
+  // scrollTop 会强制同步布局；一帧最多滚一次，视觉相同
   useEffect(() => {
     const el = chatScrollRef.current;
-    if (el && chatStickRef.current) el.scrollTop = el.scrollHeight;
+    if (!el || !chatStickRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      const node = chatScrollRef.current;
+      if (node && chatStickRef.current) node.scrollTop = node.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [chatMessages, isSendingChat, localStage]);
 
   // 评估结果缓存（第 28 轮）：键 = 近 7 晚数据 + 档案可变字段 + 作息类型的指纹。
