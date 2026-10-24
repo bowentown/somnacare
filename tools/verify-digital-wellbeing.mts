@@ -32,6 +32,29 @@ ok('UI：无解释小字（干净）', !tab.includes('应用时长来自系统�
 ok('UI：复用 StatCard/Progress 视觉语法（Phase 0 组件层）',
   tab.includes('<StatCard') && !tab.includes('暂无睡眠数据</span>'));
 
+// ── 第 81 轮真机回归：应用名必须是真实显示名，绝不允许包名碎片 ──
+// 根因：targetSdk 35 的包可见性过滤，getApplicationInfo(第三方包) 一律
+// NameNotFoundException → 旧代码回退包名尾段（用户截屏里的 mm/sgame）。
+// 修复三件套：清单声明 QUERY_ALL_PACKAGES + 原生解析不出就跳过整条 +
+// JS 侧挡住任何漏过来的碎片。
+const usageManifest = read('plugins/cap-usage-signal/android/src/main/AndroidManifest.xml');
+ok('原生清单：声明 QUERY_ALL_PACKAGES（Android 11+ 包可见性，否则第三方应用名一律解析失败）',
+  usageManifest.includes('android.permission.QUERY_ALL_PACKAGES'));
+ok('原生：appLabel 解析不出返回 null（不再回退包名尾段）',
+  /private static String appLabel[\s\S]*?return null;/.test(usagePlugin)
+  && !/return dot >= 0/.test(usagePlugin));
+ok('原生：label 为 null 的条目整条跳过（不进报告）',
+  /label == null\) continue;/.test(usagePlugin));
+ok('UI：label 缺失/等于包名/等于尾段的条目不渲染（双保险）',
+  tab.includes('looksLikePkgFragment')
+  && /filter\(\(a\) => a\.date === todayKey && !looksLikePkgFragment\(a\)\)/.test(tab));
+{
+  // appLabel 只消费原生解析出的真实名——不再有"回退包名尾段"的分支
+  const m = tab.match(/const appLabel[\s\S]*?;\n/);
+  ok('UI：显示名直接用 a.label（无包名回退分支）',
+    !!m && m[0].includes('a.label') && !m[0].includes('pkg'));
+}
+
 {
   const doctored = usagePlugin.replace('public void queryAppUsage(', 'public void removedMethod(');
   ok('反向自检：删掉原生方法后判据不再成立', !doctored.includes('public void queryAppUsage('));

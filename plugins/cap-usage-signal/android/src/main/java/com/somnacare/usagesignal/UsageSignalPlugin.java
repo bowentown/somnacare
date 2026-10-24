@@ -323,7 +323,11 @@ public class UsageSignalPlugin extends Plugin {
             call.reject("查询每日屏幕健康失败: " + e.getMessage());
         }
     }
-    /** 应用显示名（PackageManager；拿不到时回退包名尾段） */
+    /** 应用显示名（PackageManager）。解析不出返回 null——调用方跳过该条，
+     *  绝不回退包名尾段（"mm"/"sgame" 这类碎片对用户毫无意义，第 81 轮实测）。
+     *  解析失败的根因是 Android 11+ 包可见性过滤：需清单声明 QUERY_ALL_PACKAGES
+     *  （见本插件 AndroidManifest），否则 getApplicationInfo 对第三方包一律
+     *  NameNotFoundException。 */
     private static String appLabel(Context ctx, String pkg) {
         try {
             CharSequence cs = ctx.getPackageManager().getApplicationLabel(
@@ -331,8 +335,7 @@ public class UsageSignalPlugin extends Plugin {
             if (cs != null && cs.length() > 0) return cs.toString();
         } catch (Exception ignored) {
         }
-        int dot = pkg.lastIndexOf('.');
-        return dot >= 0 && dot + 1 < pkg.length() ? pkg.substring(dot + 1) : pkg;
+        return null;
     }
 
     /**
@@ -367,12 +370,14 @@ public class UsageSignalPlugin extends Plugin {
                 if (s == null) continue;
                 long ft = s.getTotalTimeInForeground();
                 if (ft < 60_000L) continue;   // 不足 1 分钟的应用不进报告
-                dayCal.setTimeInMillis(s.getFirstTimeStamp());
                 String pkg = s.getPackageName();
+                String label = appLabel(ctx, pkg);
+                if (label == null) continue;  // 名字解析不出（已卸载/不可见）→ 整条跳过，不显示碎片
+                dayCal.setTimeInMillis(s.getFirstTimeStamp());
                 JSObject item = new JSObject();
                 item.put("date", df.format(dayCal.getTime()));
                 item.put("pkg", pkg);
-                item.put("label", appLabel(ctx, pkg));
+                item.put("label", label);
                 item.put("minutes", (int) Math.round(ft / 60000.0));
                 arr.put(item);
             }

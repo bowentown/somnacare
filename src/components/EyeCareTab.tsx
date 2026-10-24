@@ -154,8 +154,13 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     if (!native) return;
     void queryAppUsage(1).then(setAppUsage).catch(() => setAppUsage([]));
   }, [native]);
+  // 双保险（第 81 轮真机回归）：label 缺失或仍是包名/包名尾段的条目一律
+  // 不进列表——宁可少一行，绝不显示 "mm"/"sgame" 这类碎片（原生侧解析
+  // 不到时已跳过；这里挡住任何历史缓存/异常通路漏过来的脏数据）
+  const looksLikePkgFragment = (a: AppUsageEntry): boolean =>
+    !a.label || a.label === a.pkg || a.label === (a.pkg.split('.').pop() ?? a.pkg);
   const todayApps = appUsage
-    .filter((a) => a.date === todayKey)
+    .filter((a) => a.date === todayKey && !looksLikePkgFragment(a))
     .sort((a, b) => b.minutes - a.minutes);
   const CATEGORY_RULES: Array<{ name: string; test: RegExp }> = [
     { name: '社交', test: /tencent\.mm|weibo|instagram|facebook|twitter|xingin|snssdk|telegram|whatsapp|line\./i },
@@ -173,12 +178,9 @@ export const EyeCareTab: React.FC<EyeCareTabProps> = ({ userProfile, onUpdatePro
     }
     return [...totals.entries()].sort((a, b) => b[1] - a[1]);
   })();
-  // 应用显示名由原生 PackageManager 提供（真实应用名）；截断交给 CSS
-  // truncate（此前 JS slice(0,10) 会从词中间切断且可能劈开 emoji）
-  const appLabel = (a: AppUsageEntry): string => {
-    const name = a.label && a.label !== a.pkg ? a.label : (a.pkg.split('.').pop() ?? a.pkg);
-    return Array.from(name).length > 12 ? `${Array.from(name).slice(0, 12).join('')}…` : name;
-  };
+  // 显示名直接用原生解析出的真实应用名；超长截断用码点安全的方式（不劈 emoji）
+  const appLabel = (a: AppUsageEntry): string =>
+    a.label.length > 12 ? `${Array.from(a.label).slice(0, 12).join('')}…` : a.label;
 
   const handleToggle = async (next: boolean) => {
     if (next && native) {

@@ -161,6 +161,7 @@ jobs:
           <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\
           <uses-permission android:name="android.permission.INTERNET" />\
           <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\
+          <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\
           <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\
           <uses-permission android:name="android.permission.VIBRATE" />' android/app/src/main/AndroidManifest.xml
 
@@ -209,6 +210,9 @@ jobs:
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'REQUEST_INSTALL_PACKAGES' android/app/src/main/AndroidManifest.xml
           grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' android/app/src/main/AndroidManifest.xml
+          # 第 81 轮：包可见性——缺了它数字健康台对第三方应用一律显示包名尾段（mm/sgame）
+          grep -q 'QUERY_ALL_PACKAGES' android/app/src/main/AndroidManifest.xml
+          grep -q 'QUERY_ALL_PACKAGES' plugins/cap-usage-signal/android/src/main/AndroidManifest.xml
           grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml
           grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
           grep -q 'rikka.shizuku.ShizukuProvider' plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml

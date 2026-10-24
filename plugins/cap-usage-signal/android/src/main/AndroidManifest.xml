@@ -7,4 +7,11 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+
+    <!-- Android 11+ 包可见性：没有它，PackageManager 对第三方包（微信/
+         王者等）一律 NameNotFoundException，"数字健康台"只能显示包名尾段
+         （mm/sgame，第 81 轮真机实测）。装包即授予、无运行时弹窗；
+         本应用仅 GitHub 分发，不涉 Play 商店对该权限的政策限制；
+         读取范围严格小于已授权的使用情况统计——只取显示名，不出原生层。 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 </manifest>
