@@ -31,8 +31,6 @@ ok('组件层：统一出口 index.ts',
 // ── 插画资产：unDraw 来源声明 + 体积纪律 ──
 const illuDir = join(ROOT, 'src/assets/illustrations');
 const svgFiles = readdirSync(illuDir).filter((f) => f.endsWith('.svg'));
-ok('插画：6 张 unDraw SVG 在场', svgFiles.length === 6,
-  svgFiles.join(', '));
 const license = read('src/assets/illustrations/LICENSE-NOTE.md');
 ok('插画：来源与许可声明在场（unDraw，免费商用免署名）',
   license.includes('undraw.co') && license.includes('无需署名'));
@@ -48,6 +46,14 @@ for (const f of svgFiles) {
 ok('插画：体积纪律（单张 ≤60KB，存储敏感）', oversize === 0);
 
 const illustration = read('src/components/ui/Illustration.tsx');
+// 资产与在用一一对应（第 87 轮）：?raw 全量内联进 bundle，未引用的插画
+// 是纯死重（此前 4 张 ~71KB 被旧断言"数量=6"锁死在包里）
+const imported = [...illustration.matchAll(/illustrations\/([a-z-]+)\.svg\?raw/g)].map((m) => m[1] + '.svg');
+const dead = svgFiles.filter((f) => !imported.includes(f));
+const missing = imported.filter((f) => !svgFiles.includes(f));
+ok('插画：资产与组件 import 一一对应（无死资产、无缺资产）',
+  dead.length === 0 && missing.length === 0 && svgFiles.length >= 1,
+  `dead=[${dead.join(',')}] missing=[${missing.join(',')}]`);
 ok('插画：主题化走 CSS 变量（不字符串手术）',
   illustration.includes("'--primary-svg-color'") && illustration.includes('?raw'));
 

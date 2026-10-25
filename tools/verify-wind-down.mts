@@ -104,6 +104,10 @@ ok('性能：三个重分区全部 memo（Trends/Today/AI）+ App 回调稳定�
   && app.includes('const handleUpdateProfile = useCallback')
   && app.includes('const openManualLogPrefilled = useCallback')
   && app.includes('const handleSaveManualRecord = useCallback'));
+ok('性能：五分区 React.lazy 代码分割（第 87 轮：首屏 JS 1.85MB→~0.5MB，-73%）',
+  ['TodayTab', 'TrendsTab', 'AIAdvicePanel', 'SettingsTab', 'EyeCareTab']
+    .every((n) => app.includes(`lazy(() => import('./components/${n}')`))
+  && app.includes('<Suspense fallback={null}>'));
 ok('性能：锦鲤池 30fps 封顶（真机卡顿主源：60fps 全量重绘减半）',
   pond.includes('FRAME_MS = 1000 / 30') && /now - previousTime < FRAME_MS/.test(pond));
 ok('无障碍：减弱动效时动画时延一并归零（延迟 both 动画不再长期隐身）',

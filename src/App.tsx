@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bell,
@@ -7,15 +7,15 @@ import {
 } from 'lucide-react';
 import { SleepRecord, UserProfile, DEFAULT_EYE_CARE } from './types/sleep';
 import { getInitialSleepLogs } from './utils/sleepScore';
-import { TodayTab } from './components/TodayTab';
-import { TrendsTab } from './components/TrendsTab';
-import { AIAdvicePanel } from './components/AIAdvicePanel';
+const TodayTab = lazy(() => import('./components/TodayTab').then((m) => ({ default: m.TodayTab })));
+const TrendsTab = lazy(() => import('./components/TrendsTab').then((m) => ({ default: m.TrendsTab })));
+const AIAdvicePanel = lazy(() => import('./components/AIAdvicePanel').then((m) => ({ default: m.AIAdvicePanel })));
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
 import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
-import { SettingsTab } from './components/SettingsTab';
-import { EyeCareTab } from './components/EyeCareTab';
+const SettingsTab = lazy(() => import('./components/SettingsTab').then((m) => ({ default: m.SettingsTab })));
+const EyeCareTab = lazy(() => import('./components/EyeCareTab').then((m) => ({ default: m.EyeCareTab })));
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
 import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components/ActiveSleepModal';
 import { ManualLogModal } from './components/ManualLogModal';
@@ -1269,6 +1269,7 @@ export const App: React.FC = () => {
                 <div className="p-4 space-y-4">
                   {mountedPanes.has(id) && (
                   <PaneErrorBoundary label={PANE_LABELS[id] ?? id}>
+                  <Suspense fallback={null}>
                   {id === 'today' && (
                     <TodayTab
                       records={records}
@@ -1323,6 +1324,7 @@ export const App: React.FC = () => {
                       theme={currentTheme}
                     />
                   )}
+                  </Suspense>
                   </PaneErrorBoundary>
                   )}
                 </div>

@@ -4,28 +4,17 @@ import { ThemeConfig } from '../../utils/themeStyles';
 // unDraw 插画（unDraw 许可：免费商用、无需署名；见 assets/illustrations/LICENSE-NOTE.md）。
 // 镜像已把 unDraw 标准主色规范化为 var(--primary-svg-color)，
 // 主题适配 = 在容器上设该变量为当前主题强调色。
+// 只 import 在用的插画（第 87 轮）：?raw 静态 import 会全部内联进 bundle，
+// 此前 6 张全量内联而实际只用 2 张——4 张死插画 ~71KB 白背。新增空态
+// 时同步登记 import 与 IllustrationName，护栏会比对资产目录防死文件回潮
 import noData from '../../assets/illustrations/no-data.svg?raw';
-import lateAtNight from '../../assets/illustrations/late-at-night.svg?raw';
 import screenTime from '../../assets/illustrations/screen-time.svg?raw';
-import meditation from '../../assets/illustrations/meditation.svg?raw';
-import healthyHabit from '../../assets/illustrations/healthy-habit.svg?raw';
-import aMomentToRelax from '../../assets/illustrations/a-moment-to-relax.svg?raw';
 
-export type IllustrationName =
-  | 'no-data'
-  | 'late-at-night'
-  | 'screen-time'
-  | 'meditation'
-  | 'healthy-habit'
-  | 'a-moment-to-relax';
+export type IllustrationName = 'no-data' | 'screen-time';
 
 const RAW: Record<IllustrationName, string> = {
   'no-data': noData,
-  'late-at-night': lateAtNight,
   'screen-time': screenTime,
-  meditation: meditation,
-  'healthy-habit': healthyHabit,
-  'a-moment-to-relax': aMomentToRelax,
 };
 
 /** 主题化 unDraw 插画：主色随主题强调色，宽度自适应容器 */
