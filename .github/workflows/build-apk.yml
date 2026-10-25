@@ -10,9 +10,11 @@ permissions:
   contents: write
 
 # 推 main 后紧跟推 tag 会触发两个构建，前一个白跑 ~8 分钟；
-# 固定并发组让新运行取消旧的（单人仓库无并行分支冲突）
+# 并发组按 ref 分组：同分支/同标签的新运行取消旧的（单人仓库），但
+# main 与 v* 标签【永不互杀】——固定组名时"main+tag 同时推送"谁后启动
+# 谁被取消是竞态，v1.11.2 曾因此取消了 tag run、Release 静默没发
 concurrency:
-  group: build-apk
+  group: build-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
