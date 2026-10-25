@@ -48,10 +48,25 @@ export function sanitizeRecord(raw: unknown): SleepRecord | null {
     bedtime: typeof r.bedtime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.bedtime) ? r.bedtime : '23:30',
     wakeTime: typeof r.wakeTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.wakeTime) ? r.wakeTime : '07:30',
     durationMinutes: duration || 1,
-    deepSleepMinutes: clampMin(r.deepSleepMinutes, duration),
-    lightSleepMinutes: clampMin(r.lightSleepMinutes, duration),
-    remSleepMinutes: clampMin(r.remSleepMinutes, duration),
-    awakeMinutes: clampMin(r.awakeMinutes, 720),
+    // 四期先各自 clamp 到 duration，再作分期和归一（第 86 轮）：各期独立
+    // clamp 时畸形备份的分期和可达 300%，分期比例图整条爆满
+    ...((): Pick<SleepRecord, 'deepSleepMinutes' | 'lightSleepMinutes' | 'remSleepMinutes' | 'awakeMinutes'> => {
+      const deep = clampMin(r.deepSleepMinutes, duration);
+      const light = clampMin(r.lightSleepMinutes, duration);
+      const rem = clampMin(r.remSleepMinutes, duration);
+      const awake = clampMin(r.awakeMinutes, 720);
+      const sum = deep + light + rem + awake;
+      if (sum <= duration || sum === 0) {
+        return { deepSleepMinutes: deep, lightSleepMinutes: light, remSleepMinutes: rem, awakeMinutes: awake };
+      }
+      const k = duration / sum;
+      return {
+        deepSleepMinutes: Math.round(deep * k),
+        lightSleepMinutes: Math.round(light * k),
+        remSleepMinutes: Math.round(rem * k),
+        awakeMinutes: Math.round(awake * k),
+      };
+    })(),
     sleepScore: Math.max(0, Math.min(100, numOr(r.sleepScore, 60))),
     sleepEfficiency: Math.max(0, Math.min(100, numOr(r.sleepEfficiency, 80))),
     latencyMinutes: clampMin(r.latencyMinutes, 480),

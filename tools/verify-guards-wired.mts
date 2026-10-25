@@ -29,6 +29,25 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+// ── 吞错模式检测（第 86 轮外部审查变异实测：把接线改成 `|| true` 后
+//    verify 链仍 exit 0——本元护栏只查文本出现，对"接了但失败被吞"失明）。
+//    链里每个 tsx 调用之后只允许 && 或行尾；出现 || / ; / | 等旁路即红。
+const swallowPattern = /tsx\s+tools\/verify-[\w-]+\.mts\s*(\|\||;|(?<!&&)\|)/;
+if (swallowPattern.test(wired)) {
+  console.error('✗ verify-guards-wired：verify 链存在吞错旁路（|| / ; / 管道）——护栏失败会被静默吞掉：');
+  console.error('   ' + wired.replace(swallowPattern, (m) => `【${m.trim()}】`));
+  process.exit(1);
+}
+// 变异自检：注入 `|| true` 的副本必须被同一判定抓住（防检测器自身失效）
+{
+  const doctored = wired.replace('tsx tools/verify-wiring.mts', 'tsx tools/verify-wiring.mts || true');
+  if (!swallowPattern.test(doctored)) {
+    console.error('✗ verify-guards-wired：吞错检测自检失败——`|| true` 旁路未被检出');
+    process.exit(1);
+  }
+}
+console.log('✓ verify 链无吞错旁路（|| / ; / 管道旁路 + 变异自检）');
+
 // 反向自检：伪造一个"未接线护栏"名单必须被检出
 {
   const fake = [...guardFiles, 'verify-fake-guard.mts'];

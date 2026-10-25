@@ -241,6 +241,9 @@ async function callGeminiWithFallback(
 // Medical Clinical Sleep Engine Fallback (based on NSF & CBT-I guidelines)
 function generateClinicalSleepAnalysis(recentLogs: any[] = [], userProfile: any = {}) {
   const count = recentLogs.length;
+  // 第 86 轮：无记录时返回 null——此前 count=0 会带着默认值(450分钟/82分/88%效率)
+  // 生成一份看起来很专业的完整报告，scoreSummary 甚至显示"近7天"（实际 0 晚）
+  if (count === 0) return null;
   const avgDuration = count > 0 ? Math.round(recentLogs.reduce((acc, r) => acc + (r.durationMinutes || 0), 0) / count) : 450;
   const avgDeep = count > 0 ? Math.round(recentLogs.reduce((acc, r) => acc + (r.deepSleepMinutes || 0), 0) / count) : 95;
   const avgRem = count > 0 ? Math.round(recentLogs.reduce((acc, r) => acc + (r.remSleepMinutes || 0), 0) / count) : 90;
@@ -261,7 +264,7 @@ function generateClinicalSleepAnalysis(recentLogs: any[] = [], userProfile: any 
     if (h >= 21 && h < 23) {
       chronotype = '晨型云雀型 (Lark Chronotype)';
       chronotypeDesc = '天生具备早睡早起基因，清晨皮质醇迅速攀升，前一日深度睡眠启动早，适合早间专注工作。';
-    } else if (h >= 0 || (h >= 23 && Number(recentLogs[0].bedtime.split(':')[1]) >= 45)) {
+    } else if (h >= 23 || h < 4) {   // 第 86 轮：旧条件 h>=0 恒真，任何非云雀时段全判夜型
       chronotype = '夜型猫头鹰型 (Owl Chronotype)';
       chronotypeDesc = '褪黑素分泌峰值较常规推迟1-2小时，晚间思维活跃。建议睡前调暗卧室照度，避免强光抑制入眠。';
     }
@@ -547,13 +550,21 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // High quality clinical rule-based fallback
+    // High quality clinical rule-based fallback（零记录 → null，绝不伪造）
     const fallbackResult = generateClinicalSleepAnalysis(recentLogs, userProfile);
+    if (!fallbackResult) {
+      res.status(400).json({ error: '尚无睡眠记录——请先记录至少一晚，再生成完整评估' });
+      return;
+    }
     res.json({ ...fallbackResult, engine: 'rules' });
   } catch (error: any) {
     console.error('Sleep analysis error:', error);
-    // Graceful fallback even on unexpected error
+    // Graceful fallback even on unexpected error（零记录同样拒绝）
     const fallback = generateClinicalSleepAnalysis(req.body?.recentLogs, req.body?.userProfile);
+    if (!fallback) {
+      res.status(400).json({ error: '尚无睡眠记录——请先记录至少一晚，再生成完整评估' });
+      return;
+    }
     res.json({ ...fallback, engine: 'rules' });
   }
 });

@@ -51,10 +51,15 @@ ok('JS 封装：getEyeRestStatus / setEyeRestEnabled',
   eyeCare.includes('getEyeRestStatus') && eyeCare.includes('setEyeRestEnabled'));
 
 // ── 用眼日报 ──
-ok('用眼日报：queryDailyHealth 真实聚合（前台时长 + USER_PRESENT 计数）',
+// 第 86 轮：解锁计数断言从"注释字符串在场"改为行为断言——旧断言锁死了
+// 错误注释（UsageEvents.Event 并无 USER_PRESENT 常量，==1 数的是前台切换），
+// 反而阻止正确修复。真解锁 = KEYGUARD_HIDDEN(18)，旧设备回退亮屏计数。
+ok('用眼日报：queryDailyHealth 真实聚合（前台时长 + KEYGUARD_HIDDEN 解锁计数，含旧设备亮屏回退）',
   usagePlugin.includes('public void queryDailyHealth')
   && usagePlugin.includes('getTotalTimeInForeground')
-  && usagePlugin.includes('EVENT_USER_PRESENT（旧 API 无命名常量）')
+  && usagePlugin.includes('type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE')
+  && /!kgByDay\.isEmpty\(\) \? kgByDay : siByDay/.test(usagePlugin)
+  && !usagePlugin.includes('USER_PRESENT（旧 API 无命名常量）')
   && usageSignal.includes('queryDailyHealth'));
 ok('用眼日报 UI：StatCard + 7 天柱图（Recharts，真实数据）',
   tab.includes('queryDailyHealth')

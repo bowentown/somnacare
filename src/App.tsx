@@ -80,6 +80,14 @@ export const App: React.FC = () => {
   // AI 聊天输入聚焦：打字时隐藏底部导航（否则导航条悬在键盘上方占一行）。
   // 失焦延迟回弹：点"发送"会先 blur，立即弹回会在键盘收起前闪一下
   const [chatTyping, setChatTyping] = useState(false);
+  // 首帧就绪（第 86 轮）：双 rAF = 主内容首帧已提交。开屏用它"就绪即撤"——
+  // 此前固定 1.9s 定时器，首屏 220ms 就绪也要干等 2.4s
+  const [firstFrameReady, setFirstFrameReady] = useState(false);
+  useEffect(() => {
+    let inner = 0;
+    const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setFirstFrameReady(true)); });
+    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
+  }, []);
   const chatBlurTimerRef = useRef<number | null>(null);
   // useCallback（第 84 轮性能）：AIAdvicePanel 已 memo，本回调须稳定引用
   const handleChatFocusChange = useCallback((focused: boolean) => {
@@ -787,11 +795,65 @@ export const App: React.FC = () => {
     setAutoCheckSignal((v) => v + 1);
   }, []);
   const openCodex = useCallback(() => setCodexOpen(true), []);
+
   // useCallback：作为 memo 分区 props 的依赖须稳定（第 81 轮性能）
   const showToast = useCallback((msg: string, durationMs = 3200) => {
     setToastMessage(msg);
     window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToastMessage(null), durationMs);
+  }, []);
+
+
+  // 导入回调（第 86 轮收口为稳定引用；SettingsTab 已 memo）
+  const handleImportRecords = useCallback((imported: SleepRecord[]) => {
+    // 与"最近一晚 = records[0]"的契约对齐：导入升序备份此前会让首页/
+    // AI/趋势全部指向最老一条，且按下标裁剪时丢的恰好是最近的记录
+    // records-only 备份只可能出自旧版导出（醒来日口径）→ 就地夜归属
+    // 迁移（第 51 轮审计：本机标记已置位时 reload 不会再迁，必须在此补）
+    const migratedImport = migrateRecordDatesToNightKey(imported, userProfile.chronotype ?? 'night').records;
+    // 同夜去重（第 86 轮）：备份里同 date 的多条夜睡会让"本周已过 2 天，
+    // 有记录 3 天"——按夜归属键归并，夜睡同 date 只留最新一条（小睡不受限）
+    const byNight = new Map<string, SleepRecord>();
+    const naps: SleepRecord[] = [];
+    for (const r of migratedImport) {
+      if (r.kind === 'nap') { naps.push(r); continue; }
+      const prev = byNight.get(r.date);
+      if (!prev || String(r.id) > String(prev.id)) byNight.set(r.date, r);
+    }
+    const deduped = [...byNight.values(), ...naps];
+    const mergedCount = migratedImport.length - deduped.length;
+    // 零记录守卫（第 86 轮）：畸形备份 records:[] 此前确认后静默清空全部
+    if (deduped.length === 0) {
+      showToast('备份里没有可导入的记录，已取消（现有记录未改动）');
+      return;
+    }
+    const sorted = [...deduped].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    const confirmMsg = mergedCount > 0
+      ? `导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条，其中 ${mergedCount} 条同夜重复已合并），继续？`
+      : `导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条），继续？`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+    // records-only 导入已就地迁移为新口径：置位标记，防止下次启动对
+    // 这些数据再迁一遍（第 66 轮审计；整包备份恢复在 backup.ts 里置位）
+    markRecordDateMigrationDone();
+    setUndoDeleted(null);
+    setRecords(sorted);
+    // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
+    clearShadowOutcomes();
+    pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
+    showToast(mergedCount > 0 ? `已导入 ${sorted.length} 条记录（合并 ${mergedCount} 条同夜重复）` : `已成功导入 ${imported.length} 条睡眠记录`);
+  }, [records.length, userProfile.chronotype, showToast]);
+  // 作息类型切换的存量重归类专用通路：不走 handleImportRecords
+  // （那条路弹"导入将替换"确认框，取消会让 profile 与数据
+  // 永久不一致）。顺序不变（records 本就是降序）
+  const handleReplaceRecords = useCallback((next: SleepRecord[]) => {
+    setRecords(next);
+    // 重归类只改 kind：按重归类后的夜睡日期清理条目
+    // （被改判为小睡的夜不再进诊断统计）
+    pruneShadowEntries(new Set(nightsOnly(next).map((r) => r.date)));
   }, []);
 
   // 广告跳过服务被系统关闭时，本次会话首次前台恢复给一次提示
@@ -1062,7 +1124,7 @@ export const App: React.FC = () => {
           style={{ background: ambientTint, mixBlendMode: 'soft-light' }}
         />
       )}
-      <LaunchSplash theme={currentTheme} />
+      <LaunchSplash theme={currentTheme} ready={firstFrameReady} />
       {/* 首次引导：z 在开屏(200)之下——开屏播完自然露出，两步可全跳过 */}
       {onboardingOpen && (
         <OnboardingCard
@@ -1255,38 +1317,9 @@ export const App: React.FC = () => {
                       userProfile={userProfile}
                       onUpdateProfile={handleUpdateProfile}
                       onResetDemoData={handleResetDemoData}
-                      onImportRecords={(imported) => {
-            // 与"最近一晚 = records[0]"的契约对齐：导入升序备份此前会让首页/
-            // AI/趋势全部指向最老一条，且按下标裁剪时丢的恰好是最近的记录
-            // records-only 备份只可能出自旧版导出（醒来日口径）→ 就地夜归属
-            // 迁移（第 51 轮审计：本机标记已置位时 reload 不会再迁，必须在此补）
-            const migratedImport = migrateRecordDatesToNightKey(imported, userProfile.chronotype ?? 'night').records;
-            const sorted = [...migratedImport].sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            );
-            if (!window.confirm(`导入将替换当前的 ${records.length} 条记录（共导入 ${sorted.length} 条），继续？`)) {
-              return;
-            }
-            // records-only 导入已就地迁移为新口径：置位标记，防止下次启动对
-            // 这些数据再迁一遍（第 66 轮审计；整包备份恢复在 backup.ts 里置位）
-            markRecordDateMigrationDone();
-            setUndoDeleted(null);
-                        setRecords(sorted);
-                        // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
-                        clearShadowOutcomes();
-                        pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
-                        showToast(`已成功导入 ${imported.length} 条睡眠记录`);
-                      }}
+                      onImportRecords={handleImportRecords}
                       autoCheckSignal={autoCheckSignal}
-                      onReplaceRecords={(next) => {
-                        // 作息类型切换的存量重归类专用通路：不走 onImportRecords
-                        // （那条路弹"导入将替换"确认框，取消会让 profile 与数据
-                        // 永久不一致）。顺序不变（records 本就是降序）
-                        setRecords(next);
-                        // 重归类只改 kind：按重归类后的夜睡日期清理条目
-                        // （被改判为小睡的夜不再进诊断统计）
-                        pruneShadowEntries(new Set(nightsOnly(next).map((r) => r.date)));
-                      }}
+                      onReplaceRecords={handleReplaceRecords}
                       theme={currentTheme}
                     />
                   )}

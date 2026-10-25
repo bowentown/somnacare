@@ -100,7 +100,13 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
   //    前 60 分钟每应用前台分钟——系统"屏幕使用时间"给全天 totals，这里
   //    只看与入睡相邻的最后一段。无权限/无数据 → 不渲染
   const [windDown, setWindDown] = useState<WindDownResult | null>(null);
-  const windDownKey = useMemo(() => localDateOffset(-1), []);
+  // 夜归属键与原生侧同规则（第 86 轮修正）：夜间/不规律作息取"昨天"（凌晨
+  // 归前夜）；白天作息的放下窗口是当天 06–18、键为自然日——此前恒取昨天，
+  // 白班用户的卡片会查到错的一夜
+  const windDownKey = useMemo(
+    () => (userProfile.chronotype === 'day' ? toLocalDateString() : localDateOffset(-1)),
+    [userProfile.chronotype]
+  );
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;

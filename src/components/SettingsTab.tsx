@@ -98,7 +98,7 @@ interface SettingsTabProps {
   autoCheckSignal?: number;
 }
 
-export const SettingsTab: React.FC<SettingsTabProps> = ({
+const SettingsTabInner: React.FC<SettingsTabProps> = ({
   records,
   userProfile,
   onUpdateProfile,
@@ -1266,3 +1266,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     </div>
   );
 };
+
+// memo（第 86 轮性能）：1268 行的设置页此前随 App 任意状态变化全量重渲染；
+// props 已在 App 侧稳定（回调全部 useCallback）
+export const SettingsTab = React.memo(SettingsTabInner);

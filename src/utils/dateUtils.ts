@@ -29,10 +29,3 @@ export function nightKeyOfBed(bedtimeMs: number, chronotype: 'night' | 'day' = '
   return toLocalDateString(new Date(d.getFullYear(), d.getMonth(), d.getDate() - shift));
 }
 
-/** HH:MM 版本（手动补录/影子诊断只有时钟串时用）：锚定日由调用方给。 */
-export function nightKeyOfClock(hhmm: string, anchorDate: string, chronotype: 'night' | 'day' = 'night'): string {
-  const [y, mo, da] = anchorDate.split('-').map(Number);
-  const [h] = hhmm.split(':').map(Number);
-  const shift = chronotype === 'day' ? 0 : h < 12 ? 1 : 0;
-  return toLocalDateString(new Date(y, mo - 1, da - shift));
-}

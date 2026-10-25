@@ -45,6 +45,8 @@ ok('原生：queryWindDownApps 存在且窗口钳制在 15–120 分钟',
     plugin.includes('String chronotype = call.getString("chronotype", "night")'));
   const todaySrc = read('src/components/TodayTab.tsx');
   ok('UI：首页查询透传用户作息类型', /queryWindDownApps\(windDownKey, userProfile\.chronotype/.test(todaySrc));
+  ok('UI：夜归属键按作息分日（第 86 轮修正：白天作息=当天 06–18 的自然日今天；夜间/不规律=昨天）',
+    todaySrc.includes("userProfile.chronotype === 'day' ? toLocalDateString() : localDateOffset(-1)"));
 }
 ok('原生：名字解析不出跳过整条（appLabel null 复用，绝不显示包名碎片）',
   /String label = appLabel\(ctx, e\.getKey\(\)\);[\s\S]{0,120}if \(label == null\) continue;/.test(plugin));

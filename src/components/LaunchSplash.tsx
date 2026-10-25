@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ThemeConfig } from '../utils/themeStyles';
 
 const KEY = 'somnacare_splash_shown';
@@ -312,7 +312,7 @@ const BedtimeActions: React.FC<{
  * 品牌开屏（冷启动一次，sessionStorage 门控）：
  * 包装 SplashScene(splash)，1.9s 后淡出卸载；点按可跳过。
  */
-export const LaunchSplash: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
+export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = ({ theme, ready = false }) => {
   const [visible, setVisible] = useState(() => {
     try {
       return sessionStorage.getItem(KEY) !== '1';
@@ -331,16 +331,38 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
     setVisible(false);
   };
 
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
   useEffect(() => {
     if (!visible) return;
-    // 1.9s（第 51 轮审计：3.5s × 每次冷启动干等太久——APK 冷启动每次新
-    // 进程都会重播）；点按任意处可跳过
-    const t1 = setTimeout(() => setFading(true), 1400);
-    const t2 = setTimeout(dismiss, 1900);
+    // 就绪即撤（第 86 轮）：最短仪式 1200ms（水滴+月亮+宣传语入场过半——
+    // 再短会把文字掐掉）后就绪即开始淡出；就绪信号迟迟不来则 2100ms 硬上限
+    // 兜底（慢设备/异常时绝不永久卡屏）。点按任意处可跳过不变。
+    // 实测首屏 ~220ms 就绪 → 约 1.2s 开始淡出、1.7s 消失（旧固定 2.4s）
+    let armed = false;
+    let raf = 0;
+    let t2 = 0;
+    const start = performance.now();
+    const arm = () => {
+      if (armed) return;
+      armed = true;
+      setFading(true);
+      t2 = window.setTimeout(dismiss, 480);
+    };
+    const tick = () => {
+      const elapsed = performance.now() - start;
+      if (elapsed >= 1200 && (readyRef.current || elapsed >= 2100)) {
+        arm();
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
     return () => {
-      clearTimeout(t1);
+      cancelAnimationFrame(raf);
       clearTimeout(t2);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   if (!visible) return null;   // 装饰性开屏：不声明为对话框（内部无可聚焦元素，aria-modal 曾把读屏用户锁在画面外）

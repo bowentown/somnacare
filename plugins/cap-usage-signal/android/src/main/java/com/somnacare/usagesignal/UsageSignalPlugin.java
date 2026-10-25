@@ -294,20 +294,32 @@ public class UsageSignalPlugin extends Plugin {
                 screenByDay.put(key, (prev == null ? 0L : prev) + ft);
             }
 
-            // 解锁次数：USER_PRESENT 事件按自然日计数（5s 去重同 queryScreenOnEvents）
-            java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
+            // 解锁次数（第 86 轮修正）：UsageEvents.Event 没有 USER_PRESENT 常量——
+            // 此前按 getEventType()==1（ACTIVITY_RESUMED，应用回前台）计数，实测把
+            // 60 次真解锁数成 ~180。真解锁 = KEYGUARD_HIDDEN(18，本文件类头已定义)。
+            // 兜底：API 24–27 设备不发 KEYGUARD 事件（见类头注释）——整窗一个都
+            // 没有时回退亮屏起始事件（SCREEN_INTERACTIVE，无锁屏设备的"拿起"）。
+            // 两路各自 5s 去重（亮屏+解锁几乎同刻，不去重会双计）
+            java.util.Map<String, Integer> kgByDay = new java.util.HashMap<>();
+            java.util.Map<String, Integer> siByDay = new java.util.HashMap<>();
             UsageEvents events = usm.queryEvents(now - days * DAY_MS, now);
             UsageEvents.Event ev = new UsageEvents.Event();
-            long lastPresentTs = -1;
+            long lastKgTs = -1;
+            long lastSiTs = -1;
             while (events.hasNextEvent()) {
                 events.getNextEvent(ev);
-                if (ev.getEventType() != 1) continue;   // EVENT_USER_PRESENT（旧 API 无命名常量）
-                if (lastPresentTs >= 0 && ev.getTimeStamp() - lastPresentTs < 5000) continue;
-                lastPresentTs = ev.getTimeStamp();
+                int type = ev.getEventType();
+                if (type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE) continue;
+                long last = type == EVT_KEYGUARD_HIDDEN ? lastKgTs : lastSiTs;
+                if (last >= 0 && ev.getTimeStamp() - last < 5000) continue;
                 dayCal.setTimeInMillis(ev.getTimeStamp());
                 String key = df.format(dayCal.getTime());
-                unlocksByDay.merge(key, 1, Integer::sum);
+                java.util.Map<String, Integer> target = type == EVT_KEYGUARD_HIDDEN ? kgByDay : siByDay;
+                target.merge(key, 1, Integer::sum);
+                if (type == EVT_KEYGUARD_HIDDEN) lastKgTs = ev.getTimeStamp();
+                else lastSiTs = ev.getTimeStamp();
             }
+            java.util.Map<String, Integer> unlocksByDay = !kgByDay.isEmpty() ? kgByDay : siByDay;
 
             JSArray arr = new JSArray();
             for (int i = days - 1; i >= 0; i--) {

@@ -81,4 +81,27 @@ try {
   fail('.env.example 不存在——部署变量清单缺失');
 }
 
+// ── 第 86 轮外部审查：数据诚实（零记录不出假报告 + 时型判定恒真修复）──
+{
+  const serverSrc = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  let honest = true;
+  if (!serverSrc.includes('if (count === 0) return null;')) {
+    fail('generateClinicalSleepAnalysis 零记录仍会生成报告（count=0 带默认值伪造"近7天平均7.5小时"）');
+    honest = false;
+  }
+  if (!serverSrc.includes("res.status(400).json({ error: '尚无睡眠记录")) {
+    fail('/api/sleep/analyze 零记录未返回 400 拒绝');
+    honest = false;
+  }
+  if (/h >= 0 \|\|/.test(serverSrc)) {
+    fail('时型判定含 h >= 0 恒真条件（07:00 就寝被判夜型猫头鹰）');
+    honest = false;
+  }
+  if (!serverSrc.includes('h >= 23 || h < 4')) {
+    fail('夜型时型窗口（23:00–04:00）不在位');
+    honest = false;
+  }
+  if (honest) console.log('✓ 数据诚实：零记录拒绝假报告（400）+ 时型判定窗口正确');
+}
+
 console.log('✓ verify-server-auth：鉴权顶层唯一注册、先于路由、常量前置、无嵌套 app.use');

@@ -156,11 +156,23 @@ export function createPond(
   let staticRaf2 = 0;
   if (staticSteps > 0) {
     // settings 的部分效果延迟到 rAF 刷新（settings/effects.ts flushLight），
-    // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再模拟绘制。
-    // 句柄必须保存（第 54 轮）：两帧内 dispose 时旧实现会继续在已释放的
+    // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再开始推进。
+    // 分帧推进（第 86 轮）：此前一次性同步跑完全部步数——reduce-motion
+    // 用户的 240 步在 GPU 下阻塞主线程 ~190ms，软件渲染（旧内核/GPU 黑名单
+    // 回退）下 1.1–1.2s 秒级白屏。改为每帧 6 步渐进收敛（draw 以帧为节拍
+    // 本就是天气插值的预期方式），单帧阻塞 <5ms。
+    // 句柄必须保存（第 54 轮）：dispose 时旧实现会继续在已释放的
     // renderer 上绘制（WebGL use-after-dispose）
+    let left = staticSteps;
+    const stepFrame = (): void => {
+      if (disposed) return;
+      const n = Math.min(6, left);
+      simulateOnce(n);
+      left -= n;
+      if (left > 0) staticRaf2 = requestAnimationFrame(stepFrame);
+    };
     staticRaf1 = requestAnimationFrame(() => {
-      staticRaf2 = requestAnimationFrame(() => { if (!disposed) simulateOnce(staticSteps); });
+      staticRaf2 = requestAnimationFrame(stepFrame);
     });
   } else {
     raf = requestAnimationFrame(animate);

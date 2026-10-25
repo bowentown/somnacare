@@ -798,13 +798,19 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
               <button
                 type="button"
                 onClick={fetchAIAnalysis}
-                disabled={isLoadingAnalysis}
-                className={`px-3 py-1.5 rounded-xl ${theme.accentBg} ${theme.accentFg} text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow active:scale-95`}
+                disabled={isLoadingAnalysis || nightsOnly(records).length === 0}
+                title={nightsOnly(records).length === 0 ? '记录第一晚睡眠后再来生成评估' : undefined}
+                className={`px-3 py-1.5 rounded-xl ${theme.accentBg} ${theme.accentFg} text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {isLoadingAnalysis ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     <span>评估中</span>
+                  </>
+                ) : nightsOnly(records).length === 0 ? (
+                  <>
+                    <Moon className="w-3 h-3" />
+                    <span>记录第一晚后可用</span>
                   </>
                 ) : (
                   <>

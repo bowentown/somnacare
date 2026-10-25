@@ -146,9 +146,10 @@ export function buildPetSayLines(
     if (tonight.latencyMinutes >= 30) {
       say.push(`躺了 ${fmtDuration(tonight.latencyMinutes)} 才睡着？你是不是又躲被窝里玩手机了，鱼片！`);
     }
-    if (tonight.awakeMinutes >= 30) {
-      say.push('半夜醒那么多次……记住，睡前少喝水！本鱼可绕不了你。');
-      say.push(`夜醒累计 ${fmtDuration(tonight.awakeMinutes)}——本鱼差点以为你在烙饼。`);
+    // 夜醒判据用 wakeCount 而非 awakeMinutes（第 86 轮）：awakeMinutes 在
+    // 构建器里含入睡潜伏期——潜伏 45 分 + 0 次夜醒也曾触发"烙饼"冤枉人
+    if (tonight.wakeCount >= 2) {
+      say.push(`半夜醒了 ${tonight.wakeCount} 次……记住，睡前少喝水！本鱼可绕不了你。`);
     }
   } else if (until != null && until > 0) {
     if (until <= 60) {

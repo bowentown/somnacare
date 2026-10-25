@@ -86,9 +86,9 @@ const navTo = async (page: Page, tab: string) => {
 /** 安装"原生桥"mock（CustomPlatform 通道，isNativePlatform 恒 true） */
 const mockNativeUsage = async (
   page: Page,
-  opts: { events: number[]; usageDays: unknown[]; dailyEmpty?: boolean },
+  opts: { events: number[]; usageDays: unknown[]; dailyEmpty?: boolean; windDown?: unknown },
 ) => {
-  await page.addInitScript(({ evs, ud, empty }: { evs: number[]; ud: unknown[]; empty: boolean }) => {
+  await page.addInitScript(({ evs, ud, empty, wd }: { evs: number[]; ud: unknown[]; empty: boolean; wd?: unknown }) => {
     const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
     (window as any).Capacitor = {
       isNativePlatform: () => true,
@@ -101,10 +101,14 @@ const mockNativeUsage = async (
       openPermissionSettings: async () => ({}),
       queryDailyUsage: async () => (empty ? { days: [] } : { days: ud }),
       queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
+      // 睡前一小时（第 86 轮补 mock）：默认空（不渲染卡片，既有用例不受扰），
+      // 传 windDown 数据时按 nightKey 原样回放
+      queryWindDownApps: async () =>
+        wd ? { apps: (wd as any).apps, windowEnd: (wd as any).windowEnd } : { apps: [] },
     };
     localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
     localStorage.setItem('somnacare_onboarded_v1', '1');
-  }, { evs: opts.events, ud: opts.usageDays, empty: opts.dailyEmpty ?? false });
+  }, { evs: opts.events, ud: opts.usageDays, empty: opts.dailyEmpty ?? false, wd: opts.windDown as any });
 };
 
 /** 合成 15 夜事件：07:05–23:40 活跃、夜里静默（就寝 23:40 / 起床 07:05） */
@@ -1008,5 +1012,47 @@ test('旅程24 趋势图可读性：坐标刻度、分期横带、起卧目标�
 
   await page.getByRole('button', { name: '睡眠分期比例（模型估算，非测量）' }).click();
   await expect(page.getByText('近 7 晚平均')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程25 睡前一小时（第 86 轮）：链路 e2e 覆盖——此前零覆盖，mock 缺方法
+// 使卡片在全部既有用例中永远不可达
+// ─────────────────────────────────────────────────────────────
+test('旅程25 睡前一小时：真实应用名渲染 + 总分钟合计 + 放下时刻', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(8, 0, 0, 0);
+  const events = synthEvents(fixed);
+  // 昨夜 00:47 放下（fixed - 7h13m）
+  const windowEnd = fixed.getTime() - (7 * 3600 + 13 * 60) * 1000;
+  await mockNativeUsage(page, {
+    events,
+    usageDays: [{ date: dstr(-1, fixed), lastActive: '00:47', firstActive: '07:02', nightPickups: 0 }],
+    windDown: {
+      apps: [
+        { pkg: 'com.tencent.sgame', label: '王者荣耀', minutes: 25 },
+        { pkg: 'com.tencent.mm', label: '微信', minutes: 12 },
+      ],
+      windowEnd,
+    },
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  const card = page.getByTestId('winddown-card');
+  await expect(card).toBeVisible();
+  await expect(card.getByText('放下手机前的一小时')).toBeVisible();
+  // 总分钟 = 25 + 12；放下时刻 = 00:47
+  await expect(card.getByText('37')).toBeVisible();
+  await expect(card.getByText('分钟还在亮屏')).toBeVisible();
+  await expect(card.getByText('00:47 放下')).toBeVisible();
+  await expect(card.getByText('王者荣耀')).toBeVisible();
+  await expect(card.getByText('微信')).toBeVisible();
+  // 37 分钟 < 55 → 不出现"几乎没停过"提示（不造因果断言）
+  await expect(card.getByText(/几乎没停过/)).toHaveCount(0);
   expect(errors).toEqual([]);
 });
