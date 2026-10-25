@@ -77,6 +77,10 @@ ok('起卧图：哑铃（2px 线 + 7px 点）+ 偏离琥珀着色 + 纯填充目
 ok('起卧图：点线整数几何居中（去 translate 半像素偏移）',
   !trends.includes('w-[7px] h-[7px] rounded-full')
   && !trends.includes('-translate-x-1/2 -translate-y-1/2'));
+ok('起卧图：顶部时间轴刻度行已删（第 85 轮用户裁决：行左有日期右有起卧时刻，顶上一排 21:00 反而让人不明所以；轨道内仅留极淡竖网格）',
+  !trends.includes('axisTicks')
+  && !/'21:00'/.test(trends)
+  && !trends.includes('时间轴只对齐中间轨道'));
 ok('起卧图：无竖线拥挤（均值线/须线/带边框/悬停色块全部移除）',
   !trends.includes('left: `${rangePct(avgStart)}%`')
   && !trends.includes('bedWhisker')

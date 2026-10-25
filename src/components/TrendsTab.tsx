@@ -711,40 +711,12 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
             和"分期比例"的满宽色带在视觉语法上完全区分：
             这张图回答"作息准不准"，不是"睡了多久"。 */}
         {viewMode === 'circadian' && (() => {
-          // 轴刻度按真实百分比绝对定位：justify-between 会把 09:00 顶到轨道
-          // 右缘（100%），而它的真实位置是 92.3%——轴错位是"看着别扭"的来源
-          const axisTicks = ([
-            { h: 21, label: '21:00', show: true },
-            // 00:00 与 21:00 只差 23% 轨道宽，标签会重叠——留网格线不给刻度
-            { h: 3, label: '03:00', show: true },
-            { h: 6, label: '06:00', show: true },
-            { h: 9, label: '09:00', show: true },
-          ] as const).map((t) => ({
-            ...t,
-            pct: rangePct(t.h === 21 ? 21 * 60 : (t.h + 24) * 60),
-          }));
           return (
           <div className="space-y-2 animate-tab-fade-in">
             <div className={`${theme.cardInnerBg} rounded-2xl p-3 border ${theme.cardInnerBorder} space-y-2`}>
-              {/* 时间轴只对齐中间轨道，刻度按真实位置绝对定位 */}
-              <div className={`flex items-end gap-2 pb-1 border-b ${innerBorder}`}>
-                <span className="w-9 shrink-0" />
-                <div className={`relative flex-1 h-4 text-[10px] ${textMuted} font-mono`}>
-                  {axisTicks.map((t) => (
-                    <span
-                      key={t.label}
-                      className={`absolute top-0 ${t.show ? '' : 'hidden min-[360px]:inline'}`}
-                      style={{
-                        left: `${t.pct}%`,
-                        transform: t.h === 21 ? 'none' : 'translateX(-50%)',
-                      }}
-                    >
-                      {t.label}
-                    </span>
-                  ))}
-                </div>
-                <span className="w-[74px] shrink-0" />
-              </div>
+              {/* 顶部时间轴已删（第 85 轮用户裁决）：行左有日期、右有起卧时刻，
+                  顶上一排 21:00/03:00/… 反而让人不明所以；轨道内保留极淡竖网格
+                  供横向比对，不放数字刻度 */}
 
               <div className="flex items-center justify-between gap-2 text-[9px]">
                 <span className="flex items-center gap-1.5 text-slate-400 min-w-0 truncate">
