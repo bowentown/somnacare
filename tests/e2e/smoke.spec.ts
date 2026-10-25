@@ -42,7 +42,9 @@ test('分区懒渲染：首帧只渲染当前分区，访问后挂载且常驻',
 
   const visit = async (tab: string, marker: string) => {
     await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: tab, exact: true }).click();
-    await page.waitForTimeout(400);
+    // 断言驱动等待（第 88 轮）：分区 React.lazy 后 chunk 加载在高负载下
+    // 偶超固定 400ms 窗口（假红）——等 marker 真正可见再读全文
+    await expect(page.getByText(marker).first()).toBeVisible({ timeout: 8000 });
     const t = await page.evaluate(() => document.body.innerText);
     expect(t).toContain(marker);
   };

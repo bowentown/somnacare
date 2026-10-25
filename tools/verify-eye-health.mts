@@ -58,7 +58,7 @@ ok('用眼日报：queryDailyHealth 真实聚合（前台时长 + KEYGUARD_HIDDE
   usagePlugin.includes('public void queryDailyHealth')
   && usagePlugin.includes('getTotalTimeInForeground')
   && usagePlugin.includes('type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE')
-  && /!kgByDay\.isEmpty\(\) \? kgByDay : siByDay/.test(usagePlugin)
+  && /kgByDay\.getOrDefault\(key, siByDay\.get\(key\)\)/.test(usagePlugin)
   && !usagePlugin.includes('USER_PRESENT（旧 API 无命名常量）')
   && usageSignal.includes('queryDailyHealth'));
 ok('用眼日报 UI：StatCard + 7 天柱图（Recharts，真实数据）',

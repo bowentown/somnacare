@@ -42,10 +42,16 @@ export function migrateRecordDatesToNightKey(
     if (![bH, bM, wH, wM].every(Number.isFinite)) return r;
     const bedMin = bH * 60 + bM;
     const wakeMin = wH * 60 + wM;
+    // 与 nightKeyOfBed 全组合对齐（第 88 轮 D12：护栏 4560 组扫描修正）。
+    // 旧口径 date=醒日；床日由是否跨午夜唯一决定：当天醒（wake>bed）床=醒日，
+    // 跨午夜（wake<bed）床=醒日-1。夜归属再按床钟点（<12 归床日前一晚）：
+    //   当天醒：床≥12 → shift 0（夜=醒日）；床<12 → shift 1（凌晨归前夜）
+    //   跨午夜：床≥12 → shift 1（夜=床日=醒日-1）；床<12 → shift 2（凌晨
+    //           放、次日凌晨醒——旧规则的 shift 2 分支是对的，保留）
+    // 旧规则错在"床≥12 且当天醒"恒 shift 1（多减一天）。
     let shift: number;
-    if (bedMin >= 12 * 60) shift = 1;                    // 昨晚放下
-    else if (wakeMin > bedMin) shift = 1;                // 凌晨放下晨醒
-    else shift = 2;                                      // 凌晨放下、次日凌晨醒（跨午夜）
+    if (wakeMin > bedMin) shift = bedMin >= 12 * 60 ? 0 : 1;
+    else shift = bedMin >= 12 * 60 ? 1 : 2;
     const [y, mo, da] = r.date.split('-').map(Number);
     if (![y, mo, da].every(Number.isFinite)) return r;
     const d = new Date(y, mo - 1, da - shift);

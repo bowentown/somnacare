@@ -97,8 +97,18 @@ try {
     fail('时型判定含 h >= 0 恒真条件（07:00 就寝被判夜型猫头鹰）');
     honest = false;
   }
-  if (!serverSrc.includes('h >= 23 || h < 4')) {
-    fail('夜型时型窗口（23:00–04:00）不在位');
+  // 语义断言（第 88 轮修正）：不写死具体常量——写死会把"对齐客户端 h<6"的
+  // 正确修复也判红。只要求：猫头鹰条件是"晚于 N 点或早于 M 点"的显式双界，
+  // 且不存在 h >= 0 恒真形态
+  if (!/h >= 2\d \|\| h < \d/.test(serverSrc)) {
+    fail('夜型时型窗口（显式"晚于N点或早于M点"双界）不在位');
+    honest = false;
+  }
+  // 行为级防绕过（第 88 轮变异 M-G：count = Math.max(1, len) 一行改写即绕过）：
+  // 零记录拒绝必须紧跟 count 赋值之后（顺序结构断言，中间插入改写即失配）
+  if (!/const count = recentLogs\.length;\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(count === 0\) return null;/.test(serverSrc)
+    && !/const count = recentLogs\.length;[\s\S]{0,400}?if \(count === 0\) return null;/.test(serverSrc)) {
+    fail('零记录拒绝未紧跟 count 赋值（可被一行改写绕过）');
     honest = false;
   }
   if (honest) console.log('✓ 数据诚实：零记录拒绝假报告（400）+ 时型判定窗口正确');

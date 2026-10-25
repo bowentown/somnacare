@@ -69,3 +69,24 @@ if (orphans.length > 0) {
   process.exit(1);
 }
 console.log(`✓ verify-wiring：${files.length} 个源文件全部有引用，无孤儿`);
+
+// ── 关键功能链路的"调用点"断言（第 88 轮高-1 最小版：护栏此前全是
+//    定义在场检查，短路调用仍全绿——旅程25/7 已提供行为级，这里再锁
+//    调用点本身的存在，三层合防"代码在、线断了"）──
+{
+  const tabToday = readFileSync(new URL('../src/components/TodayTab.tsx', import.meta.url), 'utf8');
+  const tabEye = readFileSync(new URL('../src/components/EyeCareTab.tsx', import.meta.url), 'utf8');
+  const tabSettings = readFileSync(new URL('../src/components/SettingsTab.tsx', import.meta.url), 'utf8');
+  const checks: Array<[string, boolean]> = [
+    ['睡前一小时：TodayTab 实际调用 queryWindDownApps（非仅导入）',
+      /void queryWindDownApps\(/.test(tabToday)],
+    ['20-20-20：EyeCareTab 实际调用 setEyeRestEnabled',
+      /setEyeRestEnabled\(next\)/.test(tabEye) || /void setEyeRestEnabled\(/.test(tabEye)],
+    ['备份恢复：SettingsTab 实际调用 restoreFullBackup',
+      /restoreFullBackup\(/.test(tabSettings)],
+  ];
+  for (const [name, ok] of checks) {
+    console.log(`${ok ? '✓' : '✗'} ${name}`);
+    if (!ok) process.exitCode = 1;
+  }
+}

@@ -386,8 +386,35 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   const rowH = Math.min(44, (chartBottom - chartTop) / Math.max(1, chrono.length));
   const rowsH = rowH * chrono.length;
   const plotTop = chartTop + Math.max(0, (chartBottom - chartTop - rowsH) / 2);
-  const rangeStart = 20 * 60;
-  const rangeMin = 14 * 60;
+  // 自适应窗口（第 88 轮 D6）：固定 20:00–10:00 把白天作息的睡眠
+  // （如 08:30→16:30）clamp 成 8px 残条。以平均床为轴锚，把每条床/醒
+  // 映射到锚的连续线性轴（±12h 环归），窗 = [最早床-90, 最晚醒+90]，
+  // 宽度下限 8h 保视觉稳定；xOf 的环形取模对锚两侧的钟点天然连续
+  const anchor = avgBed !== null
+    ? clockOnTimeline(`${String(Math.floor(avgBed / 60)).padStart(2, '0')}:${String(avgBed % 60).padStart(2, '0')}`)
+    : 22 * 60;
+  const onAxis = (v: number): number => {
+    let x = v - anchor;
+    if (x > 720) x -= 1440;
+    if (x < -720) x += 1440;
+    return x;
+  };
+  let lo = Infinity;
+  let hi = -Infinity;
+  chrono.forEach((r) => {
+    const bed = clockOnTimeline(r.bedtime);
+    const wakeRaw = clockOnTimeline(r.wakeTime);
+    const duration = wakeRaw <= bed ? wakeRaw + 1440 - bed : wakeRaw - bed;
+    const bedAxis = onAxis(bed);
+    lo = Math.min(lo, bedAxis);
+    hi = Math.max(hi, bedAxis + duration);
+  });
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi - lo <= 0) {
+    lo = anchor - 5 * 60;
+    hi = anchor + 5 * 60;
+  }
+  const rangeStart = (((anchor + lo - 90) % 1440) + 1440) % 1440;
+  const rangeMin = Math.min(1440, Math.max(8 * 60, hi - lo + 180));
   const xOf = (minute: number) => {
     const rel = ((minute - rangeStart) % 1440 + 1440) % 1440;
     return axisX0 + (Math.min(rangeMin, rel) / rangeMin) * (axisX1 - axisX0);

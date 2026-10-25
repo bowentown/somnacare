@@ -154,3 +154,7 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
 }
+
+/** 档案更新：支持函数式（基于 prev 计算增量）——连点等竞态下值形态会
+ *  基于过期闭包覆盖更新（第 88 轮闹钟双击丢/重 bug 的根因） */
+export type ProfileUpdater = Partial<UserProfile> | ((prev: UserProfile) => Partial<UserProfile>);

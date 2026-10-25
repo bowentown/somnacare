@@ -10,7 +10,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { EmptyState } from './ui';
-import { SleepRecord, UserProfile } from '../types/sleep';
+import { ProfileUpdater, SleepRecord, UserProfile } from '../types/sleep';
 import { formatDurationChinese } from '../utils/sleepScore';
 import { OneTapSleepTracker } from './OneTapSleepTracker';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
@@ -36,7 +36,7 @@ interface TodayTabProps {
   onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
   onNavigateToTrends?: () => void;
   onSaveRecord?: (record: SleepRecord) => void;
-  onUpdateProfile: (updated: Partial<UserProfile>) => void;
+  onUpdateProfile: (updated: ProfileUpdater) => void;
   /** 到点提醒'好的'后的开始监测信号（时间戳 ms） */
   startSignal?: number;
   theme: ThemeConfig;

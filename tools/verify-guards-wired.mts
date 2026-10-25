@@ -32,7 +32,9 @@ if (missing.length > 0) {
 // ── 吞错模式检测（第 86 轮外部审查变异实测：把接线改成 `|| true` 后
 //    verify 链仍 exit 0——本元护栏只查文本出现，对"接了但失败被吞"失明）。
 //    链里每个 tsx 调用之后只允许 && 或行尾；出现 || / ; / | 等旁路即红。
-const swallowPattern = /tsx\s+tools\/verify-[\w-]+\.mts\s*(\|\||;|(?<!&&)\|)/;
+// 第 88 轮强化：整链括号包裹 + || true 可绕过逐命令检测——改为全链任何
+// 位置的吞错模式一律禁止（verify 链中不存在合法的 || true / ; true 用法）
+const swallowPattern = /\|\|\s*true\b|;\s*true\b|\|\s*true\b|\|\|\s*:/;
 if (swallowPattern.test(wired)) {
   console.error('✗ verify-guards-wired：verify 链存在吞错旁路（|| / ; / 管道）——护栏失败会被静默吞掉：');
   console.error('   ' + wired.replace(swallowPattern, (m) => `【${m.trim()}】`));
@@ -40,7 +42,7 @@ if (swallowPattern.test(wired)) {
 }
 // 变异自检：注入 `|| true` 的副本必须被同一判定抓住（防检测器自身失效）
 {
-  const doctored = wired.replace('tsx tools/verify-wiring.mts', 'tsx tools/verify-wiring.mts || true');
+  const doctored = wired.replace('tsx tools/verify-wiring.mts', '(tsx tools/verify-wiring.mts || true)');
   if (!swallowPattern.test(doctored)) {
     console.error('✗ verify-guards-wired：吞错检测自检失败——`|| true` 旁路未被检出');
     process.exit(1);

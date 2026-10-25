@@ -319,7 +319,15 @@ public class UsageSignalPlugin extends Plugin {
                 if (type == EVT_KEYGUARD_HIDDEN) lastKgTs = ev.getTimeStamp();
                 else lastSiTs = ev.getTimeStamp();
             }
-            java.util.Map<String, Integer> unlocksByDay = !kgByDay.isEmpty() ? kgByDay : siByDay;
+            // per-day 回退（第 88 轮）：混合窗口下有的天只有亮屏事件——整窗级
+            // 回退会把它们打成 0。逐天取：有锁屏事件的天用解锁数，否则用亮屏数
+            java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
+            for (String key : siByDay.keySet()) {
+                unlocksByDay.put(key, kgByDay.getOrDefault(key, siByDay.get(key)));
+            }
+            for (java.util.Map.Entry<String, Integer> e : kgByDay.entrySet()) {
+                unlocksByDay.putIfAbsent(e.getKey(), e.getValue());
+            }
 
             JSArray arr = new JSArray();
             for (int i = days - 1; i >= 0; i--) {

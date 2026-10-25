@@ -77,7 +77,11 @@ export const PondCard: React.FC<{
     let disposed = false;
 
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    const automated = navigator.webdriver === true;
+    let automated = navigator.webdriver === true;
+    // ?pond-live（第 88 轮中-5）：e2e 里 webdriver 恒真导致静帧——真实动画
+    // 路径（逐帧 rAF 循环）从未被测试覆盖。URL 参数强制逐帧供 e2e 验证
+    const forceLive = new URLSearchParams(window.location.search).has('pond-live');
+    if (forceLive) automated = false;
     // 自动化只需几十步铺开画面（CI 软件渲染下数百步会阻塞主线程逼死
     // Playwright 超时）；真实用户减少动态需要 240 步让天气渐变收敛
     const staticSteps = automated ? 30 : reduced ? 240 : 0;

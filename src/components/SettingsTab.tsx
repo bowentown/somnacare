@@ -13,7 +13,7 @@ import {
   Fish,
   MousePointerClick,
 } from 'lucide-react';
-import { UserProfile, CustomAlarmSetting, CustomAIConfig, SleepRecord, SleepStageSegment } from '../types/sleep';
+import { ProfileUpdater, UserProfile, CustomAlarmSetting, CustomAIConfig, SleepRecord, SleepStageSegment } from '../types/sleep';
 import { AlarmManager } from './AlarmManager';
 import { CustomAISettingsModal } from './CustomAISettingsModal';
 import { Switch } from './ui';
@@ -84,11 +84,12 @@ import {
 import { sanitizeRecord } from '../utils/recordSanitize';
 import { buildFullBackup, parseBackup, restoreFullBackup, IMPORT_MAX_BYTES } from '../utils/backup';
 import { reclassifyForChronotype } from '../utils/recordFilter';
+import { relinkLedgerAfterReclassify } from '../services/travelService';
 
 interface SettingsTabProps {
   records: SleepRecord[];
   userProfile: UserProfile;
-  onUpdateProfile: (updated: Partial<UserProfile>) => void;
+  onUpdateProfile: (updated: ProfileUpdater) => void;
   onResetDemoData: () => void;
   onImportRecords?: (imported: SleepRecord[]) => void;
   /** 作息切换的存量重归类专用通路（静默替换，不弹导入确认框） */
@@ -710,6 +711,8 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
                   const changed = JSON.stringify(reclassified) !== JSON.stringify(records);
                   onUpdateProfile({ chronotype: opt.key });
                   if (changed && onReplaceRecords) {
+                    // 账本重链（第 88 轮 D7）：重归类改写 kind+date 后旧账键全脱钩
+                    relinkLedgerAfterReclassify(records, reclassified);
                     onReplaceRecords(reclassified);
                   }
                 }}
@@ -1148,7 +1151,11 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl`}>
         <AlarmManager
           alarms={userProfile.alarms || []}
-          onUpdateAlarms={(alarms: CustomAlarmSetting[]) => onUpdateProfile({ alarms })}
+          onUpdateAlarms={(input) =>
+            onUpdateProfile((prev) => ({
+              alarms: typeof input === 'function' ? (input as (p: CustomAlarmSetting[]) => CustomAlarmSetting[])((prev.alarms ?? []) as CustomAlarmSetting[]) : input,
+            }))
+          }
           theme={theme}
         />
       </div>

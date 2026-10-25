@@ -103,8 +103,13 @@ const mockNativeUsage = async (
       queryScreenOnEvents: async () => ({ events: evs, observedUntil: Date.now() }),
       // 睡前一小时（第 86 轮补 mock）：默认空（不渲染卡片，既有用例不受扰），
       // 传 windDown 数据时按 nightKey 原样回放
-      queryWindDownApps: async () =>
-        wd ? { apps: (wd as any).apps, windowEnd: (wd as any).windowEnd } : { apps: [] },
+      queryWindDownApps: async (args: any) => {
+        if (!wd) return { apps: [] };
+        // 按夜键匹配回放（第 88 轮核查）：夜里键取错时返回空 → 卡片不渲染
+        const w = wd as any;
+        if (w.nightKey && args?.nightKey !== w.nightKey) return { apps: [] };
+        return { apps: w.apps, windowEnd: w.windowEnd };
+      },
     };
     localStorage.setItem('somnacare_usage_days', JSON.stringify(ud));
     localStorage.setItem('somnacare_onboarded_v1', '1');
@@ -376,23 +381,32 @@ test('旅程7 设置面：主题四套、分享卡生成、护眼持久、闹钟
 
   // 护眼开关持久化
   await navTo(page, '护眼');
-  const eyeSwitch = page.getByRole('switch').first();
-  if (await eyeSwitch.count()) {
-    await eyeSwitch.click();
-    await page.waitForTimeout(200);
-  }
+  // 第 88 轮修正：全应用开关均为 checkbox role（ui/Switch 是 sr-only checkbox），
+  // 旧 getByRole('switch') 恒零匹配 → 整段静默跳过（F4 死代码断言）
+  const eyeSwitch = page.getByRole('checkbox', { name: '开启或关闭护眼滤镜', exact: true });
+  await expect(eyeSwitch).toBeVisible();
+  // 点包裹 label：自动等待滑动稳定，label 原生联动 checkbox（app.spec 同法）
+  await eyeSwitch.locator('xpath=ancestor::label[1]').click();
+  await expect(eyeSwitch).toBeChecked();
+  await page.waitForTimeout(200);
 
   // 闹钟：添加一次，快速再点一次（防连点只应落一条）
+  // 第 88 轮修正：旧代码点完"添加"立即查 count，表单在 {isOpen &&} 里尚未
+  // 展开 → count=0，防连点断言从未执行（F5）——先等保存按钮可见再断言
   await navTo(page, '偏好');
-  await page.getByRole('button', { name: /添加/ }).first().click().catch(() => {});
+  // 闹钟区默认折叠（isOpen 门控）：先展开列表再点"添加闹钟"
+  const alarmToggle = page.getByRole('button', { name: '展开闹钟列表' });
+  if (await alarmToggle.count()) await alarmToggle.click();
+  await page.getByRole('button', { name: /添加闹钟/ }).first().click();
   const saveAlarm = page.getByRole('button', { name: /保存并启动此闹钟|保存闹钟/ });
-  if (await saveAlarm.count()) {
-    await saveAlarm.first().click();
-    await saveAlarm.first().click({ timeout: 1000 }).catch(() => {});
-    await page.waitForTimeout(400);
-    const alarms = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_user_profile') || '{}')?.alarms ?? []);
-    expect(alarms.length).toBeLessThanOrEqual(1);
-  }
+  await expect(saveAlarm.first()).toBeVisible({ timeout: 3000 });
+  // 档案默认自带 2 条示例闹钟（周内/周末）——断言语义是"本次保存只落一条"
+  const before = await page.evaluate(() => (JSON.parse(localStorage.getItem('somnacare_user_profile') || '{}')?.alarms ?? []).length);
+  await saveAlarm.first().click();
+  await saveAlarm.first().click({ timeout: 1000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  const alarms = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_user_profile') || '{}')?.alarms ?? []);
+  expect(alarms.length).toBe(before + 1);
 
   // 桌宠傲娇播报预览在场（第 63 轮折叠：先展开）
   await page.getByRole('button', { name: /大肥鱼桌宠/ }).click();
@@ -1031,6 +1045,7 @@ test('旅程25 睡前一小时：真实应用名渲染 + 总分钟合计 + 放�
     events,
     usageDays: [{ date: dstr(-1, fixed), lastActive: '00:47', firstActive: '07:02', nightPickups: 0 }],
     windDown: {
+      nightKey: dstr(-1, fixed),   // 夜间作息昨夜键（卡片渲染即证明键取值正确）
       apps: [
         { pkg: 'com.tencent.sgame', label: '王者荣耀', minutes: 25 },
         { pkg: 'com.tencent.mm', label: '微信', minutes: 12 },
@@ -1054,5 +1069,34 @@ test('旅程25 睡前一小时：真实应用名渲染 + 总分钟合计 + 放�
   await expect(card.getByText('微信')).toBeVisible();
   // 37 分钟 < 55 → 不出现"几乎没停过"提示（不造因果断言）
   await expect(card.getByText(/几乎没停过/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程26 池塘真实动画路径（第 88 轮中-5）：?pond-live 强制逐帧——
+// 此前 e2e 里 webdriver 恒真走静帧 30 步，逐帧 rAF 循环从未被覆盖
+// ─────────────────────────────────────────────────────────────
+test('旅程26 池塘逐帧动画：pond-live 下画布持续变化', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+    sessionStorage.clear();
+  });
+  await page.clock.install({ time: new Date(new Date().setHours(10, 0, 0, 0)) });
+  await page.goto('/?pond-live=1');
+  await page.waitForTimeout(2600);
+  // 两次采样画布位图：逐帧动画下必然不同（静帧路径则恒同）
+  const canvas = page.locator('canvas').first();
+  await expect(canvas).toBeVisible();
+  const snap = () => page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    return c ? (c as HTMLCanvasElement).toDataURL().length : 0;
+  });
+  const a = await snap();
+  await page.waitForTimeout(1200);
+  const b = await snap();
+  expect(a).toBeGreaterThan(1000);          // 画布确实有内容（非空白）
+  expect(b).not.toBe(a);                    // 内容在变化 = 逐帧动画在跑
   expect(errors).toEqual([]);
 });

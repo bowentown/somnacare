@@ -126,6 +126,39 @@ export function rollNextPostcard(
  * @param date 记录日期（YYYY-MM-DD）：同一晚重复保存/补录时按"取更高分"去重，
  *             此前每次保存都全额充能——重跑一次睡眠追踪能量就翻倍
  */
+/**
+ * 重归类后重链能量账本（第 88 轮 D7）：作息切换会同时改 kind 与 date
+ * （夜归属↔自然日差 1 天）——旧账本键全部指向不存在的键，表现为
+ * "删除不回退能量、重录同分双计"（实测 85 → 170）。按记录 id 把每笔
+ * 有主账迁到重归类后的新键；无主账（记录已删）原样保留。
+ */
+export function relinkLedgerAfterReclassify(
+  before: Array<{ id: string; date: string; kind?: string }>,
+  after: Array<{ id: string; date: string; kind?: string }>,
+): void {
+  const byId = new Map(after.map((r) => [r.id, r]));
+  const state = loadTravelState();
+  const next: Record<string, number> = {};
+  let changed = false;
+  for (const [key, score] of Object.entries(state.countedScores)) {
+    const isNap = key.endsWith('|nap');
+    const date = isNap ? key.slice(0, -4) : key;
+    const owner = before.find((r) => r.date === date && (isNap ? r.kind === 'nap' : r.kind !== 'nap'));
+    if (!owner) {
+      next[key] = score;   // 无主账：不动（记录本身已不在，等删除路径自然清理）
+      continue;
+    }
+    const moved = byId.get(owner.id);
+    const newKey = moved ? (moved.kind === 'nap' ? `${moved.date}|nap` : moved.date) : key;
+    if (newKey !== key) changed = true;
+    next[newKey] = Math.max(next[newKey] ?? 0, score);
+  }
+  if (changed) {
+    state.countedScores = next;
+    saveTravelState(state);
+  }
+}
+
 export function processDailySleepScore(sleepScore: number, date?: string, nap?: boolean): {
   state: UserTravelState;
   triggeredTrip: boolean;

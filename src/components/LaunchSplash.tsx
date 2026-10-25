@@ -358,9 +358,13 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+    // rAF 停摆兜底（第 88 轮）：后台/降级内核下 rAF 可能不跑——帧驱动后
+    // 曾出现开屏 7s 不撤。定时器与 rAF 双路径取先到者
+    const fallbackTimer = window.setTimeout(arm, 2100);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t2);
+      clearTimeout(fallbackTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);

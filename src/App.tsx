@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   Moon,
 } from 'lucide-react';
-import { SleepRecord, UserProfile, DEFAULT_EYE_CARE } from './types/sleep';
+import { SleepRecord, UserProfile, DEFAULT_EYE_CARE, ProfileUpdater } from './types/sleep';
 import { getInitialSleepLogs } from './utils/sleepScore';
 const TodayTab = lazy(() => import('./components/TodayTab').then((m) => ({ default: m.TodayTab })));
 const TrendsTab = lazy(() => import('./components/TrendsTab').then((m) => ({ default: m.TrendsTab })));
@@ -778,7 +778,8 @@ export const App: React.FC = () => {
   // 档案更新的唯一入口（第 82 轮性能）：此前三处内联箭头，每个 App 渲染
   // 都是新引用——EyeCareTab/SettingsTab 等 memo 分区被无效击穿
   const handleUpdateProfile = useCallback(
-    (updated: Partial<UserProfile>) => setUserProfile((prev) => ({ ...prev, ...updated })),
+    (updated: ProfileUpdater) =>
+      setUserProfile((prev) => ({ ...prev, ...(typeof updated === 'function' ? updated(prev) : updated) })),
     []
   );
   // TodayTab/AIAdvicePanel 已 memo（第 84 轮性能）：传给它们的所有回调
@@ -817,8 +818,10 @@ export const App: React.FC = () => {
     const naps: SleepRecord[] = [];
     for (const r of migratedImport) {
       if (r.kind === 'nap') { naps.push(r); continue; }
-      const prev = byNight.get(r.date);
-      if (!prev || String(r.id) > String(prev.id)) byNight.set(r.date, r);
+      // later-wins（第 88 轮修正）：id 字典序会把示例数据 log-7 这类
+      // 短 id 拿去和 import-1760000000000 比大小，真实导入的修正版反而
+      // 被挤掉——备份里同夜多条时，后出现的视为修正版保留
+      byNight.set(r.date, r);
     }
     const deduped = [...byNight.values(), ...naps];
     const mergedCount = migratedImport.length - deduped.length;
@@ -1021,7 +1024,8 @@ export const App: React.FC = () => {
     showToast(`📝 睡眠记录已保存！综合健康得分 ${newRecord.sleepScore} 分`);
   }, [showToast]);
 
-  const handleResetDemoData = () => {
+  // useCallback（第 88 轮核查）：此前普通函数让 SettingsTab 的 memo 100% 失效
+  const handleResetDemoData = useCallback(() => {
     // 破坏性操作与删除单条记录同防护级：演示数据会覆盖全部真实记录
     if (!window.confirm(`将用 7 天演示数据替换当前全部 ${records.length} 条真实记录（不可恢复），继续？`)) return;
     const initial = getInitialSleepLogs();
@@ -1032,7 +1036,7 @@ export const App: React.FC = () => {
     clearShadowOutcomes();
     pruneShadowEntries(new Set(nightsOnly(initial).map((r) => r.date)));
     showToast('已载入 7 天演示数据（原记录已被替换）');
-  };
+  }, [records.length, showToast]);
 
   // useCallback（第 81 轮性能）：TrendsTab 已 memo，本回调须为稳定引用，
   // 否则 App 任意状态变化（toast/横幅）仍会连带趋势页全量重渲染
@@ -1338,7 +1342,10 @@ export const App: React.FC = () => {
       {!chatTyping && (
         <BottomNavBar
           activeTab={activeTab}
-          onChangeTab={setActiveTab}
+          onChangeTab={(tab: NavTab) => {
+            preheatNeighbors(tab);   // 底栏点击立即拉起目标与邻居 chunk（懒加载冷点击空白）
+            setActiveTab(tab);
+          }}
           theme={currentTheme}
         />
       )}

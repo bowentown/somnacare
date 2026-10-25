@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, MoonStar, BookOpen, Gamepad2, BedDouble, Pipette, Clock, CheckCircle2 } from 'lucide-react';
-import { UserProfile, EyeCareConfig, DEFAULT_EYE_CARE } from '../types/sleep';
+import { ProfileUpdater, UserProfile, EyeCareConfig, DEFAULT_EYE_CARE } from '../types/sleep';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
 import {
@@ -23,7 +23,7 @@ import { EmptyState, StatCard, Switch } from './ui';
 
 interface EyeCareTabProps {
   userProfile: UserProfile;
-  onUpdateProfile: (updated: Partial<UserProfile>) => void;
+  onUpdateProfile: (updated: ProfileUpdater) => void;
   onToast: (msg: string) => void;
   theme: ThemeConfig;
 }

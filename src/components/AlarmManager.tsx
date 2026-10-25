@@ -29,7 +29,7 @@ import {
 
 interface AlarmManagerProps {
   alarms: CustomAlarmSetting[];
-  onUpdateAlarms: (alarms: CustomAlarmSetting[]) => void;
+  onUpdateAlarms: (input: CustomAlarmSetting[] | ((prev: CustomAlarmSetting[]) => CustomAlarmSetting[])) => void;
   theme?: ThemeConfig;
 }
 
@@ -125,13 +125,12 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
       const ok = await ensureAlarmPermissions();
       if (!ok) return;
     }
-    const updated = alarms.map((a) => (a.id === id ? { ...a, enabled: !a.enabled } : a));
-    onUpdateAlarms(updated);
+    onUpdateAlarms((prev) => prev.map((a) => (a.id === id ? { ...a, enabled: !a.enabled } : a)));
   };
 
   const handleDeleteAlarm = (id: string) => {
     if (!window.confirm('删除这个闹钟？')) return;
-    onUpdateAlarms(alarms.filter((a) => a.id !== id));
+    onUpdateAlarms((prev) => prev.filter((a) => a.id !== id));
   };
 
   // 调整已有闹钟的浅睡唤醒窗口（1-30 分钟步进）
@@ -180,7 +179,9 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
       smartWakeEnabled: newSmartWake,
       smartWakeWindowMinutes: newSmartWindow,
     };
-    onUpdateAlarms([...alarms, created]);
+    // 函数式更新（第 88 轮）：连点穿透防连点窗口时，值形态基于过期闭包
+    // 覆盖更新（实测双击落多条/丢条）——基于 prev 追加永不竞态
+    onUpdateAlarms((prev) => [...prev, created]);
     setIsAdding(false);
     } finally {
       savingRef.current = false;

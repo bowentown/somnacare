@@ -48,23 +48,26 @@ export function sanitizeRecord(raw: unknown): SleepRecord | null {
     bedtime: typeof r.bedtime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.bedtime) ? r.bedtime : '23:30',
     wakeTime: typeof r.wakeTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.wakeTime) ? r.wakeTime : '07:30',
     durationMinutes: duration || 1,
-    // 四期先各自 clamp 到 duration，再作分期和归一（第 86 轮）：各期独立
-    // clamp 时畸形备份的分期和可达 300%，分期比例图整条爆满
+    // 四期先各自 clamp，再作分期和归一（第 86 轮引入、第 88 轮修正）：
+    // ★ 口径是 durationMinutes = 纯睡眠 = deep+light+rem，awake（夜醒+潜伏）
+    //   在 duration 之外（recordBuilder:85 与 TrendsTab:313 UI 相加为证）。
+    //   上一版把 awake 计入预算 → 合法记录（三期和=duration、awake=30）被
+    //   整体缩水 29 分钟，趋势页横带凭空缺口。归一只比 deep+light+rem。
     ...((): Pick<SleepRecord, 'deepSleepMinutes' | 'lightSleepMinutes' | 'remSleepMinutes' | 'awakeMinutes'> => {
       const deep = clampMin(r.deepSleepMinutes, duration);
       const light = clampMin(r.lightSleepMinutes, duration);
       const rem = clampMin(r.remSleepMinutes, duration);
       const awake = clampMin(r.awakeMinutes, 720);
-      const sum = deep + light + rem + awake;
-      if (sum <= duration || sum === 0) {
+      const stagesSum = deep + light + rem;
+      if (stagesSum <= duration || stagesSum === 0) {
         return { deepSleepMinutes: deep, lightSleepMinutes: light, remSleepMinutes: rem, awakeMinutes: awake };
       }
-      const k = duration / sum;
+      const k = duration / stagesSum;
       return {
         deepSleepMinutes: Math.round(deep * k),
         lightSleepMinutes: Math.round(light * k),
         remSleepMinutes: Math.round(rem * k),
-        awakeMinutes: Math.round(awake * k),
+        awakeMinutes: awake,
       };
     })(),
     sleepScore: Math.max(0, Math.min(100, numOr(r.sleepScore, 60))),

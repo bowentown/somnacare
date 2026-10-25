@@ -86,6 +86,40 @@ for (const [key, input] of Object.entries(inputs)) {
   check('反向自检：篡改字段会被逐字段断言抓出', caught);
 }
 
+// ── sanitizeRecord 分期归一不变式（第 88 轮 D5 回归锁）──
+// 口径：duration = 纯睡眠 = deep+light+rem；awake 在外。上一版归一把 awake
+// 计入预算，合法记录（三期和=duration、awake=30）被缩水 29 分钟且无护栏发现
+{
+  const { sanitizeRecord } = await import(
+    new URL('../src/utils/recordSanitize.ts', import.meta.url).href
+  );
+  const legal = sanitizeRecord({
+    id: 'x', date: '2026-10-20', bedtime: '23:00', wakeTime: '06:30',
+    durationMinutes: 450, deepSleepMinutes: 90, lightSleepMinutes: 270, remSleepMinutes: 90,
+    awakeMinutes: 30,
+  } as never);
+  check('归一不变式：合法记录零缩水（deep+light+rem 保持 = duration，awake 不参与缩放）',
+    legal !== null
+    && legal.deepSleepMinutes + legal.lightSleepMinutes + legal.remSleepMinutes === 450
+    && legal.deepSleepMinutes === 90 && legal.lightSleepMinutes === 270
+    && legal.remSleepMinutes === 90 && legal.awakeMinutes === 30,
+    legal ? `${legal.deepSleepMinutes}+${legal.lightSleepMinutes}+${legal.remSleepMinutes}=${legal.deepSleepMinutes + legal.lightSleepMinutes + legal.remSleepMinutes}` : 'null');
+  const bloated = sanitizeRecord({
+    id: 'y', date: '2026-10-20', bedtime: '23:00', wakeTime: '06:30',
+    durationMinutes: 450, deepSleepMinutes: 450, lightSleepMinutes: 450, remSleepMinutes: 450,
+    awakeMinutes: 200,
+  } as never);
+  check('归一不变式：畸形分期（和=3×duration）按 duration 收口且 awake 不被缩放',
+    bloated !== null
+    && bloated.deepSleepMinutes + bloated.lightSleepMinutes + bloated.remSleepMinutes === 450
+    && bloated.awakeMinutes === 200,
+    bloated ? `sum=${bloated.deepSleepMinutes + bloated.lightSleepMinutes + bloated.remSleepMinutes} awake=${bloated.awakeMinutes}` : 'null');
+  // 反向自检：把"awake 计入预算"的旧错误写法塞回来必须被抓（和=421 ≠ 450）
+  const wrongWay = { ...legal!, deepSleepMinutes: 84, lightSleepMinutes: 253, remSleepMinutes: 84 };
+  check('反向自检：awake 计入预算的缩水输出不再满足不变式',
+    wrongWay.deepSleepMinutes + wrongWay.lightSleepMinutes + wrongWay.remSleepMinutes !== 450);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——构建器与黄金样本不一致（行为漂移！）`);
   process.exit(1);
