@@ -97,7 +97,7 @@ interface AIAdvicePanelProps {
   onChatFocusChange?: (focused: boolean) => void;
 }
 
-export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfile, theme, openMomentsSignal, onChatFocusChange }) => {
+const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile, theme, openMomentsSignal, onChatFocusChange }) => {
   const [analysis, setAnalysis] = useState<SleepAnalysisResult | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [showMoments, setShowMoments] = useState(false);
@@ -1106,3 +1106,8 @@ export const AIAdvicePanel: React.FC<AIAdvicePanelProps> = ({ records, userProfi
     </div>
   );
 };
+
+// memo（第 84 轮性能）：App 级状态变化（toast/横幅/键盘/庆祝信号之外的
+// 任意 setState）此前会把所有已挂载分区连同最重的首页/AI 面板全量重渲染；
+// props 已在 App 侧全部稳定（useCallback/useMemo/常量）
+export const AIAdvicePanel = React.memo(AIAdvicePanelInner);

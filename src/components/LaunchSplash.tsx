@@ -241,16 +241,16 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
               }}
             />
           ))}
-          {/* 大字渐变 + 逐字浮现：1.4s 淡出前成形（末字 1280ms 入场） */}
+          {/* 大字 + 逐字浮现：纯白 + 主题色光晕（第 84 轮真机返工：
+              background-clip:text 渐变字与 filter 合成在部分旧 WebView 内核
+              上会把文字渲染丢掉——真机"文字不显现"的根因。纯色 + text-shadow
+              是所有内核都稳妥的画法） */}
           <h1
             className="relative text-[22px] font-black whitespace-nowrap"
             style={{
               letterSpacing: '0.38em',
-              backgroundImage: `linear-gradient(100deg, ${mc.lit} 0%, #ffffff 45%, ${mc.aur2} 100%)`,
-              WebkitBackgroundClip: 'text',
-              backgroundClip: 'text',
-              color: 'transparent',
-              filter: `drop-shadow(0 0 14px ${mc.lit}55)`,
+              color: '#ffffff',
+              textShadow: `0 0 16px ${mc.lit}99, 0 2px 12px rgba(0,0,0,0.45)`,
             }}
           >
             {'懂睡眠，更懂你'.split('').map((ch, i) => (

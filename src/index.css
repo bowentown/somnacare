@@ -243,9 +243,12 @@ html {
     animation: none;
   }
   /* 兜底：未逐一列举的 Tailwind 内置动画与 transition 一并静止
-     （animate-spin/pulse/bounce/in/ping + 54 处 transition-all） */
+     （animate-spin/pulse/bounce/in/ping + 54 处 transition-all）。
+     ★ 时延也必须归零（第 84 轮）：只缩 duration 的话，带延迟的 both 动画
+     会在整个 delay 窗口里停在 from 态（如开屏逐字 = 长时间隐身） */
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

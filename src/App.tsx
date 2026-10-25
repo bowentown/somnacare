@@ -81,14 +81,15 @@ export const App: React.FC = () => {
   // 失焦延迟回弹：点"发送"会先 blur，立即弹回会在键盘收起前闪一下
   const [chatTyping, setChatTyping] = useState(false);
   const chatBlurTimerRef = useRef<number | null>(null);
-  const handleChatFocusChange = (focused: boolean) => {
+  // useCallback（第 84 轮性能）：AIAdvicePanel 已 memo，本回调须稳定引用
+  const handleChatFocusChange = useCallback((focused: boolean) => {
     if (chatBlurTimerRef.current !== null) {
       window.clearTimeout(chatBlurTimerRef.current);
       chatBlurTimerRef.current = null;
     }
     if (focused) setChatTyping(true);
     else chatBlurTimerRef.current = window.setTimeout(() => setChatTyping(false), 280);
-  };
+  }, []);
   // 首次引导（两步卡，localStorage 一次性门控；冷启动第二次不再出现）
   const [onboardingOpen, setOnboardingOpen] = useState(() => {
     try {
@@ -772,6 +773,20 @@ export const App: React.FC = () => {
     (updated: Partial<UserProfile>) => setUserProfile((prev) => ({ ...prev, ...updated })),
     []
   );
+  // TodayTab/AIAdvicePanel 已 memo（第 84 轮性能）：传给它们的所有回调
+  // 必须稳定引用，否则 App 任意状态变化（toast/横幅/键盘）仍会击穿 memo
+  const openActiveSleep = useCallback(() => setIsActiveSleepOpen(true), []);
+  const openManualLog = useCallback(() => setIsManualLogOpen(true), []);
+  const openManualLogPrefilled = useCallback((p: { date: string; bedtime: string; wakeTime: string }) => {
+    setManualLogPrefill(p);
+    setIsManualLogOpen(true);
+  }, []);
+  const navigateToTrends = useCallback(() => setActiveTab('trends'), []);
+  const openAutoCheck = useCallback(() => {
+    setActiveTab('settings');
+    setAutoCheckSignal((v) => v + 1);
+  }, []);
+  const openCodex = useCallback(() => setCodexOpen(true), []);
   // useCallback：作为 memo 分区 props 的依赖须稳定（第 81 轮性能）
   const showToast = useCallback((msg: string, durationMs = 3200) => {
     setToastMessage(msg);
@@ -895,7 +910,8 @@ export const App: React.FC = () => {
   // 键盘/读屏用户 Tab 不到"停止响铃"——闹钟场景恰恰必须一键可达
   const ringA11y = useModalA11y(!!ringingAlarm, handleStopRinging, '闹钟响铃');
 
-  const handleSaveActiveSleep = (newRecord: SleepRecord) => {
+  // useCallback：作为 memo 分区（TodayTab）props 的依赖须稳定
+  const handleSaveActiveSleep = useCallback((newRecord: SleepRecord) => {
     setRecords((prev) => {
       const merged = mergeRecord(prev, newRecord);   // 夜睡按日一条、小睡可多次（D1 根治）
       return merged.sort(
@@ -914,9 +930,9 @@ export const App: React.FC = () => {
     }
     setPondCelebrateSignal((v) => v + 1);
     showToast(`🌙 记录已保存！本次睡眠记录时长 ${newRecord.durationMinutes < 60 ? `${newRecord.durationMinutes}分钟` : `${(newRecord.durationMinutes / 60).toFixed(1)}小时`}`);
-  };
+  }, [showToast]);
 
-  const handleSaveManualRecord = (newRecord: SleepRecord) => {
+  const handleSaveManualRecord = useCallback((newRecord: SleepRecord) => {
     // 影子诊断：最终记录=真值。★ 语义按 recordSource 分流（第 42 轮 e2e 实证的
     // 覆盖 bug）：一键采纳提议（'usage'）的真值就是提议自己——只算【采纳率】；
     // 手动补录/修改（'manual'/'onetap'）才是独立真值，算命中率/误差。
@@ -941,7 +957,7 @@ export const App: React.FC = () => {
     }
     setPondCelebrateSignal((v) => v + 1);
     showToast(`📝 睡眠记录已保存！综合健康得分 ${newRecord.sleepScore} 分`);
-  };
+  }, [showToast]);
 
   const handleResetDemoData = () => {
     // 破坏性操作与删除单条记录同防护级：演示数据会覆盖全部真实记录
@@ -1195,19 +1211,16 @@ export const App: React.FC = () => {
                     <TodayTab
                       records={records}
                       userProfile={userProfile}
-                      onOpenActiveSleep={() => setIsActiveSleepOpen(true)}
-                      onOpenManualLog={() => setIsManualLogOpen(true)}
-                      onOpenManualLogPrefilled={(p) => { setManualLogPrefill(p); setIsManualLogOpen(true); }}
+                      onOpenActiveSleep={openActiveSleep}
+                      onOpenManualLog={openManualLog}
+                      onOpenManualLogPrefilled={openManualLogPrefilled}
                       onUpdateProfile={handleUpdateProfile}
                       startSignal={sleepStartSignal}
-                      onNavigateToTrends={() => setActiveTab('trends')}
+                      onNavigateToTrends={navigateToTrends}
                       onSaveRecord={handleSaveManualRecord}
                       theme={currentTheme}
-                      onOpenAutoCheck={() => {
-                        setActiveTab('settings');
-                        setAutoCheckSignal((v) => v + 1);
-                      }}
-                      onOpenCodex={() => setCodexOpen(true)}
+                      onOpenAutoCheck={openAutoCheck}
+                      onOpenCodex={openCodex}
                       celebrateSignal={pondCelebrateSignal}
                     />
                   )}

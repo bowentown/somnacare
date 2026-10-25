@@ -85,17 +85,27 @@ const splash = read('src/components/LaunchSplash.tsx');
 ok('开屏：宣传语涟漪 keyframe + 组件三圈椭圆使用',
   css.includes('@keyframes splash-slogan-ripple')
   && (splash.match(/splash-slogan-ripple/g)?.length ?? 0) >= 1);
-ok('开屏：大号渐变字（22px/black/bg-clip）+ 逐字浮现',
-  splash.includes('text-[22px]') && splash.includes('backgroundClip')
+ok('开屏：大号白字+光晕（bg-clip:text 与 filter 的组合在旧 WebView 内核上会丢字——第 84 轮真机返工）+ 逐字浮现',
+  splash.includes('text-[22px]') && splash.includes('textShadow')
+  && !splash.includes('backgroundClip') && !splash.includes('drop-shadow')
   && splash.includes("{'懂睡眠，更懂你'.split('').map"));
 
-// ── 性能（第 82 轮）──
+// ── 性能（第 82–84 轮）──
 const panel = read('src/components/AIAdvicePanel.tsx');
 const app = read('src/App.tsx');
+const pond = read('src/pond/bootstrap.ts');
 ok('性能：聊天跟随滚动 rAF 合帧',
   /requestAnimationFrame\(\(\) => \{[\s\S]{0,160}node\.scrollTop = node\.scrollHeight/.test(panel));
-ok('性能：EyeCareTab memo + App 侧 onUpdateProfile 稳定引用',
-  eye.includes('React.memo(EyeCareTabInner)') && app.includes('const handleUpdateProfile = useCallback'));
+ok('性能：三个重分区全部 memo（Trends/Today/AI）+ App 回调稳定化',
+  eye.includes('React.memo(EyeCareTabInner)') && today.includes('React.memo(TodayTabInner)')
+  && panel.includes('React.memo(AIAdvicePanelInner)')
+  && app.includes('const handleUpdateProfile = useCallback')
+  && app.includes('const openManualLogPrefilled = useCallback')
+  && app.includes('const handleSaveManualRecord = useCallback'));
+ok('性能：锦鲤池 30fps 封顶（真机卡顿主源：60fps 全量重绘减半）',
+  pond.includes('FRAME_MS = 1000 / 30') && /now - previousTime < FRAME_MS/.test(pond));
+ok('无障碍：减弱动效时动画时延一并归零（延迟 both 动画不再长期隐身）',
+  /animation-delay: 0\.01ms !important/.test(css));
 
 // 反向自检：改坏夜归属同步必须被抓（shift 计数跌回 1）
 {

@@ -89,6 +89,10 @@ export function createPond(
   let accumulator = 0;
   let simulationTime = 0;
   let previousTime = performance.now();
+  // 30fps 封顶（第 84 轮真机卡顿）：水面是氛围动效，60fps 与 30fps 肉眼
+  // 差别极小，但旧 WebView 上每帧全量重绘 2D canvas 是首页卡顿的主源——
+  // 模拟与绘制成本直接减半。恢复时 previousTime 已随每次回调刷新，不跳变
+  const FRAME_MS = 1000 / 30;
 
   const animate = (now: number): void => {
     raf = requestAnimationFrame(animate);
@@ -96,6 +100,7 @@ export function createPond(
       previousTime = now; // 暂停期间不积累时间，恢复时不跳变
       return;
     }
+    if (now - previousTime < FRAME_MS) return;   // 未到 33ms 的中间帧直接让出
     accumulator += Math.min((now - previousTime) / 1000, 0.1);
     previousTime = now;
     while (accumulator >= FIXED_STEP) {
