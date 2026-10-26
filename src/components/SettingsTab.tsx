@@ -544,6 +544,10 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
             ? (chatData as { sessions: unknown[] }).sessions.length
             : 0;
         const chatCountText = `${chatCount} 段`;
+        if (parsed.data.records.length === 0) {
+          // 空备份（第 90 轮 F8）：合法但会清空记录——必须显式二次确认
+          if (!confirm('这份备份里没有任何睡眠记录。继续导入会清空当前的全部记录，确定？')) return;
+        }
         const skipped = confirm(
           `全量备份导入将覆盖当前的睡眠记录、朋友圈与聊天历史（图鉴与档案按文件内容恢复）。\n` +
           `包含：记录 ${parsed.data.records.length} 条 · 朋友圈 ${parsed.data.moments.length} 条 · 聊天 ${chatCountText}。\n` +
@@ -557,7 +561,9 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
       } catch (err) {
         // 复审 V13：错误分流——配额溢出此前被误报成"不是合法的备份 JSON"
         const msg = err instanceof Error ? err.message : '';
-        if (msg === 'too-many-records') {
+        if (msg === 'bad-records') {
+          alert('这个备份文件的记录字段不是列表（可能已损坏或来自其他应用）——已取消导入，现有数据未改动。');
+        } else if (msg === 'too-many-records') {
           alert('导入失败：记录条数超出上限（5 万条）——请拆分备份文件');
         } else if (msg === 'too-big') {
           alert('导入失败：备份内容超过 20MB 上限');

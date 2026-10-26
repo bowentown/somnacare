@@ -133,7 +133,11 @@ public class WhaleGirlView extends View {
         int w = getWidth(), h = getHeight();
         if (w == 0 || h == 0) return false;
         float shift = motionShiftPx(a, now, Math.min(w, h) * 0.97f);
-        return Float.isNaN(lastDrawnMotion) || Math.abs(shift - lastDrawnMotion) >= 0.5f;
+        // 阈值按密度换算（第 90 轮 §2.4）：位移幅度 ∝ 屏幕密度，而 0.5 绝对
+        // px 在 3×/4× 屏等效于 0.17/0.13dp——重绘率被密度悄悄拉回 14-19fps。
+        // 统一为 0.5dp（≈0.17mm，任何密度下都不可见）
+        float threshold = 0.5f * getResources().getDisplayMetrics().density;
+        return Float.isNaN(lastDrawnMotion) || Math.abs(shift - lastDrawnMotion) >= threshold;
     }
 
     private final Runnable ambientTick = new Runnable() {

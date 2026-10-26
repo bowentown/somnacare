@@ -58,14 +58,14 @@ ok('用眼日报：queryDailyHealth 真实聚合（前台时长 + KEYGUARD_HIDDE
   usagePlugin.includes('public void queryDailyHealth')
   && usagePlugin.includes('getTotalTimeInForeground')
   && usagePlugin.includes('type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE')
-  && /kgByDay\.getOrDefault\(key, siByDay\.get\(key\)\)/.test(usagePlugin)
+  && /unlockSource/.test(usagePlugin) && /unlockFromKeyguard \? "keyguard" : "screen"/.test(usagePlugin)
   && !usagePlugin.includes('USER_PRESENT（旧 API 无命名常量）')
   && usageSignal.includes('queryDailyHealth'));
 ok('用眼日报 UI：StatCard + 7 天柱图（Recharts，真实数据）',
   tab.includes('queryDailyHealth')
   && tab.includes('用眼日报')
   && tab.includes('data-testid="eye-health-chart"')
-  && tab.includes('今日解锁'));
+  && /label=\{todayHealth\.unlockSource === 'screen' \? '今日亮屏次数' : '今日解锁'\}/.test(tab));
 ok('UI：20-20-20 卡片在护眼页（开关 + 今日最长连续）',
   tab.includes('20-20-20 远眺提醒') && tab.includes('今日最长连续用屏'));
 

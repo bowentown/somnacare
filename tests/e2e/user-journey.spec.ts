@@ -1098,3 +1098,159 @@ test('旅程26 池塘逐帧动画：pond-live 下画布持续变化', async ({ p
   expect(f1 - f0).toBeGreaterThanOrEqual(20);   // 1.5s 内推进 ≥20 帧（30fps 路径）
   expect(errors).toEqual([]);
 });
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程27 20-20-20 远眺提醒（第 90 轮 G）：此前零行为覆盖——
+// 旅程7 不 mock 原生，卡片在 native=false 下根本不渲染
+// ─────────────────────────────────────────────────────────────
+test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(15, 0, 0, 0);
+  await page.addInitScript(() => {
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    const restCalls: Array<{ enabled: boolean }> = [];
+    (window as any).__restCalls = restCalls;
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, { get: (t, p) => t[p as string] ?? stub() }),
+    };
+    // 平台判定必须在 window 顶层：@capacitor/core 的 createCapacitor 读的是
+    // win.CapacitorCustomPlatform（Capacitor 对象的兄弟属性），嵌在 Capacitor
+    // 里读不到 → isNativePlatform() 恒 false（第 90 轮 G 实测）
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
+    (window as any).androidBridge = {};
+    (window as any).Capacitor.Plugins.GemmaLLM = {
+      eyeCareRestGet: async () => ({ enabled: false, serviceAlive: true, maxTodayRaw: '{"maxMin":12,"date":"2026-10-26"}' }),
+      eyeCareRestSet: async (args: { enabled: boolean }) => {
+        restCalls.push({ enabled: args?.enabled === true });
+        return { ok: true };
+      },
+      eyeCarePermission: async () => ({ granted: true }),
+      eyeCareStatus: async () => ({ started: true, granted: true }),
+      eyeCareSetEnabled: async () => ({ ok: true }),
+      eyeCareOpenPermissionSettings: async () => ({}),
+      bedtimePermission: async () => ({ granted: true }),
+      alarmRingTable: async () => ({ json: '[]' }),
+    };
+    (window as any).Capacitor.Plugins.UsageSignal = {
+      hasPermission: async () => ({ granted: true }),
+      queryDailyUsage: async () => ({ days: [] }),
+      queryScreenOnEvents: async () => ({ events: [], observedUntil: Date.now() }),
+      queryDailyHealth: async () => ({ days: [] }),
+      queryWindDownApps: async () => ({ apps: [] }),
+    };
+    localStorage.setItem('somnacare_sleep_records', '[]');
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+    sessionStorage.clear();
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForTimeout(2400);
+  await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '护眼', exact: true }).click();
+  await page.waitForTimeout(500);
+
+  const restSwitch = page.getByRole('checkbox', { name: '开关 20-20-20 远眺提醒' });
+  await expect(restSwitch).toBeVisible();               // 卡片在原生 mock 下渲染
+  await expect(restSwitch).not.toBeChecked();
+  await restSwitch.locator('xpath=ancestor::label[1]').click();
+  await expect(restSwitch).toBeChecked();               // UI 跟随
+  // 行为断言：原生桥真的收到 { enabled: true }（短路 setEyeRestEnabled 会红）
+  const calls = await page.evaluate(() => (window as any).__restCalls as Array<{ enabled: boolean }>);
+  expect(calls.length).toBeGreaterThan(0);
+  expect(calls[calls.length - 1].enabled).toBe(true);
+  // 连续用屏统计在场（真实测量，非估算）
+  await expect(page.getByText(/今日最长连续用屏/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程28 服务端零记录拒绝（第 90 轮 N6）：护栏此前只做 server.ts 文本在场
+// 检查——"只改路由一行"即可让零记录请求返回 200 + 完整伪造报告而护栏全绿。
+// 这里真实 POST，断言 400（无 GEMINI_API_KEY 时本地规则兜底立即返回 null）。
+// ─────────────────────────────────────────────────────────────
+test('旅程28 服务端：零记录请求必须 400 拒绝（不伪造报告）', async ({ request }) => {
+  const empty = await request.post('/api/sleep/analyze', {
+    data: { recentLogs: [], userProfile: { age: 30 } },
+  });
+  expect(empty.status()).toBe(400);
+  const body = await empty.json();
+  expect(String(body.error ?? '')).toContain('尚无睡眠记录');
+
+  // 对照：有记录时不应再走 400 分支（本地规则引擎出报告）
+  const one = await request.post('/api/sleep/analyze', {
+    data: {
+      recentLogs: [{
+        date: '2026-10-20', bedtime: '23:30', wakeTime: '07:30', durationMinutes: 480,
+        deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 90, awakeMinutes: 20,
+        sleepScore: 86, sleepEfficiency: 92, latencyMinutes: 15,
+      }],
+      userProfile: { age: 30, targetHours: 8 },
+    },
+  });
+  expect(one.status()).toBe(200);
+  const report = await one.json();
+  expect(typeof report.chronotype).toBe('string');
+  expect(report.chronotype.length).toBeGreaterThan(0);
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程29 全量备份恢复（第 90 轮：verify-wiring 的第三条"调用点在场"断言
+// 此前无任何行为覆盖）。真走文件输入 → 全量 schema2 分支 → restoreFullBackup，
+// 断言恢复真的落盘（记录被替换 + 皮肤随文件恢复）。
+// ─────────────────────────────────────────────────────────────
+test('旅程29 全量备份恢复：schema2 导入真正落盘（行为覆盖）', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  // 不用 seed()（addInitScript 会在恢复后的 reload 上重放，把恢复结果覆盖回去）
+  await page.evaluate((recs) => {
+    localStorage.setItem('somnacare_sleep_records', JSON.stringify(recs));
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+    localStorage.setItem('somnacare_record_date_schema', 'night-v1');
+  }, [
+    mkRecord(dstr(-1, fixed), '23:40', '07:30', 90),
+    mkRecord(dstr(-2, fixed), '23:20', '07:10', 86),
+    mkRecord(dstr(-3, fixed), '00:10', '07:40', 82),
+  ]);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: /数据备份/ }).click();
+
+  const payload = JSON.stringify({
+    app: 'somnacare', schema: 2, exportedAt: new Date().toISOString(),
+    dateSchema: 'night-v1',
+    records: [mkRecord(dstr(-5, fixed), '22:50', '06:50', 77)],
+    profile: { name: '备份恢复者', age: 41 },
+    travel: { energy: 120 },
+    moments: [],
+    chat: [],
+    petPrefs: { skin: 'sakura', bubbleEvery: 4, enabled: true },
+  });
+  page.once('dialog', (d) => void d.accept());
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'full-backup.json', mimeType: 'application/json', buffer: Buffer.from(payload),
+  });
+  await page.waitForTimeout(1200);   // 恢复后 window.location.reload()
+
+  const after = await page.evaluate(() => ({
+    records: JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'),
+    skin: localStorage.getItem('somnacare_pet_skin'),
+    profile: JSON.parse(localStorage.getItem('somnacare_user_profile') || '{}'),
+  }));
+  expect(after.records.length).toBe(1);                       // 3 条被整体替换为 1 条
+  expect(after.records[0].date).toBe(dstr(-5, fixed));
+  expect(after.skin).toBe('sakura');
+  expect(after.profile.name).toBe('备份恢复者');
+  expect(errors).toEqual([]);
+});

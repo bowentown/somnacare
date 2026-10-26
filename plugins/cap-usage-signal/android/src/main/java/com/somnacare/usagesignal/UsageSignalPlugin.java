@@ -322,12 +322,19 @@ public class UsageSignalPlugin extends Plugin {
             // per-day 回退（第 88 轮）：混合窗口下有的天只有亮屏事件——整窗级
             // 回退会把它们打成 0。逐天取：有锁屏事件的天用解锁数，否则用亮屏数
             java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
+            boolean anyKg = false;
             for (String key : siByDay.keySet()) {
-                unlocksByDay.put(key, kgByDay.getOrDefault(key, siByDay.get(key)));
+                Integer kg = kgByDay.get(key);
+                if (kg != null) anyKg = true;
+                unlocksByDay.put(key, kg != null ? kg : siByDay.get(key));
             }
             for (java.util.Map.Entry<String, Integer> e : kgByDay.entrySet()) {
+                anyKg = true;
                 unlocksByDay.putIfAbsent(e.getKey(), e.getValue());
             }
+            // 计数来源随数据回传（第 90 轮 N4）：整窗无 KEYGUARD 事件（API 24–27
+            // 或纯亮屏设备）时，数的是亮屏次数而非解锁——UI 据此改文案，不冒充解锁
+            final boolean unlockFromKeyguard = anyKg;
 
             JSArray arr = new JSArray();
             for (int i = days - 1; i >= 0; i--) {
@@ -340,6 +347,7 @@ public class UsageSignalPlugin extends Plugin {
                 item.put("date", key);
                 item.put("screenMinutes", (int) Math.round(screenMs / 60000.0));
                 item.put("unlocks", unlocksByDay.getOrDefault(key, 0));
+                item.put("unlockSource", unlockFromKeyguard ? "keyguard" : "screen");
                 arr.put(item);
             }
             JSObject ret = new JSObject();
@@ -366,7 +374,7 @@ public class UsageSignalPlugin extends Plugin {
     }
 
     /**
-     * 「放下手机前的一小时」（第 82 轮，取代数字健康台）：给定某一夜的
+     * 「放下手机前的一小时」（第 82 轮，取代此前的每应用全天时长榜）：给定某一夜的
      * 夜归属键（yyyy-MM-dd），取该夜最后一次熄屏（放下）前 60 分钟窗口内
      * 每应用的前台分钟数——系统"屏幕使用时间"给的是全天 totals，这里只看
      * 与入睡直接相邻的最后一段，是睡眠 App 的独特视角。

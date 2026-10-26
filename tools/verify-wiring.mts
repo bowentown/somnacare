@@ -71,12 +71,22 @@ if (orphans.length > 0) {
 console.log(`✓ verify-wiring：${files.length} 个源文件全部有引用，无孤儿`);
 
 // ── 关键功能链路的"调用点"断言（第 88 轮高-1 最小版：护栏此前全是
-//    定义在场检查，短路调用仍全绿——旅程25/7 已提供行为级，这里再锁
-//    调用点本身的存在，三层合防"代码在、线断了"）──
+//    定义在场检查，短路调用仍全绿——这里再锁调用点本身的存在）。
+//    第 90 轮定位：本层是最弱的一档，"线断了"（`if (false)`/三目短路）
+//    由行为用例承担，三条各有对应：
+//      睡前一小时 → 旅程25（winddown-card 按 nightKey 回放）
+//      20-20-20   → 旅程27（原生桥收到 {enabled:true}）
+//      备份恢复   → 旅程29（导入后记录/皮肤真落盘）
+//    实测：对上述三条各自短路，本层全部保持绿、对应行为用例全部报红。──
 {
-  const tabToday = readFileSync(new URL('../src/components/TodayTab.tsx', import.meta.url), 'utf8');
-  const tabEye = readFileSync(new URL('../src/components/EyeCareTab.tsx', import.meta.url), 'utf8');
-  const tabSettings = readFileSync(new URL('../src/components/SettingsTab.tsx', import.meta.url), 'utf8');
+  // 剥离注释后再匹配（第 90 轮 §2.1）：旧版纯正则会被"整行注释掉"绕过——
+  // 文本留在注释里即算通过。注：`if (false)` 这类短路本质上需要行为测试
+  // （见上方三条行为用例），本层只保证"调用真的在代码里"
+  const stripComments = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\/\/[^\n]*$/gm, '');
+  const tabToday = stripComments(readFileSync(new URL('../src/components/TodayTab.tsx', import.meta.url), 'utf8'));
+  const tabEye = stripComments(readFileSync(new URL('../src/components/EyeCareTab.tsx', import.meta.url), 'utf8'));
+  const tabSettings = stripComments(readFileSync(new URL('../src/components/SettingsTab.tsx', import.meta.url), 'utf8'));
   const checks: Array<[string, boolean]> = [
     ['睡前一小时：TodayTab 实际调用 queryWindDownApps（非仅导入）',
       /void queryWindDownApps\(/.test(tabToday)],

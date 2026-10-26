@@ -141,7 +141,13 @@ export function parseBackup(raw: string): ParsedBackup {
     const o = parsed as Record<string, unknown>;
     if (o.app === 'somnacare' && o.schema === BACKUP_SCHEMA) {
       const data = o as unknown as FullBackup;
-      if (Array.isArray(data.records) && data.records.length > IMPORT_MAX_RECORDS) {
+      // 结构校验（第 90 轮 F7/F8）：records 非数组时旧实现会一路放行、
+      // 恢复时静默写空数组 → 清空全部记录，而报错文案还是"不是合法的备份
+      // JSON"。这里明确拒绝，让调用方能给出真实原因
+      if (!Array.isArray(data.records)) {
+        throw new Error('bad-records');
+      }
+      if (data.records.length > IMPORT_MAX_RECORDS) {
         throw new Error('too-many-records');
       }
       return { kind: 'full', data };

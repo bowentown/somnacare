@@ -162,14 +162,21 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
 
 // ── 内容驱动重绘（第 89 轮）：用户实测"刷抖音时桌宠特别卡"——恒定 30fps
 //    全窗口重绘让悬浮窗图层每帧重新合成，与视频解码/合成争资源。改为只有
-//    画面真变（帧号/位移≥0.5px/溶解/拖拽）才 invalidate ──
+//    画面真变（帧号/位移≥阈值/溶解/拖拽）才 invalidate。
+//    第 90 轮 §2.4：阈值必须是【密度无关】的——位移幅度 ∝ 屏幕密度，绝对
+//    0.5px 在 3×/4× 屏等效 0.17/0.13dp，重绘率被密度悄悄拉回 14-19fps
+//    （"−73%" 只在 2× 密度待机态成立）。改为 0.5dp × density。──
 {
   const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  // 判据 = 阈值由 density 换算而来（写成绝对 px 即失去密度无关性）
+  const thresholdDensityAware =
+    /float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(view)
+    && /Math\.abs\(shift - lastDrawnMotion\) >= threshold/.test(view);
   const checks: Array<[string, boolean]> = [
     ['桌宠：内容驱动重绘（tick 先判 shouldRedraw 再 invalidate）',
       /if \(shouldRedraw\(\)\) invalidate\(\);/.test(view)],
-    ['桌宠：不可见位移阈值 0.5px（呼吸不触发无谓重绘）',
-      />= 0\.5f/.test(view)],
+    ['桌宠：不可见位移阈值密度无关（0.5dp × density，绝对 px 会让 3×/4× 屏重绘率回升）',
+      thresholdDensityAware],
     ['桌宠：拖拽/说话保持满节拍（跟手优先）',
       /if \(dragging \|\| talking\) return true;/.test(view)],
     ['桌宠：onDraw 与判定共用位移函数（防两处公式漂移）',
@@ -180,5 +187,18 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
   for (const [name, ok] of checks) {
     console.log(`${ok ? '✓' : '✗'} ${name}`);
     if (!ok) process.exitCode = 1;
+  }
+  // 反向自检：回退成绝对 0.5px 阈值必须被同一判据抓住
+  {
+    const doctored = view.replace(
+      'float threshold = 0.5f * getResources().getDisplayMetrics().density;',
+      'float threshold = 0.5f;',
+    );
+    const stillCaught = !(
+      /float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(doctored)
+      && /Math\.abs\(shift - lastDrawnMotion\) >= threshold/.test(doctored)
+    );
+    console.log(`${stillCaught ? '✓' : '✗'} 反向自检：回退绝对 0.5px 阈值可被检出`);
+    if (!stillCaught) process.exitCode = 1;
   }
 }

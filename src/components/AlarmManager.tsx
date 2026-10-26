@@ -134,9 +134,11 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
   };
 
   // 调整已有闹钟的浅睡唤醒窗口（1-30 分钟步进）
+  // 函数式更新（第 90 轮 M1：与保存/开关/删除同批修复时漏改，连点步进器
+  // 会基于过期闭包丢更新）
   const handleAdjustWindow = (id: string, delta: number) => {
-    onUpdateAlarms(
-      alarms.map((a) =>
+    onUpdateAlarms((prev) =>
+      prev.map((a) =>
         a.id === id
           ? { ...a, smartWakeWindowMinutes: Math.min(30, Math.max(1, (a.smartWakeWindowMinutes || 20) + delta)) }
           : a

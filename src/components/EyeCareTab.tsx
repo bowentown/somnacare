@@ -526,7 +526,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
               />
               <StatCard
                 theme={theme}
-                label="今日解锁"
+                label={todayHealth.unlockSource === 'screen' ? '今日亮屏次数' : '今日解锁'}
                 value={todayHealth.unlocks}
                 valueClassName="text-sky-300"
               />

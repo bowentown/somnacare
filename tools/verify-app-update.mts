@@ -15,7 +15,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   compareVersions,
-  isNewerVersion,
   parseSemver,
   plainReleaseNotes,
 } from '../src/utils/appUpdate';
@@ -43,10 +42,12 @@ const workflow = read('.github/workflows/build-apk.yml');
 ok('semver：解析 v1.2.3 / 1.2.3-beta.1', parseSemver('v1.2.3')?.join('.') === '1.2.3'
   && parseSemver('1.2.3-beta.1')?.join('.') === '1.2.3'
   && parseSemver('1.2') === null);
+// 第 90 轮 F11：isNewerVersion 是零引用导出（仅本护栏自测引用），已删除——
+// 断言改走生产唯一入口 compareVersions（同一语义）
 ok('semver：1.2.0 > 1.1.9，1.1.0 == v1.1.0',
-  isNewerVersion('1.2.0', '1.1.9')
-  && !isNewerVersion('1.1.0', 'v1.1.0')
-  && !isNewerVersion('1.0.9', '1.1.0')
+  compareVersions('1.2.0', '1.1.9') === 1
+  && compareVersions('1.1.0', 'v1.1.0') === 0
+  && compareVersions('1.0.9', '1.1.0') === -1
   && compareVersions('2.0.0', '1.9.9') === 1);
 ok('semver：预发布段参与比较（beta 能收到正式/更新 beta）',
   compareVersions('1.2.3', '1.2.3-beta.1') === 1

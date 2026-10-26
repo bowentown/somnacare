@@ -118,6 +118,8 @@ export async function refreshUsageDays(days = 7, chronotype: 'night' | 'day' | '
 // ── 每日屏幕健康（第 77 轮，Phase 2）：真实测量的前台分钟数与解锁次数 ──
 
 export interface DailyHealthDay {
+  /** 解锁计数来源（第 90 轮）：keyguard=真解锁；screen=亮屏次数回退（老设备/无锁屏） */
+  unlockSource?: 'keyguard' | 'screen';
   date: string;
   screenMinutes: number;
   unlocks: number;
@@ -135,6 +137,9 @@ export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
         date: d.date,
         screenMinutes: typeof d.screenMinutes === 'number' ? d.screenMinutes : 0,
         unlocks: typeof d.unlocks === 'number' ? d.unlocks : 0,
+        ...(d.unlockSource === 'keyguard' || d.unlockSource === 'screen'
+          ? { unlockSource: d.unlockSource as 'keyguard' | 'screen' }
+          : {}),
       }));
   } catch {
     return [];

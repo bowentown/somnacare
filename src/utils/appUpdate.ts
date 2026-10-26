@@ -140,10 +140,6 @@ function prereleaseOf(value: string): string | null {
   return m ? m[1] : null;
 }
 
-export function isNewerVersion(latest: string, current: string): boolean {
-  const cmp = compareVersions(latest, current);
-  return cmp !== null && cmp > 0;
-}
 
 /** Release 正文是 Markdown；这里只做去掉标记的纯文本化（UI 用 textContent 渲染）。 */
 export function plainReleaseNotes(body: unknown): string {

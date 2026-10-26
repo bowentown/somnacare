@@ -104,20 +104,30 @@ ok('性能：三个重分区全部 memo（Trends/Today/AI）+ App 回调稳定�
   && app.includes('const handleUpdateProfile = useCallback')
   && app.includes('const openManualLogPrefilled = useCallback')
   && app.includes('const handleSaveManualRecord = useCallback'));
-ok('性能：五分区 React.lazy 代码分割（第 87 轮：首屏 JS 1.85MB→~0.5MB，-73%）',
-  ['TodayTab', 'TrendsTab', 'AIAdvicePanel', 'SettingsTab', 'EyeCareTab']
-    .every((n) => app.includes(`lazy(() => import('./components/${n}')`))
-  && app.includes('<Suspense fallback={null}>'));
+ok('性能：仅趋势页懒加载（带 recharts 354KB）+ 骨架屏占位（第 90 轮 §2.2 修正：小分区回首包换零切页空白与零流量放大）',
+  app.includes("lazy(() => import('./components/TrendsTab')")
+  && !app.includes("lazy(() => import('./components/AIAdvicePanel')")
+  && !app.includes("lazy(() => import('./components/SettingsTab')")
+  && app.includes('<Suspense fallback={<PaneSkeleton />}>'));
 ok('性能：锦鲤池 30fps 封顶（真机卡顿主源：60fps 全量重绘减半）',
   pond.includes('FRAME_MS = 1000 / 30') && /now - previousTime < FRAME_MS/.test(pond));
 ok('无障碍：减弱动效时动画时延一并归零（延迟 both 动画不再长期隐身）',
   /animation-delay: 0\.01ms !important/.test(css));
 
-// 反向自检：改坏夜归属同步必须被抓（shift 计数跌回 1）
+// 反向自检（第 90 轮 F9：旧写法是自证循环——替换后计数 <2 恒真，即使
+// 原源码本就有 3 处也过）。改为用与主断言同一判定函数，断言"原判据成立
+// 且变异后不成立"：
 {
+  const ruleOk = (src: string): boolean => {
+    const shift = src.match(/hour < 12/g)?.length ?? 0;
+    const shiftCal = src.match(/cal\.add\(Calendar\.HOUR_OF_DAY, -12\)/g)?.length ?? 0;
+    const putDown = src.match(/hour >= 18 \|\| hour < 6/g)?.length ?? 0;
+    const dayWin = src.match(/hour >= 6 && hour < 18/g)?.length ?? 0;
+    return shift >= 2 && shiftCal >= 2 && putDown >= 2 && dayWin >= 2;
+  };
   const doctored = plugin.replace(/hour < 12/g, 'hour < 13');
-  const shift = doctored.match(/hour < 12/g)?.length ?? 0;
-  ok('反向自检：夜归属规则被改动 → 同步断言报红', shift < 2);
+  ok('反向自检：同一判定函数下——原源码成立、变异后不成立',
+    ruleOk(plugin) && !ruleOk(doctored));
 }
 
 if (failures > 0) {

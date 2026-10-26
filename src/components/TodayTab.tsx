@@ -103,9 +103,14 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
   // 夜归属键与原生侧同规则（第 86 轮修正）：夜间/不规律作息取"昨天"（凌晨
   // 归前夜）；白天作息的放下窗口是当天 06–18、键为自然日——此前恒取昨天，
   // 白班用户的卡片会查到错的一夜
+  // 跨午夜刷新（第 90 轮中-3 残留）：依赖里并入"当前日期"——App 被保活
+  // 跨过午夜后键必须跟着换日，否则整晚查的是昨天的窗口（phaseNow 是既有
+  // 的 60s 时钟，跨日时字符串变化触发重算）
+  const phaseDate = useMemo(() => toLocalDateString(phaseNow), [phaseNow]);
   const windDownKey = useMemo(
     () => (userProfile.chronotype === 'day' ? toLocalDateString() : localDateOffset(-1)),
-    [userProfile.chronotype]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userProfile.chronotype, phaseDate]
   );
   useEffect(() => {
     if (!isNativePlatform()) return;

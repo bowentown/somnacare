@@ -136,20 +136,21 @@ export function relinkLedgerAfterReclassify(
   before: Array<{ id: string; date: string; kind?: string }>,
   after: Array<{ id: string; date: string; kind?: string }>,
 ): void {
-  const byId = new Map(after.map((r) => [r.id, r]));
+  // 按索引对齐（第 90 轮 M3）：reclassifyForChronotype 是 records.map()，
+  // 顺序与 id 一一对应——用 (date, kind) find 认领在同夜多条记录时会取错人
   const state = loadTravelState();
   const next: Record<string, number> = {};
   let changed = false;
   for (const [key, score] of Object.entries(state.countedScores)) {
     const isNap = key.endsWith('|nap');
     const date = isNap ? key.slice(0, -4) : key;
-    const owner = before.find((r) => r.date === date && (isNap ? r.kind === 'nap' : r.kind !== 'nap'));
-    if (!owner) {
+    const idx = before.findIndex((r) => r.date === date && (isNap ? r.kind === 'nap' : r.kind !== 'nap'));
+    if (idx < 0 || !after[idx]) {
       next[key] = score;   // 无主账：不动（记录本身已不在，等删除路径自然清理）
       continue;
     }
-    const moved = byId.get(owner.id);
-    const newKey = moved ? (moved.kind === 'nap' ? `${moved.date}|nap` : moved.date) : key;
+    const moved = after[idx];
+    const newKey = moved.kind === 'nap' ? `${moved.date}|nap` : moved.date;
     if (newKey !== key) changed = true;
     next[newKey] = Math.max(next[newKey] ?? 0, score);
   }

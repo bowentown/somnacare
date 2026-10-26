@@ -67,8 +67,59 @@ ok('桥接：TS petSetVisible + Java 插件 + 服务显隐',
   ok('反向自检：删除主题强调色后判据不再成立', !doctored.includes('theme?.accentHex'));
 }
 
+// ── 第 90 轮 M-1：作息带时间轴窗口（真行为护栏）──
+// 面板标题与刻度此前写死 20:00–10:00 / 5 个钟点，而窗口已自适应（D6）：
+// 白天作息（08:30→16:30）时标题骗人、刻度被画到轴外（负坐标溢出面板左侧）。
+// 这里 import 真实模块跑数据——文本在场检查覆盖不到"窗口变了但刻度没跟着变"。
+{
+  const { axisWindow } = await import('../src/utils/clinicalSummaryCard');
+  const night = [
+    { bedtime: '23:30', wakeTime: '07:30' },
+    { bedtime: '23:50', wakeTime: '07:10' },
+    { bedtime: '23:10', wakeTime: '07:40' },
+  ];
+  const day = [
+    { bedtime: '08:30', wakeTime: '16:30' },
+    { bedtime: '08:50', wakeTime: '16:10' },
+    { bedtime: '08:10', wakeTime: '16:40' },
+  ];
+  const avgBedOf = (rows: Array<{ bedtime: string }>): number => {
+    const [h, m] = rows[0].bedtime.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const inWindow = (w: { rangeStart: number; rangeMin: number }, minute: number): boolean =>
+    minute >= w.rangeStart && minute <= w.rangeStart + w.rangeMin;
+
+  const wn = axisWindow(night, avgBedOf(night));
+  const wd = axisWindow(day, avgBedOf(day));
+
+  ok('时间轴：窗口内的刻度全部落在轴上（夜间作息）',
+    wn.ticks.length >= 3 && wn.ticks.every((t) => inWindow(wn, t.minute)));
+  ok('时间轴：窗口内的刻度全部落在轴上（白天作息）',
+    wd.ticks.length >= 3 && wd.ticks.every((t) => inWindow(wd, t.minute)));
+  const clockOf = (m: number): string => {
+    const v = ((m % 1440) + 1440) % 1440;
+    return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+  };
+  ok('时间轴：标题由窗口生成而非写死 20:00–10:00',
+    wn.label !== '20:00 — 10:00' && wd.label !== '20:00 — 10:00'
+    && wn.label === `${clockOf(wn.rangeStart)} — ${clockOf(wn.rangeStart + wn.rangeMin)}`
+    && wd.label === `${clockOf(wd.rangeStart)} — ${clockOf(wd.rangeStart + wd.rangeMin)}`);
+  ok('时间轴：刻度标签与 minute 自洽（标签=钟点回写）',
+    wd.ticks.every((t) => {
+      const v = ((t.minute % 1440) + 1440) % 1440;
+      return t.label === `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+    }));
+  // 反向自检：旧写死刻度在白天窗口下必须大面积出轴（这正是 M-1 的现象）
+  {
+    const hardcoded = [20 * 60, 23 * 60, 26 * 60, 29 * 60, 32 * 60];
+    const out = hardcoded.filter((m) => !inWindow(wd, m)).length;
+    ok('反向自检：写死 20:00–08:00 刻度在白天窗口下 ≥4 个出轴', out >= 4);
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——就诊摘要主题化护栏不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-clinical-theme：主题取色 / 暗色报告 / 桌宠避让全部在位');
+console.log('\n✓ verify-clinical-theme：主题取色 / 暗色报告 / 桌宠避让 / 作息轴窗口全部在位');

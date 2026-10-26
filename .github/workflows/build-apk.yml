@@ -212,7 +212,7 @@ jobs:
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'REQUEST_INSTALL_PACKAGES' android/app/src/main/AndroidManifest.xml
           grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' android/app/src/main/AndroidManifest.xml
-          # 第 81 轮：包可见性——缺了它数字健康台对第三方应用一律显示包名尾段（mm/sgame）
+          # 第 81 轮：包可见性——缺了它应用名查询对第三方应用一律失败、只能显示包名尾段（mm/sgame）
           grep -q 'QUERY_ALL_PACKAGES' android/app/src/main/AndroidManifest.xml
           grep -q 'QUERY_ALL_PACKAGES' plugins/cap-usage-signal/android/src/main/AndroidManifest.xml
           grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml

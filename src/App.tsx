@@ -7,15 +7,14 @@ import {
 } from 'lucide-react';
 import { SleepRecord, UserProfile, DEFAULT_EYE_CARE, ProfileUpdater } from './types/sleep';
 import { getInitialSleepLogs } from './utils/sleepScore';
-const TodayTab = lazy(() => import('./components/TodayTab').then((m) => ({ default: m.TodayTab })));
-const TrendsTab = lazy(() => import('./components/TrendsTab').then((m) => ({ default: m.TrendsTab })));
-const AIAdvicePanel = lazy(() => import('./components/AIAdvicePanel').then((m) => ({ default: m.AIAdvicePanel })));
+import { TodayTab } from './components/TodayTab';
+import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
 import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
-const SettingsTab = lazy(() => import('./components/SettingsTab').then((m) => ({ default: m.SettingsTab })));
-const EyeCareTab = lazy(() => import('./components/EyeCareTab').then((m) => ({ default: m.EyeCareTab })));
+import { SettingsTab } from './components/SettingsTab';
+import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
 import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components/ActiveSleepModal';
 import { ManualLogModal } from './components/ManualLogModal';
@@ -28,6 +27,9 @@ import { applyEyeCare, eyeCareInAppStyles, isInEyeCareWindow } from './utils/eye
 import { consumePendingTab, syncPet } from './utils/petOverlay';
 import { queryScreenOnEvents } from './utils/usageSignal';
 import { forceRefreshUsage } from './utils/usageStore';
+// 趋势页单独分割（第 90 轮 §2.2 修正）：它带着 recharts+d3 共 354KB，是唯一
+// 值得懒加载的分区；其余分区 18-90KB 回首包换零切页空白与零流量放大
+const TrendsTab = lazy(() => import('./components/TrendsTab').then((m) => ({ default: m.TrendsTab })));
 import { LaunchSplash } from './components/LaunchSplash';
 import { PaneErrorBoundary } from './components/PaneErrorBoundary';
 import { closeTopModalIfAny } from './utils/modalA11y';
@@ -812,8 +814,9 @@ export const App: React.FC = () => {
     // records-only 备份只可能出自旧版导出（醒来日口径）→ 就地夜归属
     // 迁移（第 51 轮审计：本机标记已置位时 reload 不会再迁，必须在此补）
     const migratedImport = migrateRecordDatesToNightKey(imported, userProfile.chronotype ?? 'night').records;
-    // 同夜去重（第 86 轮）：备份里同 date 的多条夜睡会让"本周已过 2 天，
-    // 有记录 3 天"——按夜归属键归并，夜睡同 date 只留最新一条（小睡不受限）
+    // 同夜去重（第 86 轮；第 90 轮勘误注释）：备份里同 date 的多条夜睡会让
+    // "本周已过 2 天，有记录 3 天"——按夜归属键归并，同夜多条以文件中靠后
+    // 的为准（later-wins，修正版通常在后；小睡不受限）
     const byNight = new Map<string, SleepRecord>();
     const naps: SleepRecord[] = [];
     for (const r of migratedImport) {
@@ -1273,7 +1276,7 @@ export const App: React.FC = () => {
                 <div className="p-4 space-y-4">
                   {mountedPanes.has(id) && (
                   <PaneErrorBoundary label={PANE_LABELS[id] ?? id}>
-                  <Suspense fallback={null}>
+                  <Suspense fallback={<PaneSkeleton />}>
                   {id === 'today' && (
                     <TodayTab
                       records={records}
@@ -1342,10 +1345,7 @@ export const App: React.FC = () => {
       {!chatTyping && (
         <BottomNavBar
           activeTab={activeTab}
-          onChangeTab={(tab: NavTab) => {
-            preheatNeighbors(tab);   // 底栏点击立即拉起目标与邻居 chunk（懒加载冷点击空白）
-            setActiveTab(tab);
-          }}
+          onChangeTab={setActiveTab}
           theme={currentTheme}
         />
       )}
@@ -1399,6 +1399,19 @@ export const App: React.FC = () => {
     </div>
   );
 };
+
+/** 懒加载分区占位（第 90 轮 §2.2）：趋势页 chunk 加载/首渲染期间给骨架，
+ *  不再是 300ms 空白 */
+const PaneSkeleton: React.FC = () => (
+  <div className="space-y-3" aria-hidden>
+    {[0, 1, 2].map((i) => (
+      <div key={i} className="rounded-3xl border border-slate-700/60 bg-slate-900/40 p-5">
+        <div className="h-3 w-24 rounded-full bg-slate-700/60" />
+        <div className="mt-3 h-24 rounded-2xl bg-slate-800/50" />
+      </div>
+    ))}
+  </div>
+);
 
 export default App;
 

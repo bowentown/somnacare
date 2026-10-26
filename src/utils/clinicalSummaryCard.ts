@@ -122,6 +122,55 @@ function clockOnTimeline(t: string): number {
   return (h < 12 ? h + 24 : h) * 60 + (m % 60);
 }
 
+const fmtAxisClock = (m: number): string => {
+  const v = ((m % 1440) + 1440) % 1440;
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+};
+
+export type AxisTick = { label: string; minute: number };
+export type AxisWindow = { rangeStart: number; rangeMin: number; label: string; ticks: AxisTick[] };
+
+/**
+ * 作息带时间轴窗口（纯函数，第 90 轮 M-1 抽出以便护栏行为验证）。
+ * 自适应窗口：以平均床为轴锚，把每条床/醒映射到锚的连续线性轴（±12h 环归），
+ * 窗 = [最早床-90, 最晚醒+90]，宽度下限 8h 保视觉稳定。
+ * 标题与刻度都由窗口生成——写死 20:00–10:00 会让白天作息时标题骗人、
+ * 且 4/5 个刻度被画到轴外。
+ */
+export function axisWindow(
+  chrono: Array<{ bedtime: string; wakeTime: string }>,
+  avgBedMin: number | null,
+): AxisWindow {
+  const anchor = avgBedMin !== null ? clockOnTimeline(fmtAxisClock(avgBedMin)) : 22 * 60;
+  const onAxis = (v: number): number => {
+    let x = v - anchor;
+    if (x > 720) x -= 1440;
+    if (x < -720) x += 1440;
+    return x;
+  };
+  let lo = Infinity;
+  let hi = -Infinity;
+  chrono.forEach((r) => {
+    const bed = clockOnTimeline(r.bedtime);
+    const wakeRaw = clockOnTimeline(r.wakeTime);
+    const duration = wakeRaw <= bed ? wakeRaw + 1440 - bed : wakeRaw - bed;
+    const bedAxis = onAxis(bed);
+    lo = Math.min(lo, bedAxis);
+    hi = Math.max(hi, bedAxis + duration);
+  });
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi - lo <= 0) {
+    lo = anchor - 5 * 60;
+    hi = anchor + 5 * 60;
+  }
+  const rangeStart = (((anchor + lo - 90) % 1440) + 1440) % 1440;
+  const rangeMin = Math.min(1440, Math.max(8 * 60, hi - lo + 180));
+  const ticks: AxisTick[] = [];
+  for (let m = Math.ceil(rangeStart / 180) * 180; m <= rangeStart + rangeMin; m += 180) {
+    ticks.push({ label: fmtAxisClock(m), minute: m });
+  }
+  return { rangeStart, rangeMin, label: `${fmtAxisClock(rangeStart)} — ${fmtAxisClock(rangeStart + rangeMin)}`, ticks };
+}
+
 function drawFitted(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -333,6 +382,11 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
     chipX += w + 14;
   }
 
+  // 自适应窗口（第 88 轮 D6）：见 axisWindow——窗口/标题/刻度同源生成
+  // （第 90 轮 M-1），避免"窗口自适应但文案刻度写死"的错位。
+  const axis = axisWindow(chrono, avgBed);
+  const { rangeStart, rangeMin } = axis;
+
   // ── 作息带面板 ──
   const panelTop = 638;
   // 面板一直铺到页脚上方：少记录时行距放宽居中，不留下大片空白
@@ -361,7 +415,7 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   const avgLabel = avgBed !== null && avgWakeClock !== null
     ? `  ·  平均 ${fmtClock(avgBed)}–${fmtClock(avgWakeClock)}`
     : '';
-  ctx.fillText(`20:00 — 10:00${avgLabel}`, M + 30, panelTop + 74);
+  ctx.fillText(`${axis.label}${avgLabel}`, M + 30, panelTop + 74);
 
   // 图例
   const legendY = panelTop + 48;
@@ -386,35 +440,6 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   const rowH = Math.min(44, (chartBottom - chartTop) / Math.max(1, chrono.length));
   const rowsH = rowH * chrono.length;
   const plotTop = chartTop + Math.max(0, (chartBottom - chartTop - rowsH) / 2);
-  // 自适应窗口（第 88 轮 D6）：固定 20:00–10:00 把白天作息的睡眠
-  // （如 08:30→16:30）clamp 成 8px 残条。以平均床为轴锚，把每条床/醒
-  // 映射到锚的连续线性轴（±12h 环归），窗 = [最早床-90, 最晚醒+90]，
-  // 宽度下限 8h 保视觉稳定；xOf 的环形取模对锚两侧的钟点天然连续
-  const anchor = avgBed !== null
-    ? clockOnTimeline(`${String(Math.floor(avgBed / 60)).padStart(2, '0')}:${String(avgBed % 60).padStart(2, '0')}`)
-    : 22 * 60;
-  const onAxis = (v: number): number => {
-    let x = v - anchor;
-    if (x > 720) x -= 1440;
-    if (x < -720) x += 1440;
-    return x;
-  };
-  let lo = Infinity;
-  let hi = -Infinity;
-  chrono.forEach((r) => {
-    const bed = clockOnTimeline(r.bedtime);
-    const wakeRaw = clockOnTimeline(r.wakeTime);
-    const duration = wakeRaw <= bed ? wakeRaw + 1440 - bed : wakeRaw - bed;
-    const bedAxis = onAxis(bed);
-    lo = Math.min(lo, bedAxis);
-    hi = Math.max(hi, bedAxis + duration);
-  });
-  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi - lo <= 0) {
-    lo = anchor - 5 * 60;
-    hi = anchor + 5 * 60;
-  }
-  const rangeStart = (((anchor + lo - 90) % 1440) + 1440) % 1440;
-  const rangeMin = Math.min(1440, Math.max(8 * 60, hi - lo + 180));
   const xOf = (minute: number) => {
     const rel = ((minute - rangeStart) % 1440 + 1440) % 1440;
     return axisX0 + (Math.min(rangeMin, rel) / rangeMin) * (axisX1 - axisX0);
@@ -436,13 +461,13 @@ export async function renderClinicalSummary(input: ClinicalSummaryInput): Promis
   }
 
   // 顶部时间刻度 + 纵向网格
-  const ticks: Array<[string, number]> = [
-    ['20:00', 20 * 60], ['23:00', 23 * 60], ['02:00', 26 * 60], ['05:00', 29 * 60], ['08:00', 32 * 60],
-  ];
+  // 顶部时间刻度 + 纵向网格（第 90 轮 M-1：刻度随自适应窗口生成，
+  // 只画落在轴内的刻度；原先写死 20:00–08:00 五个钟点，白天作息时
+  // 4/5 个刻度被画到轴外——负坐标溢出到面板左侧）
   ctx.textAlign = 'center';
   ctx.font = `500 19px ${MONO}`;
-  for (const [label, minute] of ticks) {
-    const x = axisX0 + ((minute - rangeStart) / rangeMin) * (axisX1 - axisX0);
+  for (const { label, minute } of axis.ticks) {
+    const x = xOf(minute);
     ctx.fillStyle = FAINT;
     ctx.fillText(label, x, panelTop + 104);
     ctx.strokeStyle = 'rgba(255,255,255,0.07)';
