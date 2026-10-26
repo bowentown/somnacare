@@ -89,16 +89,52 @@ public class WhaleGirlView extends View {
     private boolean running;
     private boolean resumed;        // 小动作调度是否在跑
 
+    // 内容驱动重绘（第 89 轮，用户实测"刷抖音时桌宠特别卡"的根修）：
+    // 此前恒定 30fps 全窗口重绘，而帧内容实际只有 2–8fps、呼吸位移每帧
+    // 亚像素——在视频应用（抖音等）上方，每次 invalidate 都要让系统重新
+    // 合成悬浮窗图层，与视频解码/合成争 GPU 与带宽。现在只有"画面真的变了"
+    // 才重绘：帧号变化、呼吸/摆动位移 ≥0.5px（不可见阈值）、交叉溶解中、
+    // 拖拽/说话（跟手优先）。轮询本身只是几个算术运算，CPU 可忽略。
+    private int lastDrawnIdx = -1;
+    private float lastDrawnMotion = Float.NaN;
+    private boolean lastDrawnFading = false;
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            invalidate();
-            // A12 功耗优化（第 45 轮）：深夜困倦态降到 ~10fps——角色在睡觉，
-            // 呼吸浮动 ±1.5% 的幅度下 100ms 步进肉眼无感，通宵 8 小时
-            // 省下约 2/3 的全屏重绘（30fps × 8h 是桌宠最大的常驻功耗项）
+            if (shouldRedraw()) invalidate();
+            // A12 功耗优化（第 45 轮）：深夜困倦态降到 ~10fps
             main.postDelayed(this, drowsy > 0.5f ? 100 : TICK_MS);
         }
     };
+
+    /** 摆动/呼吸的位移当量（px）；onDraw 与重绘判定共用同一函数保证一致 */
+    private float motionShiftPx(Anim a, long now, float side) {
+        if (a.wiggleMotion) {
+            // 旋转 3.5° 绕半径 side*0.35 → 弧长当量
+            float t = (now % 1400) / 1400f;
+            return (float) Math.sin(t * Math.PI * 2) * 3.5f * (side * 0.35f) * 0.01745f;
+        }
+        float t = (now % 2600) / 2600f;
+        float amp = a.floatMotion ? 0.045f : 0.015f;
+        return (float) Math.sin(t * Math.PI * 2) * side * amp;
+    }
+
+    private boolean shouldRedraw() {
+        Anim a = current;
+        if (a == null || a.sheet == null || a.sheet.isRecycled()) return false;
+        if (dragging || talking) return true;   // 跟手/说话：保持满节拍
+        long now = System.currentTimeMillis();
+        int idx = frameIndex(a, now - stateSince);
+        long sinceSwap = now - swappedAt;
+        boolean fading = prevAnim != null && prevAnim != a && !prevAnim.sheet.isRecycled()
+                && sinceSwap >= 0 && sinceSwap < FADE_MS;
+        if (idx != lastDrawnIdx || fading != lastDrawnFading) return true;
+        int w = getWidth(), h = getHeight();
+        if (w == 0 || h == 0) return false;
+        float shift = motionShiftPx(a, now, Math.min(w, h) * 0.97f);
+        return Float.isNaN(lastDrawnMotion) || Math.abs(shift - lastDrawnMotion) >= 0.5f;
+    }
 
     private final Runnable ambientTick = new Runnable() {
         @Override public void run() {
@@ -380,10 +416,8 @@ public class WhaleGirlView extends View {
             float t = (now % 1400) / 1400f;
             c.rotate((float) Math.sin(t * Math.PI * 2) * 3.5f, cx, cy + side * 0.35f);
         } else {
-            float t = (now % 2600) / 2600f;
             // think=float 漂得更明显些；其余状态保留 ±1.5% 的呼吸浮动
-            float amp = a.floatMotion ? 0.045f : 0.015f;
-            c.translate(0, (float) Math.sin(t * Math.PI * 2) * side * amp);
+            c.translate(0, motionShiftPx(a, now, side));
         }
         dst.set(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f);
         if (fading) {
@@ -397,6 +431,10 @@ public class WhaleGirlView extends View {
             c.drawBitmap(a.sheet, src, dst, paint);
         }
         c.restore();
+        // 记录本次绘制的状态供 shouldRedraw 比对（内容驱动重绘）
+        lastDrawnIdx = idx;
+        lastDrawnMotion = motionShiftPx(a, now, side);
+        lastDrawnFading = fading;
     }
 
     /** 按播放模式算当前帧号。 */

@@ -1086,17 +1086,15 @@ test('旅程26 池塘逐帧动画：pond-live 下画布持续变化', async ({ p
   await page.clock.install({ time: new Date(new Date().setHours(10, 0, 0, 0)) });
   await page.goto('/?pond-live=1');
   await page.waitForTimeout(2600);
-  // 两次采样画布位图：逐帧动画下必然不同（静帧路径则恒同）
   const canvas = page.locator('canvas').first();
   await expect(canvas).toBeVisible();
-  const snap = () => page.evaluate(() => {
-    const c = document.querySelector('canvas');
-    return c ? (c as HTMLCanvasElement).toDataURL().length : 0;
-  });
-  const a = await snap();
-  await page.waitForTimeout(1200);
-  const b = await snap();
-  expect(a).toBeGreaterThan(1000);          // 画布确实有内容（非空白）
-  expect(b).not.toBe(a);                    // 内容在变化 = 逐帧动画在跑
+  // 逐帧路径的判定信号 = 池塘自身的帧计数在推进（第 89 轮修正：WebGL 画布
+  // 无法像素差分——toDataURL 读空白、getContext('2d') 为 null；?pond-live
+  // 下 bootstrap 暴露 window.__pondFrames）
+  const f0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  await page.waitForTimeout(1500);
+  const f1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  expect(f0).toBeGreaterThan(0);            // 逐帧循环已启动
+  expect(f1 - f0).toBeGreaterThanOrEqual(20);   // 1.5s 内推进 ≥20 帧（30fps 路径）
   expect(errors).toEqual([]);
 });

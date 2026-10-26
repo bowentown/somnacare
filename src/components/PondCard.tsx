@@ -93,6 +93,7 @@ export const PondCard: React.FC<{
         weather: weatherRef.current,
         koiCount: 7,
         staticSteps,
+        forceLive,
       });
     })();
 

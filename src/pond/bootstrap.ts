@@ -43,6 +43,8 @@ export interface PondOptions {
   /** App 主题 → nagomi 天气预设（moon/sunny/sunset/rain） */
   weather: WeatherPresetId;
   koiCount?: number;
+  /** e2e 用（?pond-live）：暴露 window.__pondFrames 供逐帧路径断言 */
+  forceLive?: boolean;
   /**
    * 静帧模式的模拟步数（0/缺省 = 正常逐帧动画）。
    *
@@ -96,6 +98,12 @@ export function createPond(
 
   const animate = (now: number): void => {
     raf = requestAnimationFrame(animate);
+    // 可测试性（第 89 轮）：?pond-live 下暴露帧计数——WebGL 画布无法用
+    // toDataURL/getContext('2d') 做像素差分（e2e 曾因此假绿/假红）
+    if (opts.forceLive) {
+      const w = window as unknown as { __pondFrames?: number };
+      w.__pondFrames = (w.__pondFrames ?? 0) + 1;
+    }
     if (paused) {
       previousTime = now; // 暂停期间不积累时间，恢复时不跳变
       return;
