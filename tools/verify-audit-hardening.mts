@@ -37,7 +37,7 @@ const check = (name: string, ok: boolean, detail = '') => {
 };
 
 // ── 1) "昨晚"新鲜度（逻辑级）──
-const { buildSleepFacts } = await import(new URL('../src/utils/petMoments.ts', import.meta.url).href);
+const { buildSleepFacts } = await import(new URL('../src/utils/sleepFacts.ts', import.meta.url).href);
 const { buildPetSayLines } = await import(new URL('../src/utils/petOverlay.ts', import.meta.url).href);
 const mkRec = (date: string, score = 85) =>
   ({ id: 'r-' + date, date, bedtime: '23:10', wakeTime: '07:10', durationMinutes: 470, deepSleepMinutes: 95, lightSleepMinutes: 300, remSleepMinutes: 75, awakeMinutes: 10, sleepScore: score, sleepEfficiency: 92, latencyMinutes: 10, wakeCount: 1, wakingMood: 'refreshed', preSleepHabits: [] }) as any;

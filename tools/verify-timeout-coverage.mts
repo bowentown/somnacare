@@ -56,7 +56,7 @@ const walk = (d: string): string[] =>
 // ── 不变量 2：AbortController 白名单 + 计数（防换名逃逸）──
 const AC_ALLOW: Record<string, number> = {
   'src/utils/fetchJson.ts': 1,            // fetchJsonWithTimeout 的超时中止
-  'src/utils/petMoments.ts': 1,           // callLlm 25s 保护
+  'src/utils/momentsLlm.ts': 1,           // callLlm 25s 保护（第 95 轮从 petMoments 拆出）
   'src/components/AIAdvicePanel.tsx': 1,  // 端侧模型生成中止（非 fetch 包装）
   'src/components/CustomAISettingsModal.tsx': 1, // 模型下载取消
   'src/utils/localLlmEngine.ts': 1,       // 下载停滞看门狗（45 轮 D4：30s 无数据中止重试）

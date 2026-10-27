@@ -8,7 +8,8 @@
 import { TRIP_ENERGY_TARGET } from '../services/travelService';
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from './recordFilter';
-import { nativePlugin } from './nativeBridge';
+import { buildSleepFacts, fmtDuration } from './sleepFacts';
+import { callLlm, hasLlm, parseJsonLoose, petAnimNow, ANIM_LABEL } from './momentsLlm';
 
 export interface MomentComment {
   friend: string;
@@ -125,170 +126,8 @@ function saveMoments(list: Moment[]): void {
   } catch { /* ignore */ }
 }
 
-function fmtDuration(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
-  return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分`;
-}
-
 function todayStr(now: Date): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function dateKeyOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * 真实事实清单：LLM 只允许引用这里的数字（dsh-plugin-moments 的核心纪律）。
- */
-export function buildSleepFacts(
-  records: SleepRecord[],
-  profile: UserProfile,
-  now: Date = new Date(),
-): string[] {
-  const facts: string[] = [];
-  const bedtime = profile?.targetBedtime ?? '23:30';
-  // "昨晚"= 昨夜归属键（date=昨天）上的夜睡（第 81 轮收紧，与 petContext
-  // 同口径）——此前取"最新一条"，停更几晚后会把几天前的旧记录说成昨晚，
-  // 今晚已补录的记录也会在傍晚被当成"昨晚"引用
-  const yKey = dateKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
-  const nights = nightsOnly(records as SleepRecord[]);
-  const lastNight = nights.find((r) => r.date === yKey) ?? null;
-  const week = nights.slice(0, 7);
-
-  facts.push(`就寝目标 ${bedtime}`);
-  if (lastNight) {
-    facts.push(`昨晚睡眠时长 ${fmtDuration(lastNight.durationMinutes)}`);
-    facts.push(`昨晚睡眠评分 ${lastNight.sleepScore}/100`);
-    facts.push(`入睡效率 ${lastNight.sleepEfficiency}%`);
-    // 推算值必须标注——此前把它当实测值讲，且本地模板据它骂人（第七轮缺陷类复发）
-    facts.push(`入睡耗时 ${fmtDuration(lastNight.latencyMinutes)}${lastNight.latencyEstimated ? '（按作息推算的估计值）' : ''}`);
-    facts.push(`夜醒累计 ${fmtDuration(lastNight.awakeMinutes)}`);
-  } else {
-    facts.push('昨晚没有睡眠记录');
-    if (nights.length) {
-      // 有旧记录时如实说停在哪一晚——比只说"没记录"多给 LLM 一句真话
-      const gap = Math.round((Date.parse(`${yKey}T12:00:00`) - Date.parse(`${nights[0].date}T12:00:00`)) / 86400000);
-      if (gap > 0) facts.push(`最近一次夜睡记录停在 ${gap} 晚前`);
-    }
-  }
-  if (week.length) {
-    const avg = Math.round(week.reduce((a, r) => a + r.sleepScore, 0) / week.length);
-    facts.push(`近 ${week.length} 晚平均 ${avg} 分`);
-  }
-  // 本周达标战报（第 29 轮；第 51 轮适配夜归属）：
-  //   周 = 周一起算；夜按"放下手机那晚"归属本周（夜归属 date=周一晚 = 本周第 1 夜）。
-  //   已度过 = 今天之前本周已过的夜数（周一=0 … 今天不计——今晚尚未发生，
-  //   白天查看不能把今晚报成"未记录"）；x = 有记录的夜数；m = 未记录的夜数。
-  const dowIdx = (now.getDay() + 6) % 7;            // 周一=0 … 周日=6
-  const elapsedSlots = dowIdx;                       // 已度过的夜数（昨晚=最后一块拼图）
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
-  const weekDates = new Set<string>();
-  for (let i = 0; i < elapsedSlots; i++) {
-    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-    weekDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-  }
-  const weekRecs = nightsOnly(records as SleepRecord[]).filter((r) => weekDates.has(r.date));
-  const goodWeek = weekRecs.filter((r) => r.sleepScore >= 80).length;
-  const missed = Math.max(0, elapsedSlots - weekRecs.length);
-  // 没有记录就不生成战报事实：周一的 0/0 + "全部有记录" 是当众撒谎，
-  // 也会让朋友圈配一张只有破折号的怪卡
-  if (elapsedSlots > 0 && weekRecs.length > 0) {
-    facts.push(`本周已过 ${elapsedSlots} 天，达标 ${goodWeek} 天`);
-    facts.push(`本周有记录 ${weekRecs.length} 天，未记录 ${missed} 天`);
-    // 逐夜状态（周一起）：2=达标，1=有记录未达标，0=未记录，-=未来
-    const slots: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      if (i >= elapsedSlots) { slots.push('-'); continue; }
-      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const rec = weekRecs.find((r) => r.date === key);
-      slots.push(!rec ? '0' : rec.sleepScore >= 80 ? '2' : '1');
-    }
-    facts.push(`本周逐夜 ${slots.join('')}`);
-  }
-  return facts;
-}
-
-async function callLlm(cfg: any, system: string, user: string, kind?: string): Promise<string | null> {
-  try {
-    const model = llmModel(cfg);
-    // 25s 超时：此前裸 fetch 挂起会让 busy 永远 true、整个弹窗像坏了
-    const ctrl = new AbortController();
-    const deadline = Date.now() + 25000;
-    const timer = setTimeout(() => ctrl.abort(), 25000);
-    let res: Response;
-    try {
-      res = await fetch(llmEndpoint(cfg), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${cfg.provider === 'custom_openai' ? (cfg.customApiKey ?? '') : (cfg.deepseekApiKey ?? '')}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-          temperature: 1.1,
-          max_tokens: 600,
-          thinking: { type: 'disabled' },   // 朋友圈文案 ≤百字，不需要思考（默认 enabled 按输出计费）
-        }),
-        signal: ctrl.signal,
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      throw e;
-    }
-    if (!res.ok) { clearTimeout(timer); return null; }
-    // body 读取也在 25s 保护内：此前 200 头一到就 clearTimeout，body 卡住曾永久挂起
-    if (Date.now() > deadline) { clearTimeout(timer); return null; }
-    const data = await res.json();
-    clearTimeout(timer);
-    // 用量对账（第 45 轮）：朋友圈/语录各自日刷一次，量小但也要能对上账单——
-    // 与 AIAdvicePanel 的 [llm usage] 同格式，远程调试可直接过滤
-    const u = data.usage;
-    if (u) {
-      const hit = u.prompt_cache_hit_tokens ?? 0;
-      const miss = u.prompt_cache_miss_tokens ?? 0;
-      console.log('[llm usage]', { model: data.model, completion: u.completion_tokens, hit, miss, hitRate: hit + miss > 0 ? (hit / (hit + miss)).toFixed(2) : 'n/a', kind: kind ?? 'moments' });
-    }
-    return data.choices?.[0]?.message?.content ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** 从回复里抠 JSON（容忍 ```json 围栏）。 */
-/** 有可用的云端 LLM：DeepSeek 官方档或自建 OpenAI 兼容档（此前自建档全被当成本地模板用户） */
-function hasLlm(cfg: any): boolean {
-  if (!cfg) return false;
-  if (cfg.provider === 'deepseek' && !!cfg.deepseekApiKey) return true;
-  if (cfg.provider === 'custom_openai' && !!cfg.customApiKey && !!cfg.customBaseUrl) return true;
-  return false;
-}
-
-function llmEndpoint(cfg: any): string {
-  const base = cfg.provider === 'custom_openai' && cfg.customBaseUrl
-    ? String(cfg.customBaseUrl).replace(/\/+$/, '')
-    : 'https://api.deepseek.com';
-  return `${base}/chat/completions`;
-}
-
-function llmModel(cfg: any): string {
-  if (cfg.provider === 'custom_openai') return cfg.customModelName || 'deepseek-chat';
-  return cfg.deepseekModel === 'deepseek-pro' ? 'deepseek-v4-pro' : 'deepseek-flash';
-}
-
-function parseJsonLoose(text: string): any | null {
-  try {
-    const m = text.match(/\{[\s\S]*\}/);
-    return m ? JSON.parse(m[0]) : null;
-  } catch {
-    return null;
-  }
 }
 
 const FRIEND_PERSONAS: Record<string, string> = {
@@ -298,30 +137,6 @@ const FRIEND_PERSONAS: Record<string, string> = {
   被蒸馏的Kimi: '文绉绉的学究气，爱引经据典后再补一刀',
   '意难平的豆包姐姐': '傲娇姐姐，嘴上嫌弃心里关心，句尾爱用"……哼"',
 };
-
-/**
- * 桌宠此刻动作（第 42 轮第一批，行为方案 §4.4 反向通路）：
- * 生成朋友圈前从原生实时读取——她在打盹就别写庆祝，动作与文案不许打架。
- * 直接走桥调用：petOverlay 反向依赖本模块，import 它会成环。
- * 桌宠没开/查询失败返回 null，提示词里就不提这一条。
- */
-const ANIM_LABEL: Record<string, string> = {
-  idle: '待机眨眼', headtilt: '歪头好奇', wait: '原地摇晃', think: '放空中',
-  reading: '看书', tea: '喝茶', pillow: '抱着枕头', eat: '吃东西',
-  play: '玩耍', walk: '散步', working: '假装工作', nap: '打盹',
-  sleep: '睡着了', celebrate: '庆祝中', party: '开派对', joy: '开心',
-  drag: '被拎起来', welcome: '打招呼',
-};
-
-async function petAnimNow(): Promise<string | null> {
-  try {
-    const g = nativePlugin('GemmaLLM');
-    const res = await g?.getPetState?.();
-    return typeof res?.anim === 'string' && res.anim ? res.anim : null;
-  } catch {
-    return null;
-  }
-}
 
 const PERSONA_SYSTEM = `你是 DeepSeek 的"蓝色大肥鱼"（社区共创人设，官方收编的那种）：
 性格：聪明但懒、傲娇嘴甜、笨拙、能吃；把 token 当白饭吃；管用户叫"鱼片"；被说胖会急（"我不是大肥鱼！鲸！鲸！！"）；干活漂亮但能吃饭绝不干活；夜里晕碳犯困。

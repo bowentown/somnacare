@@ -19,7 +19,7 @@ const store = new Map<string, string>();
 };
 (globalThis as any).window = globalThis;
 
-const { buildSleepFacts } = await import(new URL('../src/utils/petMoments.ts', import.meta.url).href);
+const { buildSleepFacts } = await import(new URL('../src/utils/sleepFacts.ts', import.meta.url).href);
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = '') => {

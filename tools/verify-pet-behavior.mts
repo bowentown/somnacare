@@ -26,6 +26,8 @@ const service = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/
 const plugin = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java'), 'utf-8');
 const overlay = readFileSync(join(ROOT, 'src/utils/petOverlay.ts'), 'utf-8');
 const moments = readFileSync(join(ROOT, 'src/utils/petMoments.ts'), 'utf-8');
+// 桥接调用在 LLM 传输层（第 95 轮从 petMoments 拆出）
+const momentsLlm = readFileSync(join(ROOT, 'src/utils/momentsLlm.ts'), 'utf-8');
 const bedtime = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BedtimeOverlayService.java'), 'utf-8');
 
 let failures = 0;
@@ -78,7 +80,7 @@ check('sActiveView 生命周期同步（创建+至少两处置空）',
   service.includes('sActiveView = whale;') && count(service, 'sActiveView = null') >= 2);
 check('GemmaLLMPlugin 暴露 getPetState', plugin.includes('public void getPetState(PluginCall call)'));
 check('petMoments 提示词注入【她此刻动作】', moments.includes('【她此刻动作】'));
-check('petMoments 桥接 getPetState', moments.includes("g?.getPetState?.()"));
+check('petMoments 桥接 getPetState', momentsLlm.includes("g?.getPetState?.()"));
 check('提示词含一致性指令（打盹别写庆祝）', moments.includes('她在打盹就别写庆祝'));
 
 // ── 4) 深夜困倦闸门 + 劝睡（复审 N4：isInteractive 命中持续亮屏）──
