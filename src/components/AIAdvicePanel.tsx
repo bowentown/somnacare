@@ -345,7 +345,7 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
     setAnalysis(null);
   }, [analysisFingerprint]);
 
-  const readAnalysisCache = (): SleepAnalysisResult | null => {
+  const readAnalysisCache = (): { data: SleepAnalysisResult; provider?: string } | null => {
     try {
       const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);
       if (!raw) return null;
@@ -359,7 +359,11 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
         && typeof d.clinicalMetricsAnalysis.deepSleepAssessment === 'string'
         && typeof d.clinicalMetricsAnalysis.efficiencyAssessment === 'string';
       if (parsed?.fp === analysisFingerprint && shapeOk && Date.now() - parsed.at < ANALYSIS_TTL_MS) {
-        return d as SleepAnalysisResult;
+        // 来源标签必须随缓存一起还原（第 97 轮）：只存报告时，重开命中缓存会
+        // 把标签退回【初始值】——服务端降级成规则引擎出的报告会被标成
+        // DeepSeek（反之亦然），正是"来源不诚实"那一类缺陷。旧缓存无该字段
+        // 时留空，调用方保持当前标签不动。
+        return { data: d as SleepAnalysisResult, provider: typeof parsed.provider === 'string' ? parsed.provider : undefined };
       }
     } catch { /* ignore */ }
     return null;
@@ -393,7 +397,8 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
     if (!analysis) {
       const cached = readAnalysisCache();
       if (cached) {
-        setAnalysis(cached);
+        setAnalysis(cached.data);
+        if (cached.provider) setActiveProviderName(cached.provider);
         setIsLoadingAnalysis(false);
         return;
       }
@@ -409,7 +414,7 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
       setAnalysis(data);
       setActiveProviderName(providerName);
       // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
-      try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: requestFp, at: Date.now(), data })); } catch { /* ignore */ }
+      try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: requestFp, at: Date.now(), data, provider: providerName })); } catch { /* ignore */ }
     };
 
     // 直连云端的判定条件与对话路径同构

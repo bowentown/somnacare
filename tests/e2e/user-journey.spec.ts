@@ -1377,3 +1377,70 @@ test('旅程31 无 Key：评估不出网、走服务端且来源标签诚实（�
   await expect(page.getByText(/模型：本地临床规则引擎/)).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程32 缓存命中的来源标签（第 97 轮）：报告缓存此前只存报告、不存来源，
+// 12h 内重开命中缓存时标签会退回【初始值】——有 Key 的用户初始值就是
+// "DeepSeek"，于是一份服务端降级成规则引擎出的报告会被标成 DeepSeek
+// （反向亦然）。这里锁住"来源随报告一起缓存与还原"。
+// ─────────────────────────────────────────────────────────────
+test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初始值）', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  // 配了 Key → 走直连（第 91 轮）。页面【初始】标签只有 "DeepSeek"（无括号），
+  // 直连成功后是 "DeepSeek (deepseek-flash)"——这个差别正好用来验缓存还原。
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 88)], {
+    somnacare_record_date_schema: 'night-v1',
+    somnacare_user_profile: JSON.stringify({
+      name: '缓存用户', age: 30, targetHours: 8,
+      aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-flash' },
+    }),
+  });
+
+  let analysisHits = 0;
+  await page.route('https://api.deepseek.com/**', (route) => {
+    if (!(route.request().postData() || '').includes('睡眠医学与昼夜节律专家顾问')) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '' } }] }) });
+    }
+    analysisHits++;
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        chronotype: '温和中庸型', chronotypeDescription: '稳定。', overallHealthGrade: '良好 A',
+        scoreSummary: '缓存标签测试报告。',
+        clinicalMetricsAnalysis: {
+          durationAssessment: 'a', deepSleepAssessment: 'b', remSleepAssessment: 'c',
+          efficiencyAssessment: 'd', sleepLatencyAssessment: 'e',
+        },
+        identifiedIssues: ['x'], personalizedRecommendations: [], mindsetAffirmation: 'y',
+      }) } }] }),
+    });
+  });
+
+  const openAi = async () => {
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(4200);
+    await navTo(page, 'AI顾问');
+    await page.getByRole('button', { name: /睡眠医学完整评估/ }).click();
+  };
+
+  // 第一次：真直连 → 标签带上模型名（区别于初始值）
+  await openAi();
+  await page.getByRole('button', { name: '生成评估' }).click();
+  await expect(page.getByText(/缓存标签测试报告/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/模型：DeepSeek \(deepseek-flash\)/)).toBeVisible();
+  expect(analysisHits).toBe(1);
+
+  // 第二次：重载后命中 12h 缓存（不再请求）→ 标签必须仍带模型名，
+  // 不能退回初始的 "DeepSeek"（那会把直连结果说成来源不明）
+  await openAi();
+  await page.getByRole('button', { name: '生成评估' }).click();
+  await expect(page.getByText(/缓存标签测试报告/)).toBeVisible({ timeout: 15000 });
+  expect(analysisHits).toBe(1);                                  // 走缓存，没有第二个请求
+  await expect(page.getByText(/模型：DeepSeek \(deepseek-flash\)/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
