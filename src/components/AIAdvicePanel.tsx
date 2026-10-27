@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { SleepRecord, SleepAnalysisResult, ChatMessage, UserProfile } from '../types/sleep';
 import { generateLocalClinicalAnalysis, generateLocalChatReply, classifyIntent, generatePersonalInsights, PersonalInsight } from '../utils/clinicalSleepEngine';
+import { buildAnalysisPrompts } from '../utils/clinicalAnalysisPrompt';
 import {
   getActiveModelLabel,
   generateLocalLlmReply,
@@ -401,7 +402,76 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
     // 请求发出时的数据指纹：等待期间用户新增记录/改目标 → 结果作废，
     // 不能把旧数据算出的报告挂到新数据上（第 54 轮）
     const requestFp = analysisFingerprint;
+
+    // 结果落库的唯一出口：指纹校验 + 写状态 + 来源标签 + 缓存
+    const commit = (data: SleepAnalysisResult, providerName: string) => {
+      if (requestFp !== analysisFingerprintRef.current) return;   // 数据已变：本次结果作废（也不写缓存）
+      setAnalysis(data);
+      setActiveProviderName(providerName);
+      // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
+      try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: requestFp, at: Date.now(), data })); } catch { /* ignore */ }
+    };
+
+    // 直连云端的判定条件与对话路径同构
+    const cfg = userProfile.aiConfig;
+    const isCustom = cfg?.provider === 'custom_openai';
+    const directKey = isCustom ? cfg?.customApiKey : cfg?.deepseekApiKey;
+    const directEndpoint = isCustom
+      ? (cfg?.customBaseUrl ? `${String(cfg.customBaseUrl).replace(/\/+$/, '')}/chat/completions` : null)
+      : 'https://api.deepseek.com/chat/completions';
+
     try {
+      // 0. 直连云端（用户自配 Key）。APK 内没有 server.ts，下面的
+      //    `/api/sleep/analyze` 必然 404，报告此前只能落到本地规则引擎——
+      //    与"三种引擎自由切换"的承诺不符（第 91 轮）
+      if (directKey && directEndpoint) {
+        const modelToUse = isCustom ? (cfg?.customModelName || 'gpt-4o-mini') : (cfg?.deepseekModel || 'deepseek-flash');
+        // 模型名与服务端 normalizeDeepSeekModel 同口径：文档推荐名直发
+        const wireModel = isCustom ? modelToUse : (modelToUse === 'deepseek-pro' ? 'deepseek-v4-pro' : modelToUse);
+        // 提示词与服务端代理共用同一构造器（含 aiConfig 剥离），两条路径口径一致
+        const { systemPrompt, userPrompt } = buildAnalysisPrompts(slimLogsForAI(nightsOnly(records).slice(0, 7)), userProfile);
+        const res = await fetchJsonWithTimeout(directEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${directKey.trim()}`,
+          },
+          body: JSON.stringify({
+            model: wireModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.3,
+            // 成本闸（与服务端一致）：结构化 JSON 提取不需要推理（思考 token 按
+            // 输出价计费）；max_tokens 800——22 字段中文 JSON 实测 ≈500 token
+            ...(isCustom ? {} : { thinking: { type: 'disabled' }, max_tokens: 800 }),
+          }),
+        }, 30000);
+
+        // 云端返回是 OpenAI 包装——报告 JSON 在 choices[0].message.content 里，
+        // 与服务端同口径解包（少这一层会把包装体当成报告，字段全空）
+        const envelope = res.ok
+          ? (res.data as { choices?: Array<{ message?: { content?: string } }>; usage?: Record<string, unknown>; model?: string } | null)
+          : null;
+        // 用量常开：token 数与实际模型是对账单的唯一证据
+        if (envelope?.usage) console.log('[llm usage]', { model: envelope.model, kind: 'analyze', ...envelope.usage });
+        let parsed: SleepAnalysisResult | null = null;
+        const content = envelope?.choices?.[0]?.message?.content?.trim();
+        if (content) {
+          try { parsed = JSON.parse(content) as SleepAnalysisResult; } catch { parsed = null; }
+        }
+        if (parsed?.chronotype) {
+          commit(parsed, isCustom ? `自建 API (${modelToUse})` : `DeepSeek (${modelToUse})`);
+          return;
+        }
+        // 直连已尝试就不再用另一套 prompt 打服务端代理——两条路径的前缀毫无
+        // 重叠，必然双份 cache miss（与对话路径同口径），交给外层走本地规则
+        throw new Error('direct LLM failed');
+      }
+
+      // 1. 服务端代理（web 部署；APK 内无此路由 → 落到 catch 走本地规则）
       // fetchJsonWithTimeout：body 读取也在超时保护内（此前只保护到响应头，
       // 移动网络中途卡住时 json() 永不 settle → 转圈永不停止）
       const response = await fetchJsonWithTimeout('/api/sleep/analyze', {
@@ -418,21 +488,17 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
         throw new Error('API unavailable');
       }
 
-      const data = response.data;
-      if (requestFp !== analysisFingerprintRef.current) {
-        // 数据已变化：本次结果作废（也不写缓存）
-        return;
-      }
-      setAnalysis(data);
       // 来源标签跟着服务端实际引擎走（第 51 轮审计）：无上游 key 时服务端
       // 返回规则兜底，不能让用户误以为在读 DeepSeek/Gemini
-      const engine = (data as { engine?: string }).engine;
-      if (engine === 'rules') setActiveProviderName('本地临床规则引擎');
-      else if (engine === 'gemini') setActiveProviderName('Gemini');
-      else if (engine === 'deepseek') setActiveProviderName('DeepSeek');
-      else if (engine === 'custom') setActiveProviderName('自建 API');
-      // 只缓存云端结果：本地兜底是确定性推导，随时可重算，占缓存无意义
-      try { localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify({ fp: analysisFingerprint, at: Date.now(), data })); } catch { /* ignore */ }
+      const engine = (response.data as { engine?: string }).engine;
+      commit(
+        response.data,
+        engine === 'rules' ? '本地临床规则引擎'
+          : engine === 'gemini' ? 'Gemini'
+          : engine === 'deepseek' ? 'DeepSeek'
+          : engine === 'custom' ? '自建 API'
+          : activeProviderName,
+      );
     } catch (_err: any) {
       if (requestFp !== analysisFingerprintRef.current) return;
       // 与云端路径同口径：只喂近 7 晚夜睡（旧实现喂全量含小睡，云/本地两份评估口径不一致）

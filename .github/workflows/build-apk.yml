@@ -81,6 +81,11 @@ jobs:
             git checkout -- plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json || true
           fi
 
+      # 第 91 轮：类型检查此前不在 CI 里——vite build 走 esbuild 只剥类型不查
+      # 类型，TS 错误会一路走到 gradle 才炸（且报错点远离源头）。放在构建前，
+      # 失败即停，省掉后面全部步骤。
+      - name: Type check (tsc --noEmit)
+        run: npm run lint
       - name: Run Guardrails (wiring / theme / contrast)
         run: npm run verify
       - name: Build Local Offline Dist

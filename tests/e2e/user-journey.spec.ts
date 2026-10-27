@@ -1254,3 +1254,126 @@ test('旅程29 全量备份恢复：schema2 导入真正落盘（行为覆盖）
   expect(after.profile.name).toBe('备份恢复者');
   expect(errors).toEqual([]);
 });
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程30 评估报告直连云端（第 91 轮）：APK 内没有 server.ts，唯一路径
+// `POST /api/sleep/analyze` 必然 404 → 报告此前永远退化成本地规则引擎，
+// 与 README"三种引擎自由切换"的承诺不符。这里断言自配 Key 时请求真的
+// 打到 api.deepseek.com（短路直连分支即红），且提示词走共用构造器、密钥不进请求体。
+// ─────────────────────────────────────────────────────────────
+test('旅程30 评估报告直连云端：自配 Key 时真打 DeepSeek（不再永远退化本地规则）', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 88)], {
+    somnacare_record_date_schema: 'night-v1',
+    somnacare_user_profile: JSON.stringify({
+      name: '评估者', age: 32, targetHours: 8,
+      aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-pro' },
+    }),
+  });
+
+  let analysisHit = 0;
+  let sentBody: any = null;
+  await page.route('https://api.deepseek.com/**', (route) => {
+    if (!(route.request().postData() || '').includes('睡眠医学与昼夜节律专家顾问')) {
+      // 非评估请求（桌宠/朋友圈）：本用例不关心，给空内容让它走本地兜底
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '' } }] }) });
+    }
+    analysisHit++;
+    sentBody = route.request().postDataJSON();
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        chronotype: '温和中庸型',
+        chronotypeDescription: '节律稳定，无需大改。',
+        overallHealthGrade: '良好 A',
+        scoreSummary: '整体稳定，继续维持。',
+        clinicalMetricsAnalysis: {
+          durationAssessment: '时长达标。', deepSleepAssessment: '深睡在参考区间。',
+          remSleepAssessment: 'REM 正常。', efficiencyAssessment: '效率良好。',
+          sleepLatencyAssessment: '潜伏期正常。',
+        },
+        identifiedIssues: ['睡前屏幕偏多'],
+        personalizedRecommendations: [{ timeWindow: '睡前减速期', action: '提前放下手机', detail: '睡前 30 分钟离屏。', impact: '缩短入睡潜伏期' }],
+        mindsetAffirmation: '今晚也好好睡。',
+      }) } }], usage: { prompt_tokens: 900, completion_tokens: 300 } }),
+    });
+  });
+
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  await navTo(page, 'AI顾问');
+  await page.getByRole('button', { name: /睡眠医学完整评估/ }).click();
+  await page.getByRole('button', { name: '生成评估' }).click();
+
+  // 报告真的产出（按钮文案只有 analysis 落定后才变"刷新评估"）
+  await expect(page.getByRole('button', { name: '刷新评估' })).toBeVisible({ timeout: 15000 });
+  expect(analysisHit).toBe(1);
+  // 直连分支真的跑了：来源标签带模型名（初始标签只有"DeepSeek"，无括号）
+  await expect(page.getByText(/模型：DeepSeek \(deepseek-pro\)/)).toBeVisible();
+  // 模型名与服务端 normalizeDeepSeekModel 同口径（文档推荐名直发）
+  expect(sentBody?.model).toBe('deepseek-v4-pro');
+  // 提示词走共用构造器（system 段是评估契约）
+  expect(String(sentBody?.messages?.[0]?.content)).toContain('睡眠医学与昼夜节律专家顾问');
+  expect(sentBody?.response_format?.type).toBe('json_object');
+  // 隐私口径（第 33 轮）：密钥绝不进请求体
+  expect(JSON.stringify(sentBody)).not.toContain('sk-test');
+  await expect(page.getByText(/整体稳定，继续维持/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// 旅程31 无 Key 不出网（第 91 轮）：离线优先的边界——只有"用户自配的云端
+// AI"才允许出网。无 Key 时必须走服务端/本地规则，且来源标签诚实（不能把
+// 规则引擎输出标成 DeepSeek）。
+// ─────────────────────────────────────────────────────────────
+test('旅程31 无 Key：评估不出网、走服务端且来源标签诚实（离线优先边界）', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 88)], {
+    somnacare_record_date_schema: 'night-v1',
+    somnacare_user_profile: JSON.stringify({ name: '无钥者', age: 30, targetHours: 8 }),
+  });
+
+  let cloudHits = 0;
+  let serverHits = 0;
+  await page.route('https://api.deepseek.com/**', (route) => { cloudHits++; return route.abort(); });
+  await page.route('**/api/sleep/analyze', (route) => {
+    serverHits++;
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        chronotype: '早起云雀型', chronotypeDescription: '早睡早起。', overallHealthGrade: '良好 A',
+        scoreSummary: '服务端规则引擎出的报告。',
+        clinicalMetricsAnalysis: {
+          durationAssessment: 'a', deepSleepAssessment: 'b', remSleepAssessment: 'c',
+          efficiencyAssessment: 'd', sleepLatencyAssessment: 'e',
+        },
+        identifiedIssues: ['x'], personalizedRecommendations: [], mindsetAffirmation: 'y',
+        engine: 'rules',
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  await navTo(page, 'AI顾问');
+  await page.getByRole('button', { name: /睡眠医学完整评估/ }).click();
+  await page.getByRole('button', { name: '生成评估' }).click();
+
+  await expect(page.getByRole('button', { name: '刷新评估' })).toBeVisible({ timeout: 15000 });
+  expect(cloudHits).toBe(0);                       // 未配置 Key 绝不发起云端请求
+  expect(serverHits).toBe(1);                      // 走的是服务端代理
+  await expect(page.getByText(/服务端规则引擎出的报告/)).toBeVisible();
+  // engine:'rules' → 标签诚实（不能显示成 DeepSeek）
+  await expect(page.getByText(/模型：本地临床规则引擎/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
