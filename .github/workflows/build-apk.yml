@@ -88,6 +88,11 @@ jobs:
         run: npm run lint
       - name: Run Guardrails (wiring / theme / contrast)
         run: npm run verify
+      # 第 92 轮：变异测试——把已知坏实现注入源码，对应护栏必须报红。
+      # 这是"护栏真的在守"的唯一证据（护栏自己全绿说明不了什么）。
+      # 放在 verify 之后：先确认基线全绿，再验证这份绿是有意义的。
+      - name: Mutation-test the guardrails
+        run: npm run mutate
       - name: Build Local Offline Dist
         run: |
           npm run build

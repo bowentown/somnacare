@@ -11,7 +11,8 @@
 npm install --legacy-peer-deps      # 必须带此 flag（React 19 的 peer 冲突）；CI 用 npm ci --legacy-peer-deps
 npm run dev                         # tsx server.ts → http://localhost:3000（Express + Vite 中间件）
 npm run lint                        # tsc --noEmit —— 已在 CI 里（第 91 轮起），改动后本地先跑
-npm run verify                      # 40 条静态护栏（tsx tools/verify-*.mts）
+npm run verify                      # 41 条静态护栏（tsx tools/verify-*.mts）
+npm run mutate                      # 变异测试：注入已知坏实现，对应护栏必须报红
 npm run build                       # vite build → dist/
 npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名（★ 必须先 build）
 npx playwright test                 # 60 条浏览器 e2e（自动拉起 :3000 的 dev server）
@@ -30,7 +31,7 @@ npx playwright test                 # 60 条浏览器 e2e（自动拉起 :3000 �
 | `server.ts` | 开发/部署用的 Express 服务：静态托管 + `/api/sleep/analyze`、`/api/sleep/chat` 代理（限流 + 可选 Bearer 鉴权）。**与 APK 运行时无关**（离线应用不依赖它） |
 | `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
-| `tools/` | `verify-*.mts` 护栏（40 条）、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
+| `tools/` | `verify-*.mts` 护栏（41 条）、`mutate-guards.mts` 变异测试、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
 | `tests/e2e/` | Playwright：`smoke` / `app` / `proposal` / `moments` / `user-journey` |
 | `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（wav）、通知小图标 |
 | `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK；打 `v*` tag 自动发 Release |
@@ -62,7 +63,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
 
 ## ★ 护栏文化（本项目最重要的约定）
 
-40 条护栏在 `tools/verify-*.mts`，通过 `package.json` 的 `scripts.verify` / `verify:css` 串联：
+41 条护栏在 `tools/verify-*.mts`，通过 `package.json` 的 `scripts.verify` / `verify:css` 串联：
 
 1. **新护栏必须接线**。`verify-guards-wired.mts` 是元护栏：扫描 `tools/verify-*.mts` 并断言每个都被
    `verify`/`verify:css` 链引用——写了护栏忘接线，它就在这里红。同一护栏还**禁止链上出现吞错旁路**
@@ -73,6 +74,9 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
    假信心（`if (false) void foo()`、三目短路、整行注释掉都能绕过）。给功能链路加保护时，
    优先在 `tests/e2e/` 写行为用例（真点击、真调桥、真落盘），文本检查只作最弱一档并在注释里说明。
 4. 不要为了让改动通过而放宽护栏；也不要删掉报红的断言——先判断是代码错还是断言错（两者都发生过）。
+5. **护栏全绿不等于护栏在守**。`npm run mutate`（`tools/mutate-guards.mts`）把历史上
+   【手工】做过的变异测试固化成可重复断言：向源码注入已知坏实现，对应护栏必须报红。
+   给关键链路加护栏时，顺手往变异表里加一条——变异表锚点失效（源码漂移）也会报红。
 
 ## 领域规则（最容易改错的地方）
 
