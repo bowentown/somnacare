@@ -6,7 +6,7 @@
  *
  * 隐私：服务只匹配「跳过」类文字，不读取输入内容、不截图、不联网。
  */
-import { isNativePlatform } from './nativeAlarmScheduler';
+import { nativePlugin } from './nativeBridge';
 
 export interface AdSkipStatus {
   enabled: boolean;
@@ -19,12 +19,7 @@ export interface AdSkipStatus {
 const EMPTY: AdSkipStatus = { enabled: false, serviceEnabled: false, hits: 0, diag: [] };
 
 function plugin(): any {
-  if (!isNativePlatform()) return null;
-  try {
-    return (window as any).Capacitor?.Plugins?.GemmaLLM ?? null;
-  } catch {
-    return null;
-  }
+  return nativePlugin('GemmaLLM');
 }
 
 function parseStatus(res: any): AdSkipStatus {
@@ -200,7 +195,7 @@ export async function requestBatteryOptimizationExemption(): Promise<boolean | n
   if (!pl?.batteryOptimizationRequest) {
     // 旧 APK 没有新方法：退回原有的电池优化列表入口，状态未知
     try {
-      await (window as any).Capacitor?.Plugins?.GemmaLLM?.openBatteryOptimizationSettings?.();
+      await nativePlugin('GemmaLLM')?.openBatteryOptimizationSettings?.();
     } catch {
       /* ignore */
     }

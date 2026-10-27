@@ -14,7 +14,8 @@
  * `@capacitor/local-notifications` 会拉起 @capacitor/core 的 web 运行时，
  * 把 e2e/网页预览的 isNativePlatform 改写掉（第 52 轮踩过的坑）。
  */
-import { isNativePlatform, PROPOSAL_NOTIFICATION_MIN_ID } from './nativeAlarmScheduler';
+import { PROPOSAL_NOTIFICATION_MIN_ID } from './nativeAlarmScheduler';
+import { nativePlugin } from './nativeBridge';
 
 const NOTIFIED_KEY = 'somnacare_proposal_notified';
 const ACTION_KEY = 'somnacare_proposal_action';
@@ -35,12 +36,7 @@ let listenerReady = false;
 let channelReady = false;
 
 function plugin(): any {
-  if (!isNativePlatform()) return null;
-  try {
-    return (window as any).Capacitor?.Plugins?.LocalNotifications ?? null;
-  } catch {
-    return null;
-  }
+  return nativePlugin('LocalNotifications');
 }
 
 function idOf(date: string): number {
@@ -93,9 +89,8 @@ export function subscribeProposalAction(fn: Subscriber): () => void {
 
 /** 冷启动：直接从 Activity 启动 Intent 读取通知动作（插件事件会丢的场景）。 */
 async function readLaunchAction(): Promise<ProposalAction | null> {
-  if (!isNativePlatform()) return null;
   try {
-    const res = await (window as any).Capacitor?.Plugins?.GemmaLLM?.proposalNotificationAction?.();
+    const res = await nativePlugin('GemmaLLM')?.proposalNotificationAction?.();
     if (res?.date && (res.actionId === 'confirm' || res.actionId === 'edit')) {
       return { type: res.actionId, date: res.date, at: Date.now() };
     }

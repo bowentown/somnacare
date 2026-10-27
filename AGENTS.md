@@ -11,7 +11,7 @@
 npm install --legacy-peer-deps      # 必须带此 flag（React 19 的 peer 冲突）；CI 用 npm ci --legacy-peer-deps
 npm run dev                         # tsx server.ts → http://localhost:3000（Express + Vite 中间件）
 npm run lint                        # tsc --noEmit —— 已在 CI 里（第 91 轮起），改动后本地先跑
-npm run verify                      # 41 条静态护栏（tsx tools/verify-*.mts）
+npm run verify                      # 42 条静态护栏（tsx tools/verify-*.mts）
 npm run mutate                      # 变异测试：注入已知坏实现，对应护栏必须报红
 npm run build                       # vite build → dist/
 npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名（★ 必须先 build）
@@ -33,7 +33,7 @@ npx playwright test                 # 60 条浏览器 e2e（自动拉起 :3000 �
 | `server.ts` | 开发/部署用的 Express 服务：静态托管 + `/api/sleep/analyze`、`/api/sleep/chat` 代理（限流 + 可选 Bearer 鉴权）。**与 APK 运行时无关**（离线应用不依赖它） |
 | `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
-| `tools/` | `verify-*.mts` 护栏（41 条）、`mutate-guards.mts` 变异测试、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
+| `tools/` | `verify-*.mts` 护栏（42 条）、`mutate-guards.mts` 变异测试、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
 | `tests/e2e/` | Playwright：`smoke` / `app` / `proposal` / `moments` / `user-journey` |
 | `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（wav）、通知小图标 |
 | `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK；打 `v*` tag 自动发 Release |
@@ -65,7 +65,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
 
 ## ★ 护栏文化（本项目最重要的约定）
 
-41 条护栏在 `tools/verify-*.mts`，通过 `package.json` 的 `scripts.verify` / `verify:css` 串联：
+42 条护栏在 `tools/verify-*.mts`，通过 `package.json` 的 `scripts.verify` / `verify:css` 串联：
 
 1. **新护栏必须接线**。`verify-guards-wired.mts` 是元护栏：扫描 `tools/verify-*.mts` 并断言每个都被
    `verify`/`verify:css` 链引用——写了护栏忘接线，它就在这里红。同一护栏还**禁止链上出现吞错旁路**
@@ -110,6 +110,10 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   **`window.CapacitorCustomPlatform`**（`window.Capacitor` 的**兄弟**属性），不是嵌套属性。
   塞进 `window.Capacitor` 里 → `isNativePlatform()` 恒 `false` → 依赖 `native` 的分支不渲染。
   正确写法：`(window as any).CapacitorCustomPlatform = { name: 'android' };`（可再加 `window.androidBridge = {}`）。
+- **原生桥访问一律走 `src/utils/nativeBridge.ts`**（第 94 轮收敛，`verify-native-bridge` 钉住）：
+  `isNativePlatform()` 判平台、`nativePlugin('GemmaLLM' | 'UsageSignal' | 'Filesystem' | ...)`
+  取插件（非原生平台一律返回 `null`）。业务代码里**不要**手写 `window.Capacitor?.Plugins`——
+  那正是此前 20 处重复踩坑的来源（含"web 端漏出原生插件"这类静默失效）。
 - **点击前要等吸附动画**：底栏切换用指数缓出（前 100ms 走完约 80%），Playwright 的两帧稳定判定会在
   动画尾段提前放行，紧跟的点击会落到隔壁控件上**静默失效**。用 `navTo` 助手（点按 + 380ms 落定）。
 - **不要对 `innerText` 做跨行断言**：折行在 CI（Linux 字体）与本地不一致，`/23:30 放下/` 会翻转。

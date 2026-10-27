@@ -11,7 +11,7 @@
  * 不得声称对睡眠本身进行了监测（行为性 ≠ 生理性，禁语见 verify-no-claims）。
  */
 import { clockMinutes, circularDev, deviationToScore } from './clockMath';
-import { isNativePlatform } from './nativeAlarmScheduler';
+import { nativePlugin } from './nativeBridge';
 
 export interface UsageDay {
   date: string;       // 该夜"日期"（跨午夜归前一天）
@@ -39,12 +39,7 @@ export function getLastUsageQueryState(): { error: string | null; okAt: number }
 }
 
 function usage(): any {
-  if (!isNativePlatform()) return null;
-  try {
-    return (window as any).Capacitor?.Plugins?.UsageSignal ?? null;
-  } catch {
-    return null;
-  }
+  return nativePlugin('UsageSignal');
 }
 
 export async function usageHasPermission(): Promise<boolean> {

@@ -10,7 +10,7 @@
 
 [![Build APK](https://github.com/bowentown/somnacare/actions/workflows/build-apk.yml/badge.svg)](../../actions/workflows/build-apk.yml)
 [![Release](https://img.shields.io/badge/下载-最新%20Release-blue)](../../releases/latest)
-[![Guardrails](https://img.shields.io/badge/护栏-41%20条%20·%20580%2B%20断言-green)](#-质量与验证)
+[![Guardrails](https://img.shields.io/badge/护栏-42%20条%20·%20580%2B%20断言-green)](#-质量与验证)
 
 <img src="docs/screenshots/sleep-tab.png" width="180" />&nbsp;<img src="docs/screenshots/trends-tab.png" width="180" />&nbsp;<img src="docs/screenshots/ai-tab.png" width="180" />&nbsp;<img src="docs/screenshots/eyecare-tab.png" width="180" />&nbsp;<img src="docs/screenshots/sound-mixer.png" width="180" />
 
@@ -208,7 +208,7 @@ npm run dev          # http://localhost:3000
 
 这个项目把"验证体系"当作与功能同等重要的部分来建设：
 
-- **41 条静态护栏（580+ 项断言）**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
+- **42 条静态护栏（580+ 项断言）**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
 - **60 条 Playwright e2e**：五分区渲染、自动提议全链路（含 LLM 端点 mock 的"编数字拒收"）、授权即时生效、备份往返、主题持久、全分区漫游零未捕获异常看门狗；
 - **变异测试方法论**：对护栏本身做变异测试（破坏代码看护栏会不会红），按结果把"验字符串"升级为"验代码形态与调用点"；
 - **服务端冒烟**：鉴权结构不变量、fail-open 部署折中的可发现性锁、兜底回复数据完整性。
@@ -225,7 +225,7 @@ somnacare/
 ├── plugins/cap-gemma-llm/ # 本地插件（MediaPipe Gemma、护眼服务、到点提醒、
 │   │                      # 桌宠行为系统、图标切换）
 ├── plugins/cap-usage-signal/ # 使用行为信号（亮屏事件聚合，自动提议数据源）
-├── tools/                 # 图标/启动屏生成器、GKD 规则导入/刷新、41 条静态护栏
+├── tools/                 # 图标/启动屏生成器、GKD 规则导入/刷新、42 条静态护栏
 ├── native-resources/      # 全密度图标、四主题图标、自适应前景、铃声
 ├── docs/screenshots/      # README 截图
 ├── tests/e2e/             # Playwright：smoke / 提议链路 / 全应用流程 / 朋友圈
@@ -238,7 +238,7 @@ somnacare/
 npm install --legacy-peer-deps
 npm run dev          # http://localhost:3000
 
-npm run verify       # 41 条静态护栏（580+ 断言，关键护栏带反向自检）
+npm run verify       # 42 条静态护栏（580+ 断言，关键护栏带反向自检）
 npm run build        # Web 产物（PWA 可直接部署 dist/）
 npx playwright test  # 60 条浏览器 e2e
 

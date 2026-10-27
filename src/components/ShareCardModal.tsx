@@ -8,6 +8,7 @@ import { renderWeeklyCard } from '../utils/sleepShareCard';
 import { useModalA11y } from '../utils/modalA11y';
 import { setPetOverlayVisible } from '../utils/petOverlay';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
+import { nativePlugin } from '../utils/nativeBridge';
 
 interface Props {
   open: boolean;
@@ -73,15 +74,14 @@ export const ShareCardModal: React.FC<Props> = ({ open, onClose, records, theme 
       const out = await renderWeeklyCard({
         records, accentHex: theme.accentHex, pageBgHex, showRegularity, showDuration,
       });
-      const cap = (window as any).Capacitor;
-      if (cap?.isNativePlatform?.()) {
-        const pl = cap.Plugins;
+      const fs = nativePlugin('Filesystem');
+      if (fs) {
         const b64 = out.dataUrl.split(',')[1];
         const name = `somnacare-week-card-${Date.now()}.jpg`;
-        const res = await pl?.Filesystem?.writeFile({
+        const res = await fs.writeFile({
           path: name, data: b64, directory: 'DOCUMENTS', recursive: true,
         });
-        await pl?.Share?.share({ title: '我的每周睡眠卡', url: res.uri, dialogTitle: '分享睡眠卡' });
+        await nativePlugin('Share')?.share({ title: '我的每周睡眠卡', url: res.uri, dialogTitle: '分享睡眠卡' });
       } else {
         const url = URL.createObjectURL(out.blob);
         const a = document.createElement('a');

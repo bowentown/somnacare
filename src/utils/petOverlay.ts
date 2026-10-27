@@ -10,16 +10,11 @@
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { petContext } from './petContext';
 import { generatePetSayLinesLlm, getCachedLlmSay, petSayFingerprint } from './petMoments';
+import { nativePlugin } from './nativeBridge';
 export { getCachedLlmSay };
 
-function gemma(): any | null {
-  try {
-    const cap = (window as any).Capacitor;
-    return cap?.isNativePlatform?.() ? (cap.Plugins?.GemmaLLM ?? null) : null;
-  } catch {
-    return null;
-  }
-}
+/** 桌宠原生插件（统一走 nativeBridge，第 94 轮） */
+const gemma = (): any | null => nativePlugin('GemmaLLM');
 
 export const isPetNative = (): boolean => gemma() != null;
 

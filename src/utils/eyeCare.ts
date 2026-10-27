@@ -3,15 +3,10 @@
  * 参考"夜间护眼"类应用的核心机制：SYSTEM_ALERT_WINDOW 色层 + 前台服务常驻。
  */
 import { EyeCareConfig } from '../types/sleep';
+import { nativePlugin } from './nativeBridge';
 
-function gemma(): any | null {
-  try {
-    const cap = (window as any).Capacitor;
-    return cap?.isNativePlatform?.() ? (cap.Plugins?.GemmaLLM ?? null) : null;
-  } catch {
-    return null;
-  }
-}
+/** 护眼滤镜原生插件（统一走 nativeBridge，第 94 轮） */
+const gemma = (): any | null => nativePlugin('GemmaLLM');
 
 export const isEyeCareNative = (): boolean => gemma() != null;
 

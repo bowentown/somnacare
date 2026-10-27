@@ -26,6 +26,7 @@ import {
   syncAlarmsToNative,
   type ExactAlarmStatus,
 } from '../utils/nativeAlarmScheduler';
+import { nativePlugin } from '../utils/nativeBridge';
 
 interface AlarmManagerProps {
   alarms: CustomAlarmSetting[];
@@ -280,7 +281,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                 type="button"
                 onClick={() => {
                   tapTick();
-                  void (window as any).Capacitor?.Plugins?.GemmaLLM?.openBatteryOptimizationSettings?.();
+                  void nativePlugin('GemmaLLM')?.openBatteryOptimizationSettings?.();
                 }}
                 className="text-[10px] font-bold text-sky-300 underline underline-offset-2 cursor-pointer whitespace-nowrap"
               >

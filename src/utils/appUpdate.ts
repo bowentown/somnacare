@@ -8,7 +8,7 @@
  *    包名 / 版本号 / 签名证书 /（可选）SHA-256，任何一项不符都拒绝调起安装器；
  *  - Web/PWA 只展示 Release 信息，不提供 APK 安装入口。
  */
-import { isNativePlatform } from './nativeAlarmScheduler';
+import { nativePlugin } from './nativeBridge';
 
 export const UPDATE_REPO = 'bowentown/somnacare';
 export const RELEASES_API = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
@@ -63,12 +63,7 @@ export interface DownloadStatus {
 }
 
 function plugin(): any {
-  if (!isNativePlatform()) return null;
-  try {
-    return (window as any).Capacitor?.Plugins?.GemmaLLM ?? null;
-  } catch {
-    return null;
-  }
+  return nativePlugin('GemmaLLM');
 }
 
 function toInt(value: unknown): number {

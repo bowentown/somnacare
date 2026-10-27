@@ -19,6 +19,7 @@ import { SoundscapePlayer } from './SoundscapePlayer';
 import { Music2 } from 'lucide-react';
 import { ThemeConfig } from '../utils/themeStyles';
 import { isNativePlatform, requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
+import { nativePlugin } from '../utils/nativeBridge';
 import { queryWindDownApps, type WindDownResult } from '../utils/usageSignal';
 import { localDateOffset } from '../utils/dateUtils';
 import { getDayPhase } from '../utils/dayPhase';
@@ -501,8 +502,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
                 // 打开即检查两条投递路径的权限：通知（兜底路径）+ 悬浮窗（主路径）
                 void requestAlarmPermissions();
                 try {
-                  const cap = (window as any).Capacitor;
-                  const plugin = cap?.isNativePlatform?.() ? cap.Plugins?.GemmaLLM : null;
+                  const plugin = nativePlugin('GemmaLLM');
                   if (plugin?.bedtimePermission) {
                     void plugin.bedtimePermission().then((res: any) => setBedtimePerm(!!res?.granted));
                   }
@@ -561,9 +561,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               try {
-                const cap = (window as any).Capacitor;
-                const plugin = cap?.isNativePlatform?.() ? cap.Plugins?.GemmaLLM : null;
-                void plugin?.bedtimeOpenPermission?.();
+                void nativePlugin('GemmaLLM')?.bedtimeOpenPermission?.();
               } catch { /* ignore */ }
             }}
             className="w-full mt-2.5 py-2.5 rounded-xl bg-orange-500/20 border border-orange-400 text-orange-200 text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform"

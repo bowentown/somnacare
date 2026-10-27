@@ -31,6 +31,7 @@ import { unlockProposal } from '../utils/proposalUnlock';
 import { petSayFingerprint } from '../utils/petMoments';
 import { getLastResume } from '../utils/appResume';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
+import { nativePlugin } from '../utils/nativeBridge';
 import {
   getAdSkipStatus,
   getShizukuStatus,
@@ -53,10 +54,8 @@ import { tapTick } from '../utils/haptics';
 // 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过）
 function switchLauncherIcon(themeId: string) {
   try {
-    const cap = (window as any).Capacitor;
-    if (cap?.isNativePlatform?.() && cap.Plugins?.GemmaLLM) {
-      cap.Plugins.GemmaLLM.setLauncherIcon({ theme: themeId });
-    }
+    const g = nativePlugin('GemmaLLM');
+    if (g) g.setLauncherIcon({ theme: themeId });
   } catch {
     // 图标切换失败不影响主题应用
   }
@@ -464,10 +463,9 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
     // 点了重置后记录就真丢了。原生改走 Filesystem 落盘 + 系统分享面板，
     // 并且必须给成功/失败反馈
     try {
-      const cap = (window as any).Capacitor;
-      if (cap?.isNativePlatform?.()) {
-        const pl = cap.Plugins;
-        const res = await pl?.Filesystem?.writeFile({
+      const fs = nativePlugin('Filesystem');
+      if (fs) {
+        const res = await fs.writeFile({
           path: name,
           data,
           directory: 'DOCUMENTS',
@@ -478,7 +476,7 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
         markBackedUp();
         alert(`备份已生成：${name}\n即将打开分享面板，请选择"保存到文件"或网盘完成导出。`);
         try {
-          await pl?.Share?.share({ title: '睡眠数据备份', url: res.uri, dialogTitle: '分享睡眠备份' });
+          await nativePlugin('Share')?.share({ title: '睡眠数据备份', url: res.uri, dialogTitle: '分享睡眠备份' });
         } catch { /* 用户取消分享不算失败，文件已生成 */ }
         return;
       }

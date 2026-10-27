@@ -57,9 +57,11 @@ const MUTATIONS: Mutation[] = [
   {
     file: 'README.md',
     guard: 'verify-doc-counts.mts',
-    find: '护栏-41%20条',
-    replace: '护栏-99%20条',
-    note: 'README 数字漂移（第 91 轮实测：徽章 37 / 正文 38 / 实际 40）',
+    // 锚点刻意不写具体数字（写死会在每次护栏条数变化时失效）：这里测
+    // "徽章声明整体消失"这条路，数字改错由护栏自己的反向自检覆盖。
+    find: 'badge/护栏-',
+    replace: 'badge/guardrails-',
+    note: 'README 徽章的护栏条数声明消失（数字改错由护栏内自检覆盖）',
   },
   {
     file: 'src/utils/sleepShareCard.ts',
@@ -70,6 +72,20 @@ const MUTATIONS: Mutation[] = [
     find: "  ctx.shadowColor = 'rgba(0,0,0,0.55)';",
     replace: "  ctx.fillText(['23', '47'].join(':'), 10, 10);\n  ctx.shadowColor = 'rgba(0,0,0,0.55)';",
     note: '成品图上画钟点（源码无禁字段名 → 只有行为层抓得住）',
+  },
+  {
+    file: 'src/utils/nativeBridge.ts',
+    guard: 'verify-native-bridge.mts',
+    find: '  if (!isNativePlatform()) return null;',
+    replace: '  // mutated: 平台闸门被移除',
+    note: 'nativePlugin 不判平台 → web 端漏出原生插件（行为层应报红）',
+  },
+  {
+    file: 'src/utils/eyeCare.ts',
+    guard: 'verify-native-bridge.mts',
+    find: "const gemma = (): any | null => nativePlugin('GemmaLLM');",
+    replace: "const gemma = (): any | null => ((window as any).Capacitor?.Plugins?.GemmaLLM ?? null);",
+    note: '退回手写桥访问（绕过唯一入口 → 结构层应报红）',
   },
 ];
 

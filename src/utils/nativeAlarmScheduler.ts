@@ -1,4 +1,10 @@
 import { CustomAlarmSetting } from '../types/sleep';
+import { isNativePlatform, nativePlugin } from './nativeBridge';
+
+// 平台判定与插件取用统一走 nativeBridge（第 94 轮）。此处只做转出，让既有
+// 13 个 `from './nativeAlarmScheduler'` 的导入点零改动；新代码请直接从
+// './nativeBridge' 引，别再从这里拿。
+export { isNativePlatform };
 
 /**
  * 原生 Android 进程级通知与闹钟调度器 (基于 Capacitor LocalNotifications)
@@ -25,22 +31,10 @@ interface CapacitorLocalNotificationsPlugin {
   changeExactNotificationSetting?: () => Promise<{ exactAlarm: string }>;
 }
 
-function getCapacitor(): any {
-  return (window as any).Capacitor;
-}
-
-export function isNativePlatform(): boolean {
-  const cap = getCapacitor();
-  return !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
-}
-
 export async function requestAlarmPermissions(): Promise<boolean> {
-  const cap = getCapacitor();
-  if (!isNativePlatform() || !cap?.Plugins?.LocalNotifications) {
-    return false;
-  }
+  const plugin = nativePlugin<CapacitorLocalNotificationsPlugin>('LocalNotifications');
+  if (!plugin) return false;
   try {
-    const plugin: CapacitorLocalNotificationsPlugin = cap.Plugins.LocalNotifications;
     const current = await plugin.checkPermissions();
     if (current.display !== 'granted') {
       const res = await plugin.requestPermissions();
@@ -77,12 +71,7 @@ function hashStringToInt(str: string): number {
  * 将启用的闹钟集合全量同步到 Android 系统级通知调度队列
  */
 export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<{ success: boolean; nativeScheduledCount: number; invalidCount: number }> {
-  if (!isNativePlatform()) {
-    return { success: false, nativeScheduledCount: 0, invalidCount: 0 };
-  }
-
-  const cap = getCapacitor();
-  const plugin: CapacitorLocalNotificationsPlugin = cap?.Plugins?.LocalNotifications;
+  const plugin = nativePlugin<CapacitorLocalNotificationsPlugin>('LocalNotifications');
   if (!plugin) {
     return { success: false, nativeScheduledCount: 0, invalidCount: 0 };
   }
@@ -123,7 +112,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     const validAlarms = alarms.filter((a) => a.enabled && /^([01]\d|2[0-3]):[0-5]\d$/.test(a.time || ''));
     const invalidCount = alarms.filter((a) => a.enabled).length - validAlarms.length;
     if (validAlarms.length === 0) {
-      try { await (cap.Plugins?.GemmaLLM as any)?.alarmRingCancel?.(); } catch { /* ignore */ }
+      try { await nativePlugin('GemmaLLM')?.alarmRingCancel?.(); } catch { /* ignore */ }
       return { success: true, nativeScheduledCount: 0, invalidCount };
     }
 
@@ -184,7 +173,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     // 持续响铃排程：熄屏循环铃声+振动直到用户关闭（最长 5 分钟）——
     // Capacitor 通知只有渠道 30 秒铃声，播完即止，这就是"响一声就没"的根因
     try {
-      await (cap.Plugins?.GemmaLLM as any)?.alarmRingSchedule?.({
+      await nativePlugin('GemmaLLM')?.alarmRingSchedule?.({
         alarmsJson: JSON.stringify(
           validAlarms.map((a) => ({
             id: a.id,
@@ -212,10 +201,9 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
 export type ExactAlarmStatus = 'granted' | 'denied' | 'unknown';
 
 export async function getExactAlarmStatus(): Promise<ExactAlarmStatus> {
-  const cap = getCapacitor();
-  if (!isNativePlatform() || !cap?.Plugins?.LocalNotifications) return 'unknown';
+  const plugin = nativePlugin<CapacitorLocalNotificationsPlugin>('LocalNotifications');
+  if (!plugin) return 'unknown';
   try {
-    const plugin = cap.Plugins.LocalNotifications as CapacitorLocalNotificationsPlugin;
     if (typeof plugin.checkExactNotificationSetting !== 'function') return 'unknown';
     const res = await plugin.checkExactNotificationSetting();
     // 原生插件返回的键是 snake_case（LocalNotificationsPlugin.kt: exact_alarm），
@@ -229,10 +217,9 @@ export async function getExactAlarmStatus(): Promise<ExactAlarmStatus> {
 
 /** 带用户去系统"闹钟和提醒"授权页（插件 6.0+ 提供，旧版本降级返回 false）。 */
 export async function openExactAlarmSettings(): Promise<boolean> {
-  const cap = getCapacitor();
-  if (!isNativePlatform() || !cap?.Plugins?.LocalNotifications) return false;
+  const plugin = nativePlugin<CapacitorLocalNotificationsPlugin>('LocalNotifications');
+  if (!plugin) return false;
   try {
-    const plugin = cap.Plugins.LocalNotifications as CapacitorLocalNotificationsPlugin;
     if (typeof plugin.changeExactNotificationSetting !== 'function') return false;
     await plugin.changeExactNotificationSetting();
     return true;

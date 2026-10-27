@@ -20,6 +20,7 @@ import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components
 import { ManualLogModal } from './components/ManualLogModal';
 import { APP_THEMES } from './utils/themeStyles';
 import { isNativePlatform, syncAlarmsToNative } from './utils/nativeAlarmScheduler';
+import { nativePlugin } from './utils/nativeBridge';
 import { subscribeAppResume } from './utils/appResume';
 import { CustomAlarmSetting } from './types/sleep';
 import { sleepAudio } from './utils/audioSynth';
@@ -368,8 +369,7 @@ export const App: React.FC = () => {
       // 被按"今天已过则明天"续排——一次性闹钟变相成为永久每日闹钟
       let nativeIds: Set<string> | null = null;
       try {
-        const cap = (window as any).Capacitor;
-        const tbl = await cap?.Plugins?.GemmaLLM?.alarmRingTable?.();
+        const tbl = await nativePlugin('GemmaLLM')?.alarmRingTable?.();
         nativeIds = new Set<string>((JSON.parse(tbl?.json || '[]') as Array<{ id?: string }>).map((x) => x.id || ''));
       } catch { /* 读不到原生表时不动档案，只做常规同步 */ }
       let alarms = userProfile.alarms || [];
@@ -579,25 +579,24 @@ export const App: React.FC = () => {
     if (!isNativePlatform()) return;
     let listenerHandle: any = null;
     try {
-      const cap = (window as any).Capacitor;
       if (userProfile.bedtimeReminderEnabled) {
-        cap.Plugins?.GemmaLLM?.bedtimeReminderSchedule?.({ time: userProfile.targetBedtime });
+        nativePlugin('GemmaLLM')?.bedtimeReminderSchedule?.({ time: userProfile.targetBedtime });
       } else {
-        cap.Plugins?.GemmaLLM?.bedtimeReminderCancel?.();
+        nativePlugin('GemmaLLM')?.bedtimeReminderCancel?.();
       }
       // 深夜救援开关 + 醒来目标（夜间窗口用；默认开启，!== false 语义）
-      cap.Plugins?.GemmaLLM?.nightRescueSet?.({
+      nativePlugin('GemmaLLM')?.nightRescueSet?.({
         enabled: userProfile.nightRescueEnabled !== false,
         wake: userProfile.targetWakeTime,
       });
-      cap.Plugins?.GemmaLLM?.bedtimeAutoStartConsume?.().then((res: any) => {
+      nativePlugin('GemmaLLM')?.bedtimeAutoStartConsume?.().then((res: any) => {
         if (res?.consume) runGoodPath();
       });
       // addListener 返回句柄，卸载/依赖变化时必须移除（否则每次改目标都叠加
       // 一个监听器）。句柄经 Promise 异步到达：cleanup 先到时置 cancelled，
       // resolve 回调里补移除——否则旧监听器永久泄漏，一次"好的"触发多次
       let cancelled = false;
-      Promise.resolve(cap.Plugins?.GemmaLLM?.addListener?.('bedtimeGood', () => runGoodPath()))
+      Promise.resolve(nativePlugin('GemmaLLM')?.addListener?.('bedtimeGood', () => runGoodPath()))
         .then((h: any) => {
           if (cancelled) { try { h?.remove?.(); } catch { /* ignore */ } return; }
           listenerHandle = h;
@@ -929,9 +928,8 @@ export const App: React.FC = () => {
       if (isNativePlatform()) {
         void (async () => {
           try {
-            const cap = (window as any).Capacitor;
             const queryStartedAt = Date.now();
-            const st = await cap?.Plugins?.GemmaLLM?.alarmRingStatus?.();
+            const st = await nativePlugin('GemmaLLM')?.alarmRingStatus?.();
             if (!st) return;
             if (st.ringing) {
               if (Date.now() - justStoppedRef.current < 3000) return;
@@ -969,8 +967,7 @@ export const App: React.FC = () => {
     justStoppedRef.current = Date.now();
     sleepAudio.stop();
     try {
-      const cap = (window as any).Capacitor;
-      if (cap?.isNativePlatform?.()) void cap.Plugins?.GemmaLLM?.alarmRingStop?.();
+      void nativePlugin('GemmaLLM')?.alarmRingStop?.();
     } catch { /* ignore */ }
     setRingingAlarm(null);
   };

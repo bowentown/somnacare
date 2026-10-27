@@ -8,6 +8,7 @@
 import { TRIP_ENERGY_TARGET } from '../services/travelService';
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from './recordFilter';
+import { nativePlugin } from './nativeBridge';
 
 export interface MomentComment {
   friend: string;
@@ -314,8 +315,7 @@ const ANIM_LABEL: Record<string, string> = {
 
 async function petAnimNow(): Promise<string | null> {
   try {
-    const cap = (window as any).Capacitor;
-    const g = cap?.isNativePlatform?.() ? cap.Plugins?.GemmaLLM : null;
+    const g = nativePlugin('GemmaLLM');
     const res = await g?.getPetState?.();
     return typeof res?.anim === 'string' && res.anim ? res.anim : null;
   } catch {

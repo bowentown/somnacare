@@ -7,6 +7,7 @@ import { renderClinicalSummary } from '../utils/clinicalSummaryCard';
 import { useModalA11y } from '../utils/modalA11y';
 import { setPetOverlayVisible } from '../utils/petOverlay';
 import { tapTick } from '../utils/haptics';
+import { nativePlugin } from '../utils/nativeBridge';
 
 interface Props {
   open: boolean;
@@ -70,15 +71,16 @@ export const ClinicalSummaryModal: React.FC<Props> = ({ open, onClose, records, 
     setBusy(true);
     try {
       const out = await renderClinicalSummary({ records, includeTimes, theme });
-      const cap = (window as any).Capacitor;
-      if (cap?.isNativePlatform?.()) {
+      const fs = nativePlugin('Filesystem');
+      const share = nativePlugin('Share');
+      if (fs && share) {
         const b64 = out.dataUrl.split(',')[1];
         const name = `somnacare-clinical-summary-${Date.now()}.jpg`;
-        const res = await cap.Plugins?.Filesystem?.writeFile({
+        const res = await fs.writeFile({
           path: name, data: b64, directory: 'DOCUMENTS', recursive: true,
         });
         if (!res?.uri) throw new Error('文件写入失败');
-        await cap.Plugins?.Share?.share({
+        await share.share({
           title: '睡眠就诊摘要', url: res.uri, dialogTitle: '保存或发送就诊摘要',
         });
       } else {

@@ -1,4 +1,5 @@
 import type { Wllama, CacheManager } from '@wllama/wllama';
+import { nativePlugin } from './nativeBridge';
 
 // wllama 只在 Web/PWA 路径真正生成时才加载（动态 import）：
 // 静态 import 会把整个 WASM 运行时拖进首屏包（实测 306KB，占首屏 JS 40.3%），
@@ -74,9 +75,7 @@ let busy = false;
 // ==== 原生插件访问 ====
 
 function getNativePlugin(): any | null {
-  const cap = (window as any).Capacitor;
-  if (!cap || typeof cap.isNativePlatform !== 'function' || !cap.isNativePlatform()) return null;
-  return cap.Plugins?.GemmaLLM ?? null;
+  return nativePlugin('GemmaLLM');
 }
 
 /** 原生引擎是否可用（APK 内且插件已注册） */

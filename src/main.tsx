@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { isNativePlatform } from './utils/nativeBridge';
 import './index.css'
 
 // ── Service Worker 注册策略 ─────────────────────────────────────────
@@ -12,7 +13,7 @@ import './index.css'
 //    更新后的第一次打开必然渲染上一个版本。
 // 3. dev 不注册：dev server 没有 sw.js，注册只会给每个页面留一条
 //    "404 脚本加载失败"的 console 噪声（PWA 缓存只对构建产物有意义）
-if (import.meta.env.PROD && 'serviceWorker' in navigator && !(window as any).Capacitor?.isNativePlatform?.()) {
+if (import.meta.env.PROD && 'serviceWorker' in navigator && !isNativePlatform()) {
   let hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController) return;   // 首次安装不重载
