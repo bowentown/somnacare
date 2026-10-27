@@ -699,7 +699,18 @@ async function setupServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      // hmr 必须在这里显式给：vite.config.ts 里的 server.hmr 会被本对象
+      // 覆盖，导致 DISABLE_HMR=true 实际无效——本机只要另有一个 Vite
+      // dev server（固定 HMR 端口 24678 是机器级共享），本服务就会注入
+      // 指向那个陌生服务端的 HMR 客户端，页面抛出 WebSocket 握手失败，
+      // e2e 的零错误看门狗把 30+ 条用例判红（第 93 轮实测踩到）。
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true'
+          ? false
+          : { port: Number(process.env.HMR_PORT) || 24678 },
+        watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

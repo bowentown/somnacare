@@ -21,6 +21,8 @@ npx playwright test                 # 60 条浏览器 e2e（自动拉起 :3000 �
 - **顺序有依赖**：`verify:css` 读 `dist/`，所以要先 `npm run build`，否则会误报"类名不存在"。
 - `npm run lint` 已在 CI 流程里（第 91 轮补：vite build 走 esbuild 只剥类型不查类型，
   此前类型错误要一路走到 gradle 才炸，且报错点远离源头）。
+- `tsconfig.json` 是**完整 `strict`**（第 93 轮起；此前只开 `strictNullChecks`，
+  实测补全后零错误——记账的"46 处死代码清理"已在此前轮次完成）。
 - Java 代码**本机无法编译**（无 Android SDK / android 工程），Java 编译错误只在 CI 暴露。
 
 ## 目录结构
@@ -123,6 +125,15 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   结果首次点击下载量放大 6.2×、延迟毫无改善，已回滚——不要再加回"点击即预热"。
 - 生产代码里不要留测试后门：e2e 专用分支要用**构建期常量**门控（`import.meta.env.DEV`），
   不要用运行期 URL 参数。
+- **本机 e2e 突然大批"零错误看门狗"失败时，先查 HMR 端口**（第 93 轮实测踩到）：
+  Vite 的 HMR 端口 **24678 是机器级固定端口**。本机只要有另一个 Vite dev server 在跑
+  （其他 worktree / 其他会话的残留进程），本服务注入的 HMR 客户端就会连到那个陌生
+  服务端并抛 `WebSocket handshake: 400`，`expect(errors).toEqual([])` 把 30+ 条用例判红，
+  看起来像代码回归。`playwright.config.ts` 的 webServer 已默认 `DISABLE_HMR=true` 规避。
+  想带 HMR 跑 dev 就用 `HMR_PORT=<空闲端口>` 换端口——注意 `DISABLE_HMR=true` 只阻止
+  客户端注入，**WS 监听仍会去抢 24678** 并打印一条占用错误（Vite 在 middlewareMode
+  下不认 `hmr: false`），所以 `server.ts` 里 `hmr` 必须显式给（inline `server` 对象会
+  覆盖 `vite.config.ts` 的同名字段）。
 
 ## 交付约定
 

@@ -61,6 +61,16 @@ const MUTATIONS: Mutation[] = [
     replace: '护栏-99%20条',
     note: 'README 数字漂移（第 91 轮实测：徽章 37 / 正文 38 / 实际 40）',
   },
+  {
+    file: 'src/utils/sleepShareCard.ts',
+    guard: 'verify-share-privacy.mts',
+    // 注意：注入的文本【不含】任何禁字段名（不写 bedtime），所以源码扫描
+    // 必然保持绿——这条变异只能被行为层抓住。它证明的正是"源码扫描看不出
+    // 格式化后的泄漏"这个盲区确实被补上了。
+    find: "  ctx.shadowColor = 'rgba(0,0,0,0.55)';",
+    replace: "  ctx.fillText(['23', '47'].join(':'), 10, 10);\n  ctx.shadowColor = 'rgba(0,0,0,0.55)';",
+    note: '成品图上画钟点（源码无禁字段名 → 只有行为层抓得住）',
+  },
 ];
 
 const originals = new Map<string, string>();
