@@ -122,6 +122,27 @@ const MUTATIONS: Mutation[] = [
     replace: '  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore));',
     note: '评分漏掉 REM 与休息项 → 黄金样本的 sleepScore 字段失配',
   },
+  {
+    file: 'src/utils/sleepFacts.ts',
+    guard: 'verify-moments-facts.mts',
+    find: "    facts.push(`本周逐夜 ${slots.join('')}`);",
+    replace: "    facts.push(`本周走势 ${slots.join('')}`);",
+    note: '事实串措辞漂移 → 消费端正则失配、战报卡恒显 0/7（跨文件契约应报红）',
+  },
+  {
+    file: 'src/utils/sleepRegularity.ts',
+    guard: 'verify-regularity.mts',
+    find: '  if (wk.length < 3) return null;',
+    replace: '  if (wk.length < 1) return null;',
+    note: '不足 3 晚也给规律度 → 用 1-2 晚编出稳定分数（样本不足应报红）',
+  },
+  {
+    file: 'src/utils/recordFilter.ts',
+    guard: 'verify-record-kind.mts',
+    find: "  return bedtimeLocalHour >= 10 && bedtimeLocalHour < 20 ? 'nap' : 'night';",
+    replace: "  return bedtimeLocalHour >= 8 && bedtimeLocalHour < 20 ? 'nap' : 'night';",
+    note: '小睡窗口下沿 10→8 点 → 上午 8-10 点的主睡被误判为小睡（归类边界应报红）',
+  },
 ];
 
 const originals = new Map<string, string>();

@@ -89,6 +89,13 @@ const rec = (id: string, date: string, kind?: 'nap' | 'night', dur = 480): any =
   // 夜间（缺省）：日间就寝 → 小睡
   check('deriveKind night 缺省：11:00 → nap', deriveKind(11, 'night') === 'nap');
   check('deriveKind night 缺省：23:00 → night', deriveKind(23, 'night') === 'night');
+  // 窗口两沿（第 98 轮补）：变异实测显示下沿此前无人守——把 10 改成 8
+  // 时上面两条仍绿，而 08:00–09:59 就寝会被归成小睡，整条分析链
+  // （nightsOnly）都不再把它当夜睡。锁死 [10:00, 20:00) 这条区间。
+  check('deriveKind night 下沿：09:00 → night（窗口从 10:00 起）', deriveKind(9, 'night') === 'night');
+  check('deriveKind night 下沿：10:00 → nap（下沿生效）', deriveKind(10, 'night') === 'nap');
+  check('deriveKind night 上沿：19:00 → nap', deriveKind(19, 'night') === 'nap');
+  check('deriveKind night 上沿：20:00 → night（窗口到 20:00 止）', deriveKind(20, 'night') === 'night');
   // 白天为主：主睡就是主睡（11:00 / 14:00 / 18:00 就寝一律 night）
   check('deriveKind day：11:00 → night（不再误标小睡）', deriveKind(11, 'day') === 'night');
   check('deriveKind day：14:00 → night', deriveKind(14, 'day') === 'night');
