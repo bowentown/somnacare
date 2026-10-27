@@ -16,8 +16,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf-8');
 
 let failures = 0;
-const ok = (name: string, condition: boolean): void => {
-  console.log(`${condition ? '✓' : '✗'} ${name}`);
+const ok = (name: string, condition: boolean, detail = ''): void => {
+  console.log(`${condition ? '✓' : '✗'} ${name}${detail ? '  ' + detail : ''}`);
   if (!condition) failures++;
 };
 
@@ -110,6 +110,12 @@ ok('桥接：TS petSetVisible + Java 插件 + 服务显隐',
       const v = ((t.minute % 1440) + 1440) % 1440;
       return t.label === `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
     }));
+  // 窗口必须【贴合数据】——上面几条只验"刻度在轴内 + 标签自洽"，把窗口
+  // 恒设成 24 小时也全都绿灯（第 96 轮变异实测：rangeMin 被钉成 1440 时
+  // 护栏仍 exit 0）。作息跨度约 8 小时，留边距后应远小于一天。
+  ok('时间轴：窗口贴合数据长度（两种作息都 < 16 小时，不退化成整天）',
+    wn.rangeMin < 16 * 60 && wd.rangeMin < 16 * 60,
+    `night=${wn.rangeMin}min day=${wd.rangeMin}min`);
   // 反向自检：旧写死刻度在白天窗口下必须大面积出轴（这正是 M-1 的现象）
   {
     const hardcoded = [20 * 60, 23 * 60, 26 * 60, 29 * 60, 32 * 60];

@@ -87,6 +87,41 @@ const MUTATIONS: Mutation[] = [
     replace: "const gemma = (): any | null => ((window as any).Capacitor?.Plugins?.GemmaLLM ?? null);",
     note: '退回手写桥访问（绕过唯一入口 → 结构层应报红）',
   },
+  {
+    file: 'src/utils/recordBuilder.ts',
+    guard: 'verify-record-builder.mts',
+    find: '  const exactDurationMinutes = Math.min(960, rawDurationMinutes);',
+    replace: '  const exactDurationMinutes = rawDurationMinutes;',
+    note: '去掉 16h 会话截断 → 忘记结束的会话产出多天记录（黄金样本应报红）',
+  },
+  {
+    file: 'src/utils/weekReport.ts',
+    guard: 'verify-week-report.mts',
+    find: 'export const GOOD_NIGHT_THRESHOLD = 80;',
+    replace: 'export const GOOD_NIGHT_THRESHOLD = 75;',
+    note: '达标阈值 80→75（与全仓评分口径分叉，连胜/达标计数应报红）',
+  },
+  {
+    file: 'src/utils/clockMath.ts',
+    guard: 'verify-proposal.mts',
+    find: "    let d = v - pivot;\n    if (d > 720) d -= 1440;",
+    replace: "    let d = v - pivot;",
+    note: '圆周中位不折短弧 → 22:00/01:30 的中位会落到日界外（跨午夜先验应用应报红）',
+  },
+  {
+    file: 'src/utils/clinicalSummaryCard.ts',
+    guard: 'verify-clinical-theme.mts',
+    find: '  const rangeMin = Math.min(1440, Math.max(8 * 60, hi - lo + 180));',
+    replace: '  const rangeMin = 1440;',
+    note: '窗口恒设 24 小时 → 数据被压扁（第 96 轮靠新增的"贴合度"断言才抓住）',
+  },
+  {
+    file: 'src/utils/sleepScore.ts',
+    guard: 'verify-record-builder.mts',
+    find: '  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore + remScore + restScore));',
+    replace: '  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore));',
+    note: '评分漏掉 REM 与休息项 → 黄金样本的 sleepScore 字段失配',
+  },
 ];
 
 const originals = new Map<string, string>();
