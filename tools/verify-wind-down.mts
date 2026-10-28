@@ -91,6 +91,28 @@ ok('开屏：大号白字+光晕（bg-clip:text 与 filter 的组合在旧 WebVi
   splash.includes('text-[22px]') && splash.includes('textShadow')
   && !splash.includes('backgroundClip') && !splash.includes('drop-shadow')
   && splash.includes("{'懂睡眠，更懂你'.split('').map"));
+// 开屏时序自洽（第 99 轮，用户实测"字都看不清"的根因）：最短仪式必须 ≥
+// 逐字动画的完成时刻——此前 1200ms 在末字（第 7 个，860+6×70+460≈1740ms
+// 才出场完）还在半路就开始淡出。同时硬上限 + 淡出时长必须 < e2e 统一
+// 等待的 4200ms，否则所有非跳过路径的用例都会在开屏后面点空气。
+{
+  const SLOGAN_LEN = '懂睡眠，更懂你'.length;   // 7 字（含逗号），末字下标 6
+  const mChar = splash.match(/splash-rise (\d+)ms ease-out \$\{860 \+ i \* (\d+)\}ms/);
+  const mMin = splash.match(/elapsed >= (\d+) && \(readyRef\.current \|\| elapsed >= (\d+)\)/);
+  const mFade = splash.match(/window\.setTimeout\(dismiss, (\d+)\)/);
+  const charDur = mChar ? Number(mChar[1]) : 0;
+  const charStag = mChar ? Number(mChar[2]) : 0;
+  const lastCharEnd = 860 + (SLOGAN_LEN - 1) * charStag + charDur;
+  const minCeremony = mMin ? Number(mMin[1]) : 0;
+  const hardCap = mMin ? Number(mMin[2]) : 0;
+  const fadeMs = mFade ? Number(mFade[1]) : 0;
+  ok('开屏：最短仪式 ≥ 宣传语末字完成时刻（淡出不掐字）',
+    mChar !== null && mMin !== null && minCeremony >= lastCharEnd,
+    `仪式 ${minCeremony}ms vs 末字 ${lastCharEnd}ms`);
+  ok('开屏：硬上限 + 淡出 < e2e 等待 4200ms（非跳过路径不点空气）',
+    mMin !== null && mFade !== null && hardCap + fadeMs < 4200,
+    `${hardCap}+${fadeMs}=${hardCap + fadeMs}ms`);
+}
 
 // ── 性能（第 82–84 轮）──
 const panel = read('src/components/AIAdvicePanel.tsx');

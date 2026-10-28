@@ -19,22 +19,28 @@ import { BottomNavBar, NavTab } from './components/BottomNavBar';
 import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components/ActiveSleepModal';
 import { ManualLogModal } from './components/ManualLogModal';
 import { APP_THEMES } from './utils/themeStyles';
-import { isNativePlatform, syncAlarmsToNative } from './utils/nativeAlarmScheduler';
+import { isNativePlatform } from './utils/nativeAlarmScheduler';
 import { nativePlugin } from './utils/nativeBridge';
-import { subscribeAppResume } from './utils/appResume';
 import { CustomAlarmSetting } from './types/sleep';
 import { sleepAudio } from './utils/audioSynth';
 import { applyEyeCare, eyeCareInAppStyles, isInEyeCareWindow } from './utils/eyeCare';
-import { consumePendingTab, syncPet } from './utils/petOverlay';
-import { queryScreenOnEvents } from './utils/usageSignal';
-import { forceRefreshUsage } from './utils/usageStore';
+import { syncPet } from './utils/petOverlay';
+// App 壳层的原生/生命周期副作用（第 99 轮拆出）：启动闹钟同步、时区重排、
+// 桌宠拉起分区、返回键、恢复刷新、就寝提醒表、原生就寝同步
+import {
+  useStartupAlarmSync,
+  useTimezoneAlarmResync,
+  usePetTabLaunch,
+  useAndroidBackButton,
+  useResumeUsageRefresh,
+  useBedtimeReminderWatch,
+  useBedtimeNativeSync,
+} from './hooks/appWatchers';
 // 趋势页单独分割（第 90 轮 §2.2 修正）：它带着 recharts+d3 共 354KB，是唯一
 // 值得懒加载的分区；其余分区 18-90KB 回首包换零切页空白与零流量放大
 const TrendsTab = lazy(() => import('./components/TrendsTab').then((m) => ({ default: m.TrendsTab })));
 import { LaunchSplash } from './components/LaunchSplash';
 import { PaneErrorBoundary } from './components/PaneErrorBoundary';
-import { closeTopModalIfAny } from './utils/modalA11y';
-import { notifyAppResume } from './utils/appResume';
 import { initProposalNotify } from './utils/proposalNotify';
 import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
@@ -158,7 +164,6 @@ export const App: React.FC = () => {
     return () => window.clearTimeout(t);
   }, [activeTab, mountPane, preheatNeighbors]);
   const trackRef = useRef<HTMLDivElement>(null);
-  const listenerCleanupRef = useRef<(() => void) | null>(null);
   // 最近一次划动抬手的时刻：swallowClick 的时间窗判定用。
   // 初值必须取 -Infinity——0 会与 performance.now() 的加载后前 350ms 撞车，
   // 那段窗口里所有点击（含底栏切换）都会被当成"刚划完"而吞掉
@@ -361,109 +366,21 @@ export const App: React.FC = () => {
   }, []);
 
   // APK 启动时无条件同步一次闹钟到原生 AlarmManager（重启/重装后打开即恢复调度）
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    void (async () => {
-      // "仅一次"闹钟的时刻已过且原生表里已无此条 → 已响过、被原生剔除，
-      // 这里在档案中停用；否则本次 enabled 全量同步会把它送回原生，
-      // 被按"今天已过则明天"续排——一次性闹钟变相成为永久每日闹钟
-      let nativeIds: Set<string> | null = null;
-      try {
-        const tbl = await nativePlugin('GemmaLLM')?.alarmRingTable?.();
-        nativeIds = new Set<string>((JSON.parse(tbl?.json || '[]') as Array<{ id?: string }>).map((x) => x.id || ''));
-      } catch { /* 读不到原生表时不动档案，只做常规同步 */ }
-      let alarms = userProfile.alarms || [];
-      if (nativeIds) {
-        const now = new Date();
-        let changed = false;
-        alarms = alarms.map((a) => {
-          if (!a.enabled || a.repeatDays.length !== 0 || nativeIds!.has(a.id)) return a;
-          const [h, m] = a.time.split(':').map(Number);
-          const t = new Date();
-          t.setHours(h, m, 0, 0);
-          if (t.getTime() <= now.getTime()) {
-            changed = true;
-            return { ...a, enabled: false };
-          }
-          return a;
-        });
-        if (changed) setUserProfile((prev) => ({ ...prev, alarms }));
-      }
-      syncAlarmsToNative(alarms);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useStartupAlarmSync(userProfile, setUserProfile);
 
-  // 时区跳变后重同步闹钟（第 81 轮审计 P2）：原生铃闹由 BootReceiver 的
-  // TIMEZONE_CHANGED 自动重排，但 Capacitor 一次性通知锚定绝对时刻——
-  // 跨时区后仍指旧本地时刻。回前台检测到时区偏移变化就全量重排一次
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    let lastOffset = new Date().getTimezoneOffset();
-    const unsubscribe = subscribeAppResume(() => {
-      const offset = new Date().getTimezoneOffset();
-      if (offset === lastOffset) return;
-      lastOffset = offset;
-      syncAlarmsToNative(userProfile.alarms || []);
-    });
-    return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile.alarms]);
+  // 时区跳变后重同步闹钟（第 81 轮审计 P2）——详见 hooks/appWatchers.ts
+  useTimezoneAlarmResync(userProfile.alarms);
 
   // 鲸鱼娘速览卡点行后拉起 App：读取并清除原生写入的目标分区
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    let cancelled = false;
-    const apply = () => {
-      void consumePendingTab().then((tab) => {
-        if (cancelled || !tab) return;
-        if ((TAB_ORDER as string[]).includes(tab)) setActiveTab(tab as NavTab);
-      });
-    };
-    apply();
-    // 从后台被桌宠拉起时 App 不重新挂载，靠 visibilitychange 补一次
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') apply();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, []);
+  usePetTabLaunch(TAB_ORDER, setActiveTab);
 
   // 桌宠速览卡文案跟随数据刷新（只在桌宠开着时推送）
   useEffect(() => {
     void syncPet(records, userProfile);
   }, [records, userProfile]);
 
-  // Android 返回键治理（第 52 轮）：有弹窗时先关弹窗（与 Escape 同通路），
-  // 无弹窗才退出。@capacitor/app 的 backButton 一旦监听即接管返回键，
-  // 不调 exitApp 就不会退出——默认行为必须显式补上。
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    let cancelled = false;
-    let handle: { remove: () => void } | null = null;
-    // 动态 import（第 52 轮）：@capacitor/app 顶层 import 会让 @capacitor/core
-    // 的 web 运行时在页面加载时改写 window.Capacitor（isNativePlatform →
-    // false）——e2e mock 与 web 预览全被打回"网页预览环境"。只在真机守卫内
-    // 异步加载，web 端永不触碰。
-    void (async () => {
-      try {
-        const { App: CapApp } = await import('@capacitor/app');
-        const h = await CapApp.addListener('backButton', () => {
-          if (closeTopModalIfAny()) return;
-          void CapApp.exitApp();
-        });
-        if (cancelled) { try { h.remove(); } catch { /* ignore */ } return; }
-        handle = h;
-      } catch { /* 非 native / 桥异常静默 */ }
-    })();
-    return () => {
-      cancelled = true;
-      try { handle?.remove(); } catch { /* ignore */ }
-    };
-  }, []);
+  // Android 返回键治理（第 52 轮）——详见 hooks/appWatchers.ts
+  useAndroidBackButton();
 
   // 通知动作监听（第 56 轮）：必须在最早时机注册——从通知栏冷启动时，
   // 动作事件可能早于睡眠页挂载；待办写盘后由提议卡消费
@@ -471,96 +388,11 @@ export const App: React.FC = () => {
     initProposalNotify();
   }, []);
 
-  // 后台恢复即刷新使用信号（真机 10-14 实测的"每天早上必须去偏好页点自检
-  // 才出卡"的根因）：隔夜驻留后台后恢复前台，提议引擎的 effect 依赖
-  // （usageDays/records/handledDate…）一个都不会变——引擎跑在昨晚的旧
-  // 观测上（observedUntil 停在放下手机那一刻），起床信号永远进不来。
-  // 自检链路之所以"有效"，正是它 force 绕过了 30min 缓存并 kick 了引擎。
-  // 这里把同一步自动化：恢复可见即强制刷新（先事件后聚合——聚合 emit
-  // 驱动睡眠页引擎 effect 重跑，重跑时读到的是刚刷新的事件缓存）。
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    const chronotype = userProfile?.chronotype ?? 'night';
-    let lastRun = 0;
-    let inFlight = false;
-    const refresh = (source: 'visibility' | 'appstate') => {
-      if (chronotype === 'irregular') return;   // 不规律作息：自动提议整体关闭，无需刷新
-      // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次。
-      // inFlight 是同步守卫（首个查询返回前第二通道不会双触发）；失败时
-      // inFlight 立即释放且不写 lastRun，允许另一通道补位（第 54 轮修正）
-      const now = Date.now();
-      if (inFlight || now - lastRun < 1500) return;
-      inFlight = true;
-      // 广播给睡眠页引擎：即使下面的聚合查询失败/返回空，引擎也会被强制
-      // 重跑一次（不依赖 usageStore emit 的间接链路）
-      notifyAppResume(source);
-      void (async () => {
-        const ok = !!(await queryScreenOnEvents(14, true));
-        if (ok) lastRun = Date.now();
-        inFlight = false;
-        await forceRefreshUsage(2, chronotype);
-      })();
-    };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refresh('visibility');
-    };
-    // 双通道（第 53 轮）：部分 ROM/WebView 息屏恢复不派发 visibilitychange，
-    // Capacitor 的 appStateChange 是原生 Activity 生命周期的权威信号
-    let appStateHandle: { remove: () => void } | null = null;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { App: CapApp } = await import('@capacitor/app');
-        const h = await CapApp.addListener('appStateChange', ({ isActive }) => {
-          if (isActive) refresh('appstate');
-        });
-        if (cancelled) { try { h.remove(); } catch { /* ignore */ } return; }
-        appStateHandle = h;
-      } catch { /* 桥异常时仅保留 visibility 通道 */ }
-    })();
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
-      try { appStateHandle?.remove(); } catch { /* ignore */ }
-    };
-  }, [userProfile?.chronotype]);
+  // 后台恢复即刷新使用信号（真机 10-14 实测根因）——详见 hooks/appWatchers.ts
+  useResumeUsageRefresh(userProfile?.chronotype ?? 'night');
 
   // 作息目标到点提醒：目标就寝时刻起 15 分钟内、当日未提醒、且未在监测中 → 全屏提醒
-  useEffect(() => {
-    const check = () => {
-      if (bedtimeReminder || isNativePlatform()) return; // 原生端由悬浮窗提醒（跨应用）
-      if (!userProfile.bedtimeReminderEnabled) return;
-      try {
-        if (localStorage.getItem('somnacare_bedtime_start')) return;
-        const [th, tm] = (userProfile.targetBedtime || '23:30').split(':').map(Number);
-        const now = new Date();
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-        const targetMin = th * 60 + tm;
-        // 15 分钟窗口跨午夜：目标 23:50 时，00:05 打开（nowMin=5）也应命中——
-        // 否则就寝时间在最后十几分钟的用户整晚都收不到提醒（第 73 轮审计）
-        const lateEvening = nowMin >= targetMin && nowMin <= targetMin + 15;
-        const pastMidnight = nowMin + 1440 >= targetMin && nowMin + 1440 <= targetMin + 15;
-        if (lateEvening || pastMidnight) {
-          // 去重键=本夜的夜归属日（凌晨窗口归前一晚）。此前用自然日：
-          // 00:05 补提醒存下"新的一天"，当晚 23:50 的提醒被误判已发，
-          // 且 23:52→00:04 同一夜会触发两次（第 81 轮审计）
-          const nightDate = pastMidnight
-            ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-            : now;
-          const nightKey = `${nightDate.getFullYear()}-${String(nightDate.getMonth() + 1).padStart(2, '0')}-${String(nightDate.getDate()).padStart(2, '0')}`;
-          if (localStorage.getItem('somnacare_reminder_fired') === nightKey) return;
-          localStorage.setItem('somnacare_reminder_fired', nightKey);
-          setBedtimeReminder('ask');
-        }
-      } catch {
-        // ignore
-      }
-    };
-    check();
-    const t = setInterval(check, 20_000);
-    return () => clearInterval(t);
-  }, [userProfile.targetBedtime, userProfile.bedtimeReminderEnabled, bedtimeReminder]);
+  useBedtimeReminderWatch(userProfile.targetBedtime, userProfile.bedtimeReminderEnabled, bedtimeReminder, setBedtimeReminder);
 
   // 原生：开启提醒时按目标重排精确闹钟；关闭即取消。悬浮"好的"经冷启动标记或事件接续
   const runGoodPath = () => {
@@ -575,40 +407,13 @@ export const App: React.FC = () => {
       // ignore
     }
   };
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    let listenerHandle: any = null;
-    try {
-      if (userProfile.bedtimeReminderEnabled) {
-        nativePlugin('GemmaLLM')?.bedtimeReminderSchedule?.({ time: userProfile.targetBedtime });
-      } else {
-        nativePlugin('GemmaLLM')?.bedtimeReminderCancel?.();
-      }
-      // 深夜救援开关 + 醒来目标（夜间窗口用；默认开启，!== false 语义）
-      nativePlugin('GemmaLLM')?.nightRescueSet?.({
-        enabled: userProfile.nightRescueEnabled !== false,
-        wake: userProfile.targetWakeTime,
-      });
-      nativePlugin('GemmaLLM')?.bedtimeAutoStartConsume?.().then((res: any) => {
-        if (res?.consume) runGoodPath();
-      });
-      // addListener 返回句柄，卸载/依赖变化时必须移除（否则每次改目标都叠加
-      // 一个监听器）。句柄经 Promise 异步到达：cleanup 先到时置 cancelled，
-      // resolve 回调里补移除——否则旧监听器永久泄漏，一次"好的"触发多次
-      let cancelled = false;
-      Promise.resolve(nativePlugin('GemmaLLM')?.addListener?.('bedtimeGood', () => runGoodPath()))
-        .then((h: any) => {
-          if (cancelled) { try { h?.remove?.(); } catch { /* ignore */ } return; }
-          listenerHandle = h;
-        })
-        .catch(() => {});
-      listenerCleanupRef.current = () => { cancelled = true; try { listenerHandle?.remove?.(); } catch { /* ignore */ } };
-    } catch {
-      // ignore
-    }
-    return () => { listenerCleanupRef.current?.(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile.targetBedtime, userProfile.targetWakeTime, userProfile.bedtimeReminderEnabled, userProfile.nightRescueEnabled]);
+  useBedtimeNativeSync(
+    userProfile.targetBedtime,
+    userProfile.targetWakeTime,
+    userProfile.bedtimeReminderEnabled,
+    userProfile.nightRescueEnabled,
+    runGoodPath,
+  );
 
   // 护眼滤镜：打开 App 时按配置/定时窗口自动启停，之后每 30 秒轮询一次
   const eyeCareCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;

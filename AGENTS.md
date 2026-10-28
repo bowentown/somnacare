@@ -29,7 +29,7 @@ npx playwright test                 # 61 条浏览器 e2e（自动拉起 :3000 �
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/` | React 应用。`components/`（五分区 + 弹窗/动画/UI 原子）、`utils/`（睡眠评分与分期、临床规则引擎、洞察、端侧 LLM、提议引擎、护眼、主题）、`types/`、`pond/`（"活的海"池塘引擎）、`services/`、`data/` |
+| `src/` | React 应用。`components/`（五分区 + 弹窗/动画/UI 原子）、`hooks/`（App 壳层的原生/生命周期副作用，`appWatchers.ts`）、`utils/`（睡眠评分与分期、临床规则引擎、洞察、端侧 LLM、提议引擎、护眼、主题）、`types/`、`pond/`（"活的海"池塘引擎）、`services/`、`data/` |
 | `server.ts` | 开发/部署用的 Express 服务：静态托管 + `/api/sleep/analyze`、`/api/sleep/chat` 代理（限流 + 可选 Bearer 鉴权）。**与 APK 运行时无关**（离线应用不依赖它） |
 | `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |

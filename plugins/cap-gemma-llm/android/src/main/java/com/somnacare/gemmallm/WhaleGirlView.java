@@ -9,6 +9,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.View;
 
 import java.util.Random;
@@ -77,6 +78,7 @@ public class WhaleGirlView extends View {
     private Anim prevAnim;          // 交叉溶解的旧状态（pick 换位时登记）
     private long swappedAt;         // 本次换位时刻（淡入进度基准）
     private long stateSince;
+    private long prevStateSince;    // 旧状态的起始时刻（溶解期间旧动画继续按自己的时间线播）
     private long cheerUntil;        // 庆祝播到这个时刻
     private long ambientUntil;      // 小动作播到这个时刻
     private boolean talking;
@@ -88,6 +90,7 @@ public class WhaleGirlView extends View {
     private boolean dragging;
     private boolean running;
     private boolean resumed;        // 小动作调度是否在跑
+    private long tickAnchor;        // tick 的绝对节拍锚点（uptimeMillis）
 
     // 内容驱动重绘（第 89 轮，用户实测"刷抖音时桌宠特别卡"的根修）：
     // 此前恒定 30fps 全窗口重绘，而帧内容实际只有 2–8fps、呼吸位移每帧
@@ -103,8 +106,15 @@ public class WhaleGirlView extends View {
         @Override public void run() {
             if (!running) return;
             if (shouldRedraw()) invalidate();
-            // A12 功耗优化（第 45 轮）：深夜困倦态降到 ~10fps
-            main.postDelayed(this, drowsy > 0.5f ? 100 : TICK_MS);
+            // 固定节拍（第 99 轮）：此前"跑完再 post 33ms"的周期 = 33ms + 执行
+            // + 主线程排队延迟，逐帧累积漂移；而帧号按墙钟推进，节拍一漂就隔帧
+            // 跳变（卡顿感）。改为绝对时刻锚定；主线程被压、落后超过一拍时
+            // 直接重锚不追帧，避免连环补帧。深夜困倦仍降到 ~10fps（A12 功耗）。
+            long period = drowsy > 0.5f ? 100 : TICK_MS;
+            tickAnchor += period;
+            long due = tickAnchor - SystemClock.uptimeMillis();
+            if (due < 0) { tickAnchor = SystemClock.uptimeMillis(); due = period; }
+            main.postDelayed(this, due);
         }
     };
 
@@ -130,6 +140,10 @@ public class WhaleGirlView extends View {
         boolean fading = prevAnim != null && prevAnim != a && !prevAnim.sheet.isRecycled()
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (idx != lastDrawnIdx || fading != lastDrawnFading) return true;
+        // 溶解窗口内 alpha 与旧帧都在持续变化（第 99 轮）：此前只靠帧号/位移
+        // 变化触发，呼吸走到正弦极值（速度为零）时淡出会冻住再突跳。窗口只有
+        // 180ms（约 5 拍），保持满节拍对功耗无感。
+        if (fading) return true;
         int w = getWidth(), h = getHeight();
         if (w == 0 || h == 0) return false;
         float shift = motionShiftPx(a, now, Math.min(w, h) * 0.97f);
@@ -226,6 +240,7 @@ public class WhaleGirlView extends View {
         if (running) return;
         running = true;
         resumed = true;
+        tickAnchor = SystemClock.uptimeMillis();
         main.postDelayed(tick, TICK_MS);
         main.postDelayed(ambientTick, 500);
     }
@@ -290,6 +305,10 @@ public class WhaleGirlView extends View {
     private void pick(Anim a) {
         if (a == null || a == current) return;
         prevAnim = current;
+        // 旧动画的相位基准（第 99 轮）：溶解期间旧帧此前按 sinceSwap 从第 0 帧
+        // 重数——从 walk 第 2 帧切走时会闪回第 0 帧（用户实测"闪帧"）。改为
+        // 记下旧状态自己的起始时刻，旧动画在被淡出的 180ms 里继续往前播。
+        prevStateSince = stateSince;
         swappedAt = System.currentTimeMillis();
         current = a;
         stateSince = swappedAt;
@@ -402,7 +421,9 @@ public class WhaleGirlView extends View {
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (fading) {
             int pfw = prevAnim.sheet.getWidth() / prevAnim.frames;
-            int pidx = (int) ((sinceSwap / prevAnim.frameMs) % prevAnim.frames);
+            // 旧帧按旧动画自己的时间线取号（第 99 轮）：不用 sinceSwap 从 0 重数，
+            // 否则切换瞬间旧姿势闪回第 0 帧
+            int pidx = frameIndex(prevAnim, now - prevStateSince);
             srcPrev.set(pidx * pfw, 0, (pidx + 1) * pfw, prevAnim.sheet.getHeight());
         }
 

@@ -219,7 +219,7 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
             // 文字像粘在波纹上；小屏上涟漪还会出界被裁成两道竖弧）
             top: 'calc(38% + 184px)',
             opacity: 0,
-            animation: 'splash-rise 500ms ease-out 820ms both',
+            animation: 'splash-rise 560ms ease-out 760ms both',
           }}
         >
           {/* 文字涟漪（第 82 轮恢复，第 83 轮修正）：椭圆圈以文字落脚点
@@ -257,7 +257,7 @@ export const SplashScene: React.FC<SplashSceneProps> = ({
               <span
                 key={i}
                 className="inline-block"
-                style={{ animation: `splash-rise 460ms ease-out ${860 + i * 70}ms both` }}
+                style={{ animation: `splash-rise 560ms ease-out ${860 + i * 90}ms both` }}
               >
                 {ch}
               </span>
@@ -335,10 +335,12 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
   readyRef.current = ready;
   useEffect(() => {
     if (!visible) return;
-    // 就绪即撤（第 86 轮）：最短仪式 1200ms（水滴+月亮+宣传语入场过半——
-    // 再短会把文字掐掉）后就绪即开始淡出；就绪信号迟迟不来则 2100ms 硬上限
-    // 兜底（慢设备/异常时绝不永久卡屏）。点按任意处可跳过不变。
-    // 实测首屏 ~220ms 就绪 → 约 1.2s 开始淡出、1.7s 消失（旧固定 2.4s）
+    // 就绪即撤（第 86 轮；第 99 轮放宽）：最短仪式 2600ms——场景元素里
+    // 倒影波纹 1950+650ms 才演完、宣传语逐字 860+5×90+560ms 才出齐，
+    // 此前的 1200ms 会在文字出场【途中】就开始淡出（用户实测"字都
+    // 看不清"的根因）。就绪信号迟迟不来则 3300ms 硬上限兜底（慢设备/
+    // 异常时绝不永久卡屏，且 3300+640ms 淡出 < e2e 统一等待的 4200ms）。
+    // 点按任意处可跳过不变。
     let armed = false;
     let raf = 0;
     let t2 = 0;
@@ -347,11 +349,11 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
       if (armed) return;
       armed = true;
       setFading(true);
-      t2 = window.setTimeout(dismiss, 480);
+      t2 = window.setTimeout(dismiss, 640);
     };
     const tick = () => {
       const elapsed = performance.now() - start;
-      if (elapsed >= 1200 && (readyRef.current || elapsed >= 2100)) {
+      if (elapsed >= 2600 && (readyRef.current || elapsed >= 3300)) {
         arm();
         return;
       }
@@ -360,7 +362,7 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
     raf = requestAnimationFrame(tick);
     // rAF 停摆兜底（第 88 轮）：后台/降级内核下 rAF 可能不跑——帧驱动后
     // 曾出现开屏 7s 不撤。定时器与 rAF 双路径取先到者
-    const fallbackTimer = window.setTimeout(arm, 2100);
+    const fallbackTimer = window.setTimeout(arm, 3300);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t2);
@@ -375,7 +377,8 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
     <div
       role="presentation"
       onPointerDown={dismiss}
-      className={`fixed inset-0 z-[200] overflow-hidden transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
+      className={`fixed inset-0 z-[200] overflow-hidden transition-opacity ${fading ? 'opacity-0' : 'opacity-100'}`}
+      style={{ transitionDuration: '640ms', transitionTimingFunction: 'cubic-bezier(0.33, 0, 0.2, 1)' }}
     >
       <SplashScene theme={theme} variant="splash" />
     </div>

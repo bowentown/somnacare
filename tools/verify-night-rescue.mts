@@ -96,10 +96,11 @@ ok(workflow.includes('com.somnacare.gemmallm.NightRescueService')
 
 // ④ Web 接线
 const types = read('src/types/sleep.ts');
-const app = read('src/App.tsx');
+// 桥接同步在 hooks/appWatchers.ts（第 99 轮从 App.tsx 拆出）
+const watchers = read('src/hooks/appWatchers.ts');
 const today = read('src/components/TodayTab.tsx');
 ok(types.includes('nightRescueEnabled?: boolean'), 'Web：UserProfile.nightRescueEnabled 字段');
-ok(app.includes('nightRescueSet') && app.includes('!== false'), 'Web：App 同步走桥且默认开启（!== false 语义）');
+ok(watchers.includes('nightRescueSet') && watchers.includes('!== false'), 'Web：App 同步走桥且默认开启（!== false 语义）');
 ok(today.includes('深夜救援') && today.includes('nightRescueEnabled'), 'Web：TodayTab 开关在场');
 // 第 80 轮（用户裁决）：副文案整行删除——"玩手机了说明不在睡，何来劝继续睡"
 ok(!today.includes('弹窗劝你继续睡'), 'Web：深夜救援无多余副文案');

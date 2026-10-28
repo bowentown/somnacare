@@ -69,9 +69,10 @@ const now = new Date(2026, 9, 4, 15, 8);   // 2026-10-04 周日下午
 
 // ── 3) 就寝提醒去重键 = 夜归属日 ──
 {
-  const app = read('src/App.tsx');
+  // fired 键逻辑在 hooks/appWatchers.ts（第 99 轮从 App.tsx 拆出）
+  const watchers = read('src/hooks/appWatchers.ts');
   check('就寝提醒：凌晨窗口的 fired 键归前一晚（nightKey）',
-    app.includes('somnacare_reminder_fired') && /pastMidnight\s*\?\s*new Date\(/.test(app));
+    watchers.includes('somnacare_reminder_fired') && /pastMidnight\s*\?\s*new Date\(/.test(watchers));
 }
 
 // ── 4) 护眼今日按日期过滤 ──

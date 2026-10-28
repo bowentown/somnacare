@@ -143,6 +143,13 @@ const MUTATIONS: Mutation[] = [
     replace: "  return bedtimeLocalHour >= 8 && bedtimeLocalHour < 20 ? 'nap' : 'night';",
     note: '小睡窗口下沿 10→8 点 → 上午 8-10 点的主睡被误判为小睡（归类边界应报红）',
   },
+  {
+    file: 'src/components/LaunchSplash.tsx',
+    guard: 'verify-wind-down.mts',
+    find: '      if (elapsed >= 2600 && (readyRef.current || elapsed >= 3300)) {',
+    replace: '      if (elapsed >= 1200 && (readyRef.current || elapsed >= 2100)) {',
+    note: '最短仪式退回 1200ms → 末字还在出场途中就淡出（用户实测"字都看不清"的原缺陷）',
+  },
 ];
 
 const originals = new Map<string, string>();
