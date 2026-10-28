@@ -140,12 +140,12 @@ public class WhaleGirlView extends View {
         boolean fading = prevAnim != null && prevAnim != a && !prevAnim.sheet.isRecycled()
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (idx != lastDrawnIdx || fading != lastDrawnFading) return true;
+        int w = getWidth(), h = getHeight();
+        if (w == 0 || h == 0) return false;
         // 溶解窗口内 alpha 与旧帧都在持续变化（第 99 轮）：此前只靠帧号/位移
         // 变化触发，呼吸走到正弦极值（速度为零）时淡出会冻住再突跳。窗口只有
         // 180ms（约 5 拍），保持满节拍对功耗无感。
         if (fading) return true;
-        int w = getWidth(), h = getHeight();
-        if (w == 0 || h == 0) return false;
         float shift = motionShiftPx(a, now, Math.min(w, h) * 0.97f);
         // 阈值按密度换算（第 90 轮 §2.4）：位移幅度 ∝ 屏幕密度，而 0.5 绝对
         // px 在 3×/4× 屏等效于 0.17/0.13dp——重绘率被密度悄悄拉回 14-19fps。

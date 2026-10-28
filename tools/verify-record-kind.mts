@@ -46,6 +46,16 @@ const rec = (id: string, date: string, kind?: 'nap' | 'night', dur = 480): any =
   check("sanitize 对旧数据不落 kind（JSON 形状不变）", !JSON.stringify(c2 ?? {}).includes('kind'));
   const c3 = sanitizeRecord(rec('c', '2026-10-01', 'night'));
   check("sanitize 对 'night' 也不落字段", !JSON.stringify(c3 ?? {}).includes('kind'));
+  // 日历回环（第 100 轮）：JS 把 2025-02-30 静默归一成 03-02，只判 isFinite
+  // 会让记录带着这个键活下来，而周报/「昨晚」按真实日历找键 → 永远查不到
+  check('sanitize 拒绝不存在的日历日（2025-02-30）',
+    sanitizeRecord(rec('d', '2025-02-30')) === null);
+  check('sanitize 拒绝越界月日（2025-99-99）',
+    sanitizeRecord(rec('e', '2025-99-99')) === null);
+  check('sanitize 放行闰日（2024-02-29）',
+    sanitizeRecord(rec('f', '2024-02-29'))?.date === '2024-02-29');
+  check('sanitize 拒绝平年 2 月 29（2025-02-29）',
+    sanitizeRecord(rec('g', '2025-02-29')) === null);
 }
 
 // ── mergeRecord 语义 ──

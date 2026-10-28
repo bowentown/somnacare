@@ -150,6 +150,13 @@ const MUTATIONS: Mutation[] = [
     replace: '      if (elapsed >= 1200 && (readyRef.current || elapsed >= 2100)) {',
     note: '最短仪式退回 1200ms → 末字还在出场途中就淡出（用户实测"字都看不清"的原缺陷）',
   },
+  {
+    file: 'src/utils/recordSanitize.ts',
+    guard: 'verify-record-kind.mts',
+    find: "  const date = typeof r.date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(r.date) && isRealDate(r.date)",
+    replace: "  const date = typeof r.date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(r.date)",
+    note: '去掉日历回环 → 2025-02-30 带着不存在的键活下来、该夜静默不计入',
+  },
 ];
 
 const originals = new Map<string, string>();

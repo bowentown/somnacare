@@ -13,13 +13,24 @@ const strOr = (v: unknown, fallback: string): string =>
   typeof v === 'string' && v.length > 0 ? v : fallback;
 const clampMin = (v: unknown, max: number): number => Math.max(0, Math.min(max, numOr(v, 0)));
 
+/**
+ * 日历合法性（第 100 轮）：`new Date('2025-02-30')` 不抛错，而是静默归一成
+ * 03-02——只判 isFinite 会让这条记录带着 '2025-02-30' 这个键活下来，而排序/
+ * 周报/「昨晚」都按真实日历语义去找键，于是它永远查不到、静默不计入。
+ * 回环比对年/月/日，形状与语义同时合法才收。
+ */
+const isRealDate = (s: string): boolean => {
+  const d = new Date(s + 'T00:00:00');
+  return Number.isFinite(d.getTime())
+    && d.getFullYear() === Number(s.slice(0, 4))
+    && d.getMonth() + 1 === Number(s.slice(5, 7))
+    && d.getDate() === Number(s.slice(8, 10));
+};
+
 export function sanitizeRecord(raw: unknown): SleepRecord | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  const date = typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date)
-    // 形状合法之外再校验日历合法：2025-02-30 会被 JS 静默当 03-02、
-    // 2025-99-99 的 getTime() 是 NaN——一条坏日期就能打乱整个降序契约
-    && Number.isFinite(new Date(r.date + 'T00:00:00').getTime())
+  const date = typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && isRealDate(r.date)
     ? r.date : null;
   if (!date) return null;
   const duration = clampMin(r.durationMinutes, 1440);
