@@ -139,7 +139,9 @@ public class PetOverlayService extends Service {
                 safeUpdate(petRoot, petParams);
             }
             if (whale != null) {
-                if (on) whale.start(); else whale.stop();
+                // 与 setAppVisible 同一口径（第 100 轮）：只在真正可见时转。
+                // sAppVisible=false（被 App 弹窗遮挡）时亮屏不该把 tick 唤醒。
+                if (on && sAppVisible) whale.start(); else whale.stop();
             }
         }
     };
@@ -192,6 +194,9 @@ public class PetOverlayService extends Service {
     /**
      * 全屏 Web 弹窗（就诊摘要/分享卡预览）打开时临时隐藏悬浮窗。
      * 只改 View 可见性，不动 SharedPreferences 里的桌宠开关；关闭弹窗后恢复。
+     * GONE 时同时停掉 whale 的 33ms tick（第 100 轮）：隐藏期间窗口不绘制，
+     * 但自循环此前照转——每秒 30 次主线程唤醒做无效判定。start/stop 对称，
+     * SCREEN_OFF → stop 已是同一模式。
      */
     static void setAppVisible(boolean visible) {
         sAppVisible = visible;
@@ -206,6 +211,9 @@ public class PetOverlayService extends Service {
                 }
                 if (svc.petRoot != null) {
                     svc.petRoot.setVisibility(visible ? View.VISIBLE : View.GONE);
+                }
+                if (svc.whale != null) {
+                    if (visible) svc.whale.start(); else svc.whale.stop();
                 }
             } catch (Exception ignored) {
             }
@@ -295,7 +303,10 @@ public class PetOverlayService extends Service {
             OverlayGuard.apply(petRoot);   // A5：可点击悬浮窗防 tapjacking
             wm.addView(petRoot, petParams);
             if (!sAppVisible) petRoot.setVisibility(View.GONE);
-            whale.start();   // 窗口上屏成功才启动 33ms 自循环——失败路径才能完整回收
+            // 窗口上屏成功才启动 33ms 自循环——失败路径才能完整回收。
+            // 被遮挡（sAppVisible=false）时不启动，等 setAppVisible(true) 再启
+            //（第 100 轮：隐藏期间不该空转 30fps 主线程循环）
+            if (sAppVisible) whale.start();
             main.post(drowsyTick);
         } catch (Throwable e) {
             // OOM（Error）会穿透 catch(Exception)——解码 10MB 精灵图正是重内存路径，

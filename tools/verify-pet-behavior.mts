@@ -204,3 +204,46 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
     if (!stillCaught) process.exitCode = 1;
   }
 }
+
+// ── 贴图与隐藏期节拍（第 100 轮，接"贴图解码尺寸/图层合成"审查结论）──
+//  ① 41 帧 256×256 解码 ≈ 10.25MB/皮肤：HARDWARE 位图把它移出 Java 堆，
+//     并避开"软位图被 HWUI LRU 逐出后整张重传"的单帧卡顿。但 HARDWARE
+//     位图画到软件画布会直接抛异常——必须双重闸门（API≥26 + App 级未关
+//     硬件加速），无条件使用就是崩溃循环。
+//  ② pet 在 App 弹窗下是 GONE：窗口不绘制但 33ms 自循环此前照转。
+//     三处入口（setAppVisible / 屏幕亮灭 / showPet 创建）必须同为"可见才转"。
+{
+  const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  const svc = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
+  const hwGate =
+    /opts\.inPreferredConfig = Bitmap\.Config\.HARDWARE;/.test(view)
+    && /SDK_INT >= 26/.test(view)
+    && /FLAG_HARDWARE_ACCELERATED\) != 0/.test(view);
+  const hiddenStop =
+    /if \(visible\) svc\.whale\.start\(\); else svc\.whale\.stop\(\);/.test(svc)
+    && /if \(on && sAppVisible\) whale\.start\(\); else whale\.stop\(\);/.test(svc)
+    && /if \(sAppVisible\) whale\.start\(\);/.test(svc);
+  const checks: Array<[string, boolean]> = [
+    ['桌宠：HARDWARE 解码双重闸门（API≥26 且 App 级硬件加速在——软件画布画 HARDWARE 位图会崩）',
+      hwGate],
+    ['桌宠：三处入口统一"可见才转"（弹窗遮挡/亮灭屏/创建时不再空转 30fps）',
+      hiddenStop],
+  ];
+  for (const [name, ok] of checks) {
+    console.log(`${ok ? '✓' : '✗'} ${name}`);
+    if (!ok) process.exitCode = 1;
+  }
+  // 反向自检：把双重闸门改成无条件 HARDWARE 必须被同一判据抓住
+  {
+    const doctored = view.replace(
+      'if (android.os.Build.VERSION.SDK_INT >= 26 && hwApp) {',
+      'if (true) {',
+    );
+    const stillCaught =
+      !(/opts\.inPreferredConfig = Bitmap\.Config\.HARDWARE;/.test(doctored)
+        && /SDK_INT >= 26/.test(doctored)
+        && /FLAG_HARDWARE_ACCELERATED\) != 0/.test(doctored));
+    console.log(`${stillCaught ? '✓' : '✗'} 反向自检：无条件的 HARDWARE 解码可被检出`);
+    if (!stillCaught) process.exitCode = 1;
+  }
+}

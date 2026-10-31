@@ -157,6 +157,20 @@ const MUTATIONS: Mutation[] = [
     replace: "  const date = typeof r.date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(r.date)",
     note: '去掉日历回环 → 2025-02-30 带着不存在的键活下来、该夜静默不计入',
   },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java',
+    guard: 'verify-pet-behavior.mts',
+    find: 'if (android.os.Build.VERSION.SDK_INT >= 26 && hwApp) {',
+    replace: 'if (true) {',
+    note: 'HARDWARE 解码去掉双重闸门 → 软件画布上画 HARDWARE 位图直接崩 onDraw',
+  },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java',
+    guard: 'verify-pet-behavior.mts',
+    find: 'if (visible) svc.whale.start(); else svc.whale.stop();',
+    replace: 'if (visible) { petRoot.setVisibility(View.VISIBLE); } else { petRoot.setVisibility(View.GONE); }',
+    note: '遮挡期不再停 tick → 被弹窗盖住时 30fps 主线程空转回归',
+  },
 ];
 
 const originals = new Map<string, string>();

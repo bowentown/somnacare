@@ -225,11 +225,27 @@ public class WhaleGirlView extends View {
 
     private Anim load(String name, int frames, int fps, String playback, String motion) {
         try (java.io.InputStream in = getContext().getAssets().open(dir + name + ".png")) {
-            Bitmap b = BitmapFactory.decodeStream(in);
+            // HARDWARE 位图（第 100 轮）：ARGB_8888 软位图画在硬件加速画布上时，
+            // 像素要先进 HWUI 的 LRU 纹理缓存——内存吃紧时会被逐出，下一次
+            // drawBitmap 再整张重传（一张 768×256×4 ≈ 786KB，交叉溶解一次画两张
+            // 就是 1.5MB 的单帧上传）= 用户实测的"偶尔卡一帧"。HARDWARE 把像素
+            // 直接放进显存，永不逐出重传；同时 10.25MB 不再占 Java 堆
+            // （本进程还常驻 MediaPipe，堆压力就是 LMK 风险）。
+            // 双重前提（软件画布画 HARDWARE 位图会直接抛异常，onDraw 崩）：
+            //   ① API ≥ 26；② App 级未关硬件加速（窗口的
+            //   FLAG_HARDWARE_ACCELERATED 由 showPet 显式携带）。
+            BitmapFactory.Options opts = null;
+            boolean hwApp = (getContext().getApplicationInfo().flags
+                    & android.content.pm.ApplicationInfo.FLAG_HARDWARE_ACCELERATED) != 0;
+            if (android.os.Build.VERSION.SDK_INT >= 26 && hwApp) {
+                opts = new BitmapFactory.Options();
+                opts.inPreferredConfig = Bitmap.Config.HARDWARE;
+            }
+            Bitmap b = BitmapFactory.decodeStream(in, null, opts);
             if (b == null) return null;
             return new Anim(name, b, frames, fps, playback, motion);
         } catch (OutOfMemoryError e) {
-            // 低内存设备解码 256×256 × 18 张可能 OOM：缺一张比崩进程好
+            // 低内存设备解码 41 帧 256×256 可能 OOM：缺一张比崩进程好
             return null;
         } catch (Exception e) {
             return null;
