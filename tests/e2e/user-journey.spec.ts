@@ -1444,3 +1444,40 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
   await expect(page.getByText(/模型：DeepSeek \(deepseek-flash\)/)).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+// 旅程33 睡眠日历交互（第 107 轮重做）：第 106 轮的手绘图零交互，重做后
+// react-activity-calendar 点选出当夜详情。锁三条行为链：默认选中最近一夜
+//（详情即开即见）、点选切夜详情跟着切、无记录日诚实空态（不冒充 0 分）。
+test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实空态', async ({ page }) => {
+  const errors = watchErrors(page);
+  // 三晚记录：92（强）/76（中）/58（弱），再往前留空档给"无记录日"
+  await seed(page, [
+    mkRecord(dstr(-1), '23:10', '07:10', 92),
+    mkRecord(dstr(-2), '23:40', '06:50', 76),
+    mkRecord(dstr(-3), '00:20', '08:20', 58),
+  ], NIGHT_SCHEMA);
+
+  const base = await openAt(page, 21, 0);
+  await navTo(page, '趋势');
+
+  const cal = page.getByTestId('sleep-calendar');
+  await expect(cal).toBeVisible();
+  await expect(page.getByTestId('rhythm-chart')).toBeVisible();
+
+  const detail = page.getByTestId('calendar-detail');
+  // 默认选中最近一夜：详情即开即见。分值会被 v2 口径重算（seed ≠ 展示值），
+  // 所以锚定就寝/起床时刻而非分值
+  await expect(detail).toContainText('评分');
+  await expect(detail).toContainText('就寝 23:10 · 起床 07:10');
+
+  // 点选前晚 → 详情切换（旧夜的时刻必须消失，不能只是叠加）
+  await cal.locator(`rect[data-date="${dstr(-2, base)}"]`).click();
+  await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
+  await expect(detail).not.toContainText('就寝 23:10');
+
+  // 点选无记录日 → 诚实空态
+  await cal.locator(`rect[data-date="${dstr(-6, base)}"]`).click();
+  await expect(detail).toContainText('该日无记录');
+
+  expect(errors).toEqual([]);
+});

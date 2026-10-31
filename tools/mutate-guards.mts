@@ -192,6 +192,20 @@ const MUTATIONS: Mutation[] = [
     replace: 'const baseline = Math.max(300, Math.min(660, fallbackMinutes));',
     note: '睡眠需求不再跟随个人数据 → 个人基线断言红（"科学化"名存实亡）',
   },
+  {
+    file: 'src/components/SleepRhythmChart.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: 'connectNulls={false}',
+    replace: 'connectNulls={true}',
+    note: '漏记夜被连线抹平 → 作息曲线冒充连续（数据诚实缺陷）',
+  },
+  {
+    file: 'src/components/SleepCalendar.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: "import 'react-activity-calendar/tooltips.css';",
+    replace: '',
+    note: 'tooltip 样式被剥 → 悬停提示无底色不可读（交互退化回手绘时代）',
+  },
 ];
 
 const originals = new Map<string, string>();

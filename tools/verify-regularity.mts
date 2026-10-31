@@ -233,7 +233,7 @@ const check = (name: string, ok: boolean, detail = '') => {
   }
 }
 
-// 8) 日向量构造器 + 睡债（第 106 轮：节律图与 SRI 共用同一序列）
+// 8) 日向量构造器 + 睡债（第 106 轮落地；第 107 轮 actogram 退场后，本护栏是构造器的直接钉子）
 {
   const { buildSleepDayVectors } = await import(new URL('../src/utils/sleepRegularity.ts', import.meta.url).href);
   const { computeSleepDebt } = await import(new URL('../src/utils/sleepScore.ts', import.meta.url).href);

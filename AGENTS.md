@@ -15,7 +15,7 @@ npm run verify                      # 43 条静态护栏（tsx tools/verify-*.mt
 npm run mutate                      # 变异测试：注入已知坏实现，对应护栏必须报红
 npm run build                       # vite build → dist/
 npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名（★ 必须先 build）
-npx playwright test                 # 61 条浏览器 e2e（自动拉起 :3000 的 dev server）
+npx playwright test                 # 62 条浏览器 e2e（自动拉起 :3000 的 dev server）
 ```
 
 - **顺序有依赖**：`verify:css` 读 `dist/`，所以要先 `npm run build`，否则会误报"类名不存在"。

@@ -36,7 +36,7 @@ import {
 } from 'recharts';
 import { SleepRecord } from '../types/sleep';
 import { toLocalDateString } from '../utils/dateUtils';
-import { regularityTier, computeSRI, buildSleepDayVectors } from '../utils/sleepRegularity';
+import { regularityTier, computeSRI } from '../utils/sleepRegularity';
 import { summarizeWeek } from '../utils/weekSummary';
 import { ShareCardModal } from './ShareCardModal';
 import { ClinicalSummaryModal } from './ClinicalSummaryModal';
@@ -55,8 +55,8 @@ import {
 import { forceRefreshUsage, getCachedUsageDays } from '../utils/usageStore';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { formatDurationChinese, computeSleepNeed, computeMSFsc, computeSleepDebt } from '../utils/sleepScore';
-import { SleepActogram } from './SleepActogram';
-import { SleepHeatmap } from './SleepHeatmap';
+import { SleepCalendar } from './SleepCalendar';
+import { SleepRhythmChart } from './SleepRhythmChart';
 import { ThemeConfig } from '../utils/themeStyles';
 import { hapticStep } from '../utils/haptics';
 import { EmptyState, StatCard } from './ui';
@@ -207,6 +207,8 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showClinical, setShowClinical] = useState(false);
+  // 睡眠日历点选的日期（null = 默认最近一夜，详情即开即见；第 107 轮）
+  const [calDay, setCalDay] = useState<string | null>(null);
   // ── 手机使用对照（P3）：native-only，权限/数据/引导标记 ──
   const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
   const [usageDays, setUsageDays] = useState<UsageDay[]>(() => getCachedUsageDays());
@@ -912,7 +914,14 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         const need = computeSleepNeed(records, Math.round((targetDurationHours || 8) * 60), chronotype);
         const msf = computeMSFsc(records, chronotype);
         const debt = computeSleepDebt(records, need.needMinutes, chronotype);
-        const dayVectors = buildSleepDayVectors(records, chronotype);
+        // 日历选中夜（第 107 轮）：默认最近一夜（点按改选）；夜睡优先，
+        // 同日只有午睡记录时回退它——但日历格子本身只画夜睡
+        const nightRecs = nightsOnly(records);
+        const latestNight = nightRecs.reduce<SleepRecord | null>((a, r) => (!a || r.date > a.date ? r : a), null);
+        const calSel = calDay ?? latestNight?.date ?? null;
+        const calRec = calSel
+          ? (records.find((r) => r.date === calSel && r.kind !== 'nap') ?? records.find((r) => r.date === calSel))
+          : undefined;
         const recentNights = nightsOnly(records).slice(0, 7);
         const avgEfficiency = recentNights.length
           ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
@@ -989,14 +998,12 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                   {regularityTier(sum.regularity.score) === 'steady' ? '作息很稳' : regularityTier(sum.regularity.score) === 'ok' ? '基本规律' : '作息波动大'}
                 </p>
                 {sri && (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-slate-400">SRI</span>
-                      <span className="font-mono font-bold text-sm text-slate-200">{sri.sri}</span>
-                    </div>
-                    <SleepActogram days={dayVectors} accentHex={theme.accentHex} />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-slate-400">SRI</span>
+                    <span className="font-mono font-bold text-sm text-slate-200">{sri.sri}</span>
                   </div>
                 )}
+                <SleepRhythmChart records={records} accentHex={theme.accentHex} />
               </div>
             ) : (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>
@@ -1020,7 +1027,47 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 </p>
               )}
             </div>
-            <SleepHeatmap records={records} theme={theme} accentHex={theme.accentHex} />
+            {/* 睡眠日历（第 107 轮重做）：react-activity-calendar + 点选出当夜详情 */}
+            <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 space-y-2`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-200">睡眠日历</span>
+                <span className="text-[10px] font-mono text-slate-400">{calSel ? calSel.slice(5) : ''}</span>
+              </div>
+              <SleepCalendar records={records} accentHex={theme.accentHex} selected={calSel} onSelect={setCalDay} />
+              {calRec ? (
+                <div className="space-y-1.5" data-testid="calendar-detail">
+                  {/* 裸列而非 StatCard：日历卡已是 innerBg，再套一层盒会糊（周小结的 StatCard 直接坐在外层 cardBg 上） */}
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="min-w-0">
+                      <span className={`text-[10px] ${textMuted} block`}>评分</span>
+                      <span className={`text-xl font-black font-mono tabular-nums ${accentText}`}>{calRec.sleepScore ?? '—'}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className={`text-[10px] ${textMuted} block`}>时长</span>
+                      <span className="text-xl font-black font-mono tabular-nums text-white">
+                        {Math.floor((calRec.durationMinutes ?? 0) / 60)}<span className="text-sm">H</span>
+                        {(calRec.durationMinutes ?? 0) % 60}<span className="text-sm">M</span>
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className={`text-[10px] ${textMuted} block`}>效率</span>
+                      <span className="text-xl font-black font-mono tabular-nums text-emerald-400">
+                        {calRec.sleepEfficiency ?? '—'}<span className="text-sm">%</span>
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] font-mono text-slate-400 whitespace-nowrap overflow-hidden">
+                    就寝 {calRec.bedtime} · 起床 {calRec.wakeTime}
+                    {typeof calRec.latencyMinutes === 'number' && <> · 潜伏 {calRec.latencyMinutes} 分</>}
+                    {typeof calRec.wakeCount === 'number' && <> · 夜醒 {calRec.wakeCount} 次</>}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-400 leading-relaxed" data-testid="calendar-detail">
+                  {calSel ? '该日无记录' : ''}
+                </p>
+              )}
+            </div>
             {weekReport.streak > 0 && (
               <p className={`text-[11px] font-bold ${theme.accentText}`}>
                 🔥 连续达标 {weekReport.streak} 晚{weekReport.graceUsed ? '（今晚续上）' : ''}

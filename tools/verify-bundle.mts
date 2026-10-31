@@ -59,6 +59,13 @@ check('recharts 落在某个懒 chunk（EyeHealthChart）',
 check('three 落在池塘懒 chunk（bootstrap-*.js）',
   allJs.some((c) => /^bootstrap-.*\.js$/.test(c.name) && has(c.src, 'WebGLRenderer')));
 
+// 第 107 轮：睡眠日历引入 react-activity-calendar（含 date-fns/floating-ui），
+// 同样只许随 TrendsTab 懒加载——指纹取包名（运行时 className 用的就是这个
+// 字符串字面量，压缩后必然存活；实测 dist 懒 chunk 命中、主包无）。
+check('主包不含 react-activity-calendar（包名指纹）', !has(main, 'react-activity-calendar'));
+check('react-activity-calendar 落在懒 chunk（睡眠日历）',
+  allJs.some((c) => c.name !== js[0] && has(c.src, 'react-activity-calendar')));
+
 // 主包体积上界（防止下一个重库悄悄进来）：第 103 轮实测 637K 字符
 // （.length 口径；磁盘 689KB 字节，差异来自包内 CJK 字符串）。超限不是
 // 必错，但必须先解释再放宽。

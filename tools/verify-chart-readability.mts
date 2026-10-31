@@ -23,6 +23,9 @@ const ok = (name: string, condition: boolean): void => {
 const trends = read('src/components/TrendsTab.tsx');
 const app = read('src/App.tsx');
 const pkg = read('package.json');
+// 第 107 轮重做的两个可视化（开源组件 + 交互 + 数据诚实）
+const cal = read('src/components/SleepCalendar.tsx');
+const rhythm = read('src/components/SleepRhythmChart.tsx');
 
 ok('图表库：评分图使用 Recharts（MIT，React 19）',
   trends.includes("from 'recharts'")
@@ -90,15 +93,43 @@ ok('起卧图：无竖线拥挤（均值线/须线/带边框/悬停色块全部�
 ok('App 把用户目标作息传入趋势页',
   app.includes('targetBedtime={userProfile.targetBedtime}')
   && app.includes('targetWakeTime={userProfile.targetWakeTime}'));
+ok('睡眠日历：套 react-activity-calendar 开源组件（MIT）且内置 tooltip 在位',
+  pkg.includes('"react-activity-calendar"')
+  && cal.includes("from 'react-activity-calendar'")
+  && cal.includes("import 'react-activity-calendar/tooltips.css'")
+  && cal.includes('tooltips={{ activity'));
+ok('睡眠日历：点按可选中（renderBlock 挂 onClick，data-date 供 e2e 定位）',
+  cal.includes('renderBlock')
+  && cal.includes('onSelect')
+  && cal.includes("'data-date'"));
+ok('睡眠日历：无记录 = 空格（level 0），不冒充 0 分',
+  cal.includes('score === undefined ? 0 : score >= 90 ? 4 : score >= 80 ? 3 : score >= 60 ? 2 : 1'));
+ok('作息曲线：recharts 双线 + 缺口断线（漏记夜不连线）+ 午夜参照线',
+  rhythm.includes("from 'recharts'")
+  && (rhythm.match(/connectNulls=\{false\}/g) ?? []).length === 2   // 就寝/起床双线各自断缺口
+  && rhythm.includes('<ReferenceLine y={24}')
+  && rhythm.includes('data-testid="rhythm-chart"')
+  && rhythm.includes('aria-label='));
+ok('作息曲线：双线可辨识（实线就寝/虚线起床有图例，轴刻度走中文时刻）',
+  rhythm.includes('fmtTick')
+  && rhythm.includes('strokeDasharray="6 3"')
+  && rhythm.includes('name="就寝"')
+  && rhythm.includes('name="起床"')
+  && rhythm.includes('w-3 h-0.5 rounded-full'));
 
 // 反向自检：删掉 Y 轴刻度数组后，同一判据必须失去
 {
   const doctored = trends.replace('[50, 75, 90, 100]', '[]');
   ok('反向自检：删除 Y 轴刻度后判据不再成立', !doctored.includes('[50, 75, 90, 100]'));
+  // 第 107 轮新增图的两个锚点各做一次反向验证（双线各有一处 connectNulls，全量替换）
+  const doctoredRhythm = rhythm.split('connectNulls={false}').join('connectNulls');
+  ok('反向自检：作息曲线缺口开关被改坏后判据不再成立', !doctoredRhythm.includes('connectNulls={false}'));
+  const doctoredCal = cal.replace("'data-date'", "'data-x'");
+  ok('反向自检：日历点选锚点被删后判据不再成立', !doctoredCal.includes("'data-date'"));
 }
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——趋势图可读性护栏不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-chart-readability：坐标/目标带/断点/分期/起卧全部在位');
+console.log('\n✓ verify-chart-readability：坐标/目标带/断点/分期/起卧/日历/作息曲线全部在位');
