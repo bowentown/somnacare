@@ -178,6 +178,13 @@ const MUTATIONS: Mutation[] = [
     replace: 'Math.max(0, Math.round(m)),',
     note: '去掉单日 1440 分钟钳制 → 34.6 小时/天的物理不可能数据重回图表',
   },
+  {
+    file: 'src/utils/sleepRegularity.ts',
+    guard: 'verify-regularity.mts',
+    find: 'Math.round(200 * (match / cmp) - 100)',
+    replace: 'Math.round(200 * ((cmp - match) / cmp) - 100)',
+    note: 'SRI 同态率错写成异态率 → 一致作息得 0、交替作息得 100（双锚点同时报红）',
+  },
 ];
 
 const originals = new Map<string, string>();

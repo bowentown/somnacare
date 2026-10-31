@@ -36,7 +36,7 @@ import {
 } from 'recharts';
 import { SleepRecord } from '../types/sleep';
 import { toLocalDateString } from '../utils/dateUtils';
-import { regularityTier } from '../utils/sleepRegularity';
+import { regularityTier, computeSRI } from '../utils/sleepRegularity';
 import { summarizeWeek } from '../utils/weekSummary';
 import { ShareCardModal } from './ShareCardModal';
 import { ClinicalSummaryModal } from './ClinicalSummaryModal';
@@ -901,6 +901,8 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         // best=undefined 白屏）。第 24 轮：不再平行推导 nightsOnly，
         // 也不用 ! 断言（全小睡时三个均值确实是 null——用空值收窄消费）
         const sum = summarizeWeek(records);
+        // 真 SRI（第 104 轮）：逐分钟 24h 滞后对照（Fischer 2021），由记录构造
+        const sri = computeSRI(records, chronotype);
         const recentNights = nightsOnly(records).slice(0, 7);
         const avgEfficiency = recentNights.length
           ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
@@ -976,6 +978,11 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                   就寝 ±{sum.regularity.bedDev} 分钟 · 起床 ±{sum.regularity.wakeDev} 分钟 ·{' '}
                   {regularityTier(sum.regularity.score) === 'steady' ? '作息很稳' : regularityTier(sum.regularity.score) === 'ok' ? '基本规律' : '作息波动大'}
                 </p>
+                {sri && (
+                  <p className={`text-[10px] ${textMuted} leading-relaxed`}>
+                    24 小时逐分钟对照 SRI {sri.sri}（近 14 天 · 按你记录的作息构造）
+                  </p>
+                )}
               </div>
             ) : (
               <p className={`text-[11px] ${textMuted} leading-relaxed`}>

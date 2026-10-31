@@ -116,6 +116,74 @@ const check = (name: string, ok: boolean, detail = '') => {
   check('反向自检：正确实现与错误口径结果不同', r !== null && r.bedDev !== wrongDev);
 }
 
+// 6) 真 SRI（第 104 轮）：Fischer 2021 口径的行为断言。
+//    序列由记录构造（夜睡窗+小睡窗），非测量——UI/注释保留该口径。
+{
+  const { computeSRI, sleepIntervalsOf } = await import(new URL('../src/utils/sleepRegularity.ts', import.meta.url).href);
+  const { nightKeyOfBed } = await import(new URL('../src/utils/dateUtils.ts', import.meta.url).href);
+  const NOW = new Date(2026, 10, 15);            // 2026-11-15（固定时钟）
+  const mkDate = (i: number): string => {
+    const d = new Date(2026, 10, 2 + i);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const mkNight = (i: number, bed: string, wake: string) =>
+    ({ id: 's' + i, date: mkDate(i), bedtime: bed, wakeTime: wake, durationMinutes: 480, sleepScore: 85, deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 80, awakeMinutes: 10, sleepEfficiency: 90, latencyMinutes: 10, wakeCount: 1, wakingMood: 'refreshed', preSleepHabits: [], stages: [] });
+
+  // ① 地基：区间起点与夜归属互逆（nightKeyOfBed 往返——两套实现经权威函数对账）
+  {
+    const recs = [
+      mkNight(0, '23:00', '07:00'),    // 晚间就寝：日历日 = date
+      mkNight(2, '00:20', '08:20'),    // 凌晨就寝：日历日 = date+1（nightKeyOfBed 逆运算）
+      mkNight(4, '01:30', '09:30', ),
+    ] as any[];
+    const iv = sleepIntervalsOf(recs, 'night');
+    check('SRI 地基：区间起点与夜归属互逆（nightKeyOfBed 往返）',
+      iv.every((x: { start: number }, i: number) => nightKeyOfBed(x.start) === recs[i].date));
+    const ivDay = sleepIntervalsOf([{ ...recs[0], bedtime: '08:00', wakeTime: '16:00' }], 'day');
+    check('SRI 地基：day 作息不跨日平移（08:00 起始=当日）',
+      new Date(ivDay[0].start).getDate() === 2);
+  }
+
+  // ② 锚点 A：完全一致的 7 晚 → 100（6 对相邻天，1440×6 全同态）
+  {
+    const recs = Array.from({ length: 7 }, (_, i) => mkNight(i, '23:00', '07:00'));
+    const s = computeSRI(recs as any, 'night', NOW, 14);
+    check('SRI 锚点：完全一致的 7 晚 → 100', s !== null && s.sri === 100 && s.pairs === 6,
+      `sri=${s?.sri} pairs=${s?.pairs}`);
+  }
+
+  // ③ 锚点 B：12 小时窗昼夜交替（10-22 vs 22-10）→ 同钟点分钟对几乎全异态 → ≤10
+  {
+    const recs = Array.from({ length: 7 }, (_, i) =>
+      i % 2 === 0 ? mkNight(i, '10:00', '22:00') : mkNight(i, '22:00', '10:00'));
+    const s = computeSRI(recs as any, 'night', NOW, 14);
+    check('SRI 锚点：12h 窗昼夜交替 → ≤10（错态占半）', s !== null && s.sri <= 10,
+      `sri=${s?.sri}`);
+  }
+
+  // ④ 一致性 ≠ 时长：完全一致作息上加每天固定 13:00-13:30 小睡 → 仍 100
+  //   （SRI 量的是"状态是否可预测"，固定午睡与固定清醒同样可预测）
+  {
+    const recs = Array.from({ length: 7 }, (_, i) => [
+      mkNight(i, '23:00', '07:00'),
+      { ...mkNight(i, '13:00', '13:30'), kind: 'nap' as const, durationMinutes: 30 },
+    ]).flat();
+    const s = computeSRI(recs as any, 'night', NOW, 14);
+    check('SRI 性质：固定午睡不破坏一致性（量一致性非时长）', s !== null && s.sri === 100,
+      `sri=${s?.sri}`);
+  }
+
+  // ⑤ 样本门槛：可对照天对 < 4 → null（3 晚只有 3 对，含首尾截断日）
+  {
+    const recs = Array.from({ length: 3 }, (_, i) => mkNight(i, '23:00', '07:00'));
+    check('SRI 门槛：可对照天对 < 4 → null（不显示假数字）',
+      computeSRI(recs as any, 'night', NOW, 14) === null);
+  }
+
+  // 反向自检：锚点 A=100 且锚点 B≤10 联合成立——把"同态"错写成"异态"的
+  // 实现会得到 0/100，两条锚点同时报红（match/mismatch 不可能都过）
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——规律度口径与断言不符`);
   process.exit(1);
