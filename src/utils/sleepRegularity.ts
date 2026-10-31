@@ -76,85 +76,108 @@ export interface SRIResult {
  *    （样本不足不显示假数字，与 computeRegularity 同门槛）。
  *  - SRI 量的是【一致性】不是睡眠量：白天完全不睡与每天固定午睡同样高。
  */
-export function computeSRI(
+export interface SleepDayVector {
+  dayIndex: number;            // 0 = 窗口首日
+  dateKey: string;
+  observed: boolean;           // 当天有夜睡记录（头或尾）
+  asleep: Uint8Array | null;   // 1440 分钟睡着掩码（未观察日 = null）
+  obsMask: Uint8Array | null;  // 观测掩码：纪元内且当天有夜睡记录
+}
+
+/**
+ * 逐分钟睡眠序列的唯一构造器（第 106 轮）：computeSRI 与趋势页节律图
+ * 共用——图上画的就是 SRI 在量的东西，两者不可能漂移。
+ * 观测语义：夜睡记录的当晚（头）与次日早上（尾）都有观测；纪元
+ * （首区间起点 → 末区间终点）之外的分钟与漏记夜的分钟是【未知】，
+ * 不充当"醒着"。
+ */
+export function buildSleepDayVectors(
   records: SleepRecord[],
   chronotype: 'night' | 'day' | 'irregular' = 'night',
   now: Date = new Date(),
   days = 14,
-): SRIResult | null {
-  // 逐日【本地午夜】锚定（不能用"日序号 × 86400000"——那是 UTC 午夜，
-  // UTC+8 下整体错 8 小时）
+): SleepDayVector[] {
   const dayStartMs = (k: number): number =>
     new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1) + k).getTime();
   const keyOf = (k: number): string => {
     const d = new Date(dayStartMs(k));
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
-
-  // 观察日：夜睡记录的 date（头）或其次日（尾——醒在当天早上）都有观测
   const nights = nightsOnly(records).filter((r) => r.date >= keyOf(0) && r.date <= keyOf(days - 1));
-  if (nights.length < 3) return null;
   const observed = new Set<number>();
   for (const r of nights) {
-    const k = Math.round((new Date(r.date + 'T12:00:00').getTime() - dayStartMs(0)) / 86400000);
+    // 正午锚定恰为 0.5 天：round(0.5)=1 会整体错位一天（第 106 轮日向量锚点抓出）
+    const k = Math.floor((new Date(r.date + 'T12:00:00').getTime() - dayStartMs(0)) / 86400000);
     if (k >= 0 && k <= days - 1) { observed.add(k); observed.add(k + 1); }
   }
-
-  // 逐分钟状态 + 观测掩码：夜睡窗/小睡窗内=睡着；其余分钟只有在
-  // 【纪元内（首区间起点 → 末区间终点）且当天有夜睡记录】才算"观测到醒着"
-  // ——首日就寝前、末日醒来后、以及漏记夜的分钟是【未知】而不是醒着，
-  // 把未知当醒着会惩罚漏记的人（SRI 崩给诚实记录的用户）。
-  const vectors = new Map<number, Uint8Array>();
-  const obsMasks = new Map<number, Uint8Array>();
   const all = sleepIntervalsOf([...nights, ...napsOnly(records)], chronotype);
-  if (all.length === 0) return null;
-  const eraStart = Math.min(...all.map((x) => x.start));
-  const eraEnd = Math.max(...all.map((x) => x.end));
+  const eraStart = all.length ? Math.min(...all.map((x) => x.start)) : 0;
+  const eraEnd = all.length ? Math.max(...all.map((x) => x.end)) : 0;
+
+  const out: SleepDayVector[] = [];
   for (let k = 0; k < days; k++) {
-    if (!observed.has(k)) continue;
+    const base: SleepDayVector = { dayIndex: k, dateKey: keyOf(k), observed: observed.has(k), asleep: null, obsMask: null };
+    if (!base.observed || all.length === 0) { out.push(base); continue; }
     const ds = dayStartMs(k);
     const era0 = Math.max(0, Math.floor((eraStart - ds) / 60000));
-    const era1 = Math.min(DAY_MIN, Math.ceil((eraEnd - ds) / 60000));
-    if (era1 <= era0) continue;
-    const obs = new Uint8Array(DAY_MIN);
+    const era1 = Math.min(1440, Math.ceil((eraEnd - ds) / 60000));
+    if (era1 <= era0) { out.push(base); continue; }
+    const obs = new Uint8Array(1440);
     for (let i = era0; i < era1; i++) obs[i] = 1;
-    obsMasks.set(k, obs);
-    let vec: Uint8Array | undefined;
+    let asleep: Uint8Array | undefined;
     for (const { start, end } of all) {
       if (end <= ds || start >= ds + 86400000) continue;
       const i0 = Math.max(0, Math.floor((start - ds) / 60000));
-      const i1 = Math.min(DAY_MIN, Math.ceil((end - ds) / 60000));
-      if (!vec) vec = new Uint8Array(DAY_MIN);
-      for (let i = i0; i < i1; i++) vec[i] = 1;
+      const i1 = Math.min(1440, Math.ceil((end - ds) / 60000));
+      if (!asleep) asleep = new Uint8Array(1440);
+      for (let i = i0; i < i1; i++) asleep[i] = 1;
     }
-    if (vec) vectors.set(k, vec);
+    out.push({ ...base, asleep: asleep ?? null, obsMask: obs });
   }
+  return out;
+}
+
+export function computeSRI(
+  records: SleepRecord[],
+  chronotype: 'night' | 'day' | 'irregular' = 'night',
+  now: Date = new Date(),
+  days = 14,
+): SRIResult | null {
+  // 夜数口径不变（头日计数）；<3 晚 → null
+  const nights = nightsOnly(records).filter((r) => r.date >= keyOf0(now, days) && r.date <= keyOfN(now));
+  if (nights.length < 3) return null;
+  const days_ = buildSleepDayVectors(records, chronotype, now, days);
+  const observedDays = days_.filter((d) => d.observed && d.asleep && d.obsMask);
 
   // 相邻观察日对照（同钟点分钟对 = 24h 滞后），只在【两侧都观测】的分钟上
   // 进行；时钟变更会造成 23/25 小时日——按 1440 网格对齐在案（中国无夏令时）
-  const observedDays = [...observed].sort((a, b) => a - b);
   let cmp = 0;
   let match = 0;
   let pairs = 0;
   for (let i = 0; i < observedDays.length - 1; i++) {
     const a = observedDays[i];
     const b = observedDays[i + 1];
-    if (b - a !== 1) continue;   // 只对照相邻自然日（24h 滞后）
-    const va = vectors.get(a);
-    const vb = vectors.get(b);
-    const oa = obsMasks.get(a);
-    const ob = obsMasks.get(b);
-    if (!va || !vb || !oa || !ob) continue;
+    if (b.dayIndex - a.dayIndex !== 1) continue;   // 只对照相邻自然日（24h 滞后）
     pairs++;
-    for (let m = 0; m < DAY_MIN; m++) {
-      if (!oa[m] || !ob[m]) continue;
+    for (let m = 0; m < 1440; m++) {
+      if (!a.obsMask![m] || !b.obsMask![m]) continue;
       cmp++;
-      if (va[m] === vb[m]) match++;
+      if (a.asleep![m] === b.asleep![m]) match++;
     }
   }
   if (pairs < 4) return null;   // 可对照天对不足 4 → 不显示假数字
   const sri = Math.max(0, Math.min(100, Math.round(200 * (match / cmp) - 100)));
   return { sri, nights: nights.length, pairs };
+}
+
+// 窗口首/末日键（computeSRI 的夜数过滤用；与 buildSleepDayVectors 同锚定）
+function keyOf0(now: Date, days: number): string {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function keyOfN(now: Date): string {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /**

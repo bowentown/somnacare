@@ -148,7 +148,7 @@ const check = (name: string, ok: boolean, detail = '') => {
   {
     const recs = Array.from({ length: 7 }, (_, i) => mkNight(i, '23:00', '07:00'));
     const s = computeSRI(recs as any, 'night', NOW, 14);
-    check('SRI 锚点：完全一致的 7 晚 → 100', s !== null && s.sri === 100 && s.pairs === 6,
+    check('SRI 锚点：完全一致的 7 晚 → 100（7 晚 + 次晨尾日 = 7 对）', s !== null && s.sri === 100 && s.pairs === 7,
       `sri=${s?.sri} pairs=${s?.pairs}`);
   }
 
@@ -231,6 +231,39 @@ const check = (name: string, ok: boolean, detail = '') => {
     check('MSFsc 门槛：自由日样本 < 3 → null',
       computeMSFsc(short as any, 'night', NOW, 28) === null);
   }
+}
+
+// 8) 日向量构造器 + 睡债（第 106 轮：节律图与 SRI 共用同一序列）
+{
+  const { buildSleepDayVectors } = await import(new URL('../src/utils/sleepRegularity.ts', import.meta.url).href);
+  const { computeSleepDebt } = await import(new URL('../src/utils/sleepScore.ts', import.meta.url).href);
+  const NOW2 = new Date(2026, 10, 15);           // 2026-11-15（周日）
+  const mkDate2 = (i: number): string => {
+    const d = new Date(2026, 10, 2 + i);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const mkNight2 = (i: number, dur: number) =>
+    ({ id: 'v' + i, date: mkDate2(i), bedtime: '23:00', wakeTime: '07:00', durationMinutes: dur, sleepScore: 85, deepSleepMinutes: 90, lightSleepMinutes: 270, remSleepMinutes: 80, awakeMinutes: 10, sleepEfficiency: 90, latencyMinutes: 10, wakeCount: 1, wakingMood: 'refreshed', preSleepHabits: [], stages: [] });
+  const nights = Array.from({ length: 7 }, (_, i) => mkNight2(i, 420));
+
+  // 观测掩码：首日就寝（23:00）之前的分钟是未知，不算醒着
+  const vecs: Array<{ dayIndex: number; dateKey: string; observed: boolean; asleep: Uint8Array | null; obsMask: Uint8Array | null }> = buildSleepDayVectors(nights as any, 'night', NOW2, 14);
+  const first = vecs.find((v) => v.dateKey === mkDate2(0))!;
+  check('日向量：首日 23:00 前为未知（不冒充醒着）',
+    !!first && first.observed && first.asleep !== null && first.obsMask !== null
+    && first.obsMask[0] === 0 && first.obsMask[1380] === 1 && first.asleep[1380] === 1);
+  // 未记录日（11-09 之后无夜）→ observed=false，不参与对照
+  const unobserved = vecs.filter((v) => !v.observed).length;
+  check('日向量：漏记日不参与（14 天窗口内 6 天未观察）', unobserved === 6, 'unobserved=' + unobserved);
+
+  // 睡债：只计不足（基线 420，3 晚 240 → 3×180=540）；睡够不抵扣
+  const recs = [240, 240, 240, 420, 420, 420, 420].map((d, i) => mkNight2(i, d));
+  const s = computeSleepDebt(recs as any, 420, 'night', NOW2, 14);
+  check('睡债：只计不足（3 晚 4h → 540 分钟），睡够不抵扣',
+    s.debtMinutes === 540 && s.nights === 7, 'debt=' + s.debtMinutes);
+  const none = Array.from({ length: 7 }, (_, i) => mkNight2(i, 420));
+  check('睡债：全部睡够 → 0',
+    computeSleepDebt(none as any, 420, 'night', NOW2, 14).debtMinutes === 0);
 }
 
 if (failures > 0) {

@@ -171,6 +171,29 @@ export function computeMSFsc(
 }
 
 /**
+ * 近 N 晚睡债（第 106 轮）：Σ max(0, 基线 − 实睡)——经典睡眠债算术
+ * （只计不足，不因睡得多扣分）。基线由调用方传 computeSleepNeed 的结果；
+ * 今晚（未完成）不计。
+ */
+export function computeSleepDebt(
+  records: SleepRecord[],
+  baselineMinutes: number,
+  chronotype: 'night' | 'day' | 'irregular' = 'night',
+  now: Date = new Date(),
+  days = 7,
+): { debtMinutes: number; nights: number } {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const nights = nightsOnly(records).filter((r) => {
+    if (r.date >= todayKey) return false;   // 今晚未完成，不计
+    const t = new Date(r.date + 'T12:00:00').getTime();
+    return t >= start.getTime();
+  });
+  const debtMinutes = nights.reduce((a, r) => a + Math.max(0, baselineMinutes - r.durationMinutes), 0);
+  return { debtMinutes, nights: nights.length };
+}
+
+/**
  * Generates realistic cyclical sleep stage segments (Deep -> Light -> REM -> Awake)
  * across 90-110 min sleep ultradian cycles.
  */

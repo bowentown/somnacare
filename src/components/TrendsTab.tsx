@@ -36,7 +36,7 @@ import {
 } from 'recharts';
 import { SleepRecord } from '../types/sleep';
 import { toLocalDateString } from '../utils/dateUtils';
-import { regularityTier, computeSRI } from '../utils/sleepRegularity';
+import { regularityTier, computeSRI, buildSleepDayVectors } from '../utils/sleepRegularity';
 import { summarizeWeek } from '../utils/weekSummary';
 import { ShareCardModal } from './ShareCardModal';
 import { ClinicalSummaryModal } from './ClinicalSummaryModal';
@@ -54,7 +54,9 @@ import {
 // 且查询结果回流给提议侧（此前这里直连 usageSignal，两套数据源不互通）
 import { forceRefreshUsage, getCachedUsageDays } from '../utils/usageStore';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
-import { formatDurationChinese, computeSleepNeed, computeMSFsc } from '../utils/sleepScore';
+import { formatDurationChinese, computeSleepNeed, computeMSFsc, computeSleepDebt } from '../utils/sleepScore';
+import { SleepActogram } from './SleepActogram';
+import { SleepHeatmap } from './SleepHeatmap';
 import { ThemeConfig } from '../utils/themeStyles';
 import { hapticStep } from '../utils/haptics';
 import { EmptyState, StatCard } from './ui';
@@ -909,6 +911,8 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         // 个人睡眠需求 + MSFsc 时型（第 105 轮，科学口径）
         const need = computeSleepNeed(records, Math.round((targetDurationHours || 8) * 60), chronotype);
         const msf = computeMSFsc(records, chronotype);
+        const debt = computeSleepDebt(records, need.needMinutes, chronotype);
+        const dayVectors = buildSleepDayVectors(records, chronotype);
         const recentNights = nightsOnly(records).slice(0, 7);
         const avgEfficiency = recentNights.length
           ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
@@ -985,9 +989,13 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                   {regularityTier(sum.regularity.score) === 'steady' ? '作息很稳' : regularityTier(sum.regularity.score) === 'ok' ? '基本规律' : '作息波动大'}
                 </p>
                 {sri && (
-                  <p className={`text-[10px] ${textMuted} leading-relaxed`}>
-                    24 小时逐分钟对照 SRI {sri.sri}（近 14 天 · 按你记录的作息构造）
-                  </p>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-slate-400">SRI</span>
+                      <span className="font-mono font-bold text-sm text-slate-200">{sri.sri}</span>
+                    </div>
+                    <SleepActogram days={dayVectors} accentHex={theme.accentHex} />
+                  </div>
                 )}
               </div>
             ) : (
@@ -1000,17 +1008,19 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 <span className="text-[11px] font-bold text-slate-200">睡眠需求</span>
                 <span className="font-mono font-black text-lg text-sky-300">{formatDurationChinese(need.needMinutes)}</span>
               </div>
-              <p className={`text-[10px] ${textMuted} leading-relaxed`}>
-                {need.basis === 'personal'
-                  ? `近 14 晚中位 ${formatDurationChinese(need.baselineMinutes)}（${need.samples} 晚）· 打分对照这个数，不是固定 8 小时`
-                  : `记录满 5 晚后，打分目标会改为你的个人基线（当前按 ${formatDurationChinese(need.needMinutes)}）`}
-              </p>
-              {msf && (
+              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                <span>MSFsc {msf ? msf.label : '—'}</span>
+                {debt.nights >= 3 && debt.debtMinutes >= 30 && (
+                  <span>睡债 +{formatDurationChinese(debt.debtMinutes)}</span>
+                )}
+              </div>
+              {need.basis !== 'personal' && (
                 <p className={`text-[10px] ${textMuted} leading-relaxed`}>
-                  自由日睡眠中点 MSFsc {msf.label}（{msf.freeSamples} 个自由日 · 时型科学度量）
+                  记录满 5 晚后改用个人基线
                 </p>
               )}
             </div>
+            <SleepHeatmap records={records} theme={theme} accentHex={theme.accentHex} />
             {weekReport.streak > 0 && (
               <p className={`text-[11px] font-bold ${theme.accentText}`}>
                 🔥 连续达标 {weekReport.streak} 晚{weekReport.graceUsed ? '（今晚续上）' : ''}
