@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, MoonStar, BookOpen, Gamepad2, BedDouble, Pipette, Clock, CheckCircle2 } from 'lucide-react';
 import { ProfileUpdater, UserProfile, EyeCareConfig, DEFAULT_EYE_CARE } from '../types/sleep';
@@ -18,8 +18,11 @@ import {
 } from '../utils/eyeCare';
 import { queryDailyHealth, type DailyHealthDay } from '../utils/usageSignal';
 import { subscribeAppResume } from '../utils/appResume';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { EmptyState, StatCard, Switch } from './ui';
+
+// 用眼柱图 lazy（第 103 轮）：recharts+d3 不进主包，详见 EyeHealthChart.tsx。
+// EyeCareTab 本身保持同步（第 87 轮取舍），只有图表区域异步挂载。
+const EyeHealthChart = lazy(() => import('./EyeHealthChart').then((m) => ({ default: m.EyeHealthChart })));
 
 interface EyeCareTabProps {
   userProfile: UserProfile;
@@ -532,21 +535,9 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
               />
             </div>
           )}
-          <div data-testid="eye-health-chart" aria-label="近 7 天每日屏幕小时数" className="w-full" style={{ height: 120 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={healthChart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="label" axisLine={false} tickLine={false} tickMargin={4}
-                  tick={{ fill: 'rgba(148,163,184,0.9)', fontSize: 9 }} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                  contentStyle={{ background: 'rgba(2,6,23,0.95)', border: '1px solid rgba(100,116,139,0.5)', borderRadius: 12, fontSize: 11 }}
-                  formatter={((v: unknown, name: unknown) => [name === '亮屏' ? `${v} 小时` : `${v} 次`, String(name)]) as never}
-                />
-                <Bar dataKey="亮屏" fill={theme.accentHex} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <Suspense fallback={<div className="w-full rounded-xl bg-white/5 animate-pulse" style={{ height: 120 }} />}>
+            <EyeHealthChart data={healthChart} accentHex={theme.accentHex} />
+          </Suspense>
         </div>
       )}
       {native && !dailyHealth.length && rest.enabled && (

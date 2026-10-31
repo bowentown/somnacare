@@ -25,6 +25,8 @@ const usagePlugin = read('plugins/cap-usage-signal/android/src/main/java/com/som
 const eyeCare = read('src/utils/eyeCare.ts');
 const usageSignal = read('src/utils/usageSignal.ts');
 const tab = read('src/components/EyeCareTab.tsx');
+// 用眼柱图（lazy 子组件，第 103 轮拆出）
+const chart = read('src/components/EyeHealthChart.tsx');
 
 // ── 20-20-20 原生 ──
 ok('20-20-20：SCREEN_ON/OFF 真实测量连续用屏（动态接收器）',
@@ -64,8 +66,15 @@ ok('用眼日报：queryDailyHealth 真实聚合（前台时长 + KEYGUARD_HIDDE
 ok('用眼日报 UI：StatCard + 7 天柱图（Recharts，真实数据）',
   tab.includes('queryDailyHealth')
   && tab.includes('用眼日报')
-  && tab.includes('data-testid="eye-health-chart"')
+  && chart.includes('data-testid="eye-health-chart"')
   && /label=\{todayHealth\.unlockSource === 'screen' \? '今日亮屏次数' : '今日解锁'\}/.test(tab));
+// 包架构（第 103 轮）：recharts 数百 KB——EyeCareTab 静态 import 曾把它整个
+// 提进主包（实测主包 CartesianGrid 在、TrendsTab chunk 反而为 0）。柱图已拆
+// 为 lazy 子组件，本断言防止静态引用回归（dist 层的复核见 verify-bundle）。
+ok('包架构：recharts 只在 lazy 柱图组件里（不进主包）',
+  !tab.includes("from 'recharts'")
+  && chart.includes("from 'recharts'")
+  && tab.includes("lazy(() => import('./EyeHealthChart')"));
 ok('UI：20-20-20 卡片在护眼页（开关 + 今日最长连续）',
   tab.includes('20-20-20 远眺提醒') && tab.includes('今日最长连续用屏'));
 
