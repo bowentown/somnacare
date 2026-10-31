@@ -144,7 +144,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
   })();
   const healthChart = dailyHealth.map((d) => ({
     label: d.date.slice(5),
-    小时: Math.round((d.screenMinutes / 60) * 10) / 10,
+    亮屏: Math.round((d.screenMinutes / 60) * 10) / 10,
     解锁: d.unlocks,
   }));
 
@@ -541,9 +541,9 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
                 <Tooltip
                   cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                   contentStyle={{ background: 'rgba(2,6,23,0.95)', border: '1px solid rgba(100,116,139,0.5)', borderRadius: 12, fontSize: 11 }}
-                  formatter={((v: unknown, name: unknown) => [name === '小时' ? `${v} 小时` : `${v} 次`, String(name)]) as never}
+                  formatter={((v: unknown, name: unknown) => [name === '亮屏' ? `${v} 小时` : `${v} 次`, String(name)]) as never}
                 />
-                <Bar dataKey="小时" fill={theme.accentHex} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="亮屏" fill={theme.accentHex} radius={[4, 4, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>

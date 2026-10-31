@@ -288,7 +288,12 @@ public class UsageSignalPlugin extends Plugin {
                 if (s == null) continue;
                 long ft = s.getTotalTimeInForeground();
                 if (ft <= 0) continue;
-                dayCal.setTimeInMillis(s.getFirstTimeStamp());
+                // 桶归日（第 102 轮）：此前按 FirstTimeStamp 键——时钟变更/系统对齐
+                // 后系统桶可能跨自然日或互相重叠，整桶前台时长被记进起始日 →
+                // 单日 34.6 小时（物理不可能，用户实测 10-26）。归给【跨度中点】
+                // 所在的自然日，跨日桶不再整体压给起始日。
+                long span = s.getLastTimeStamp() - s.getFirstTimeStamp();
+                dayCal.setTimeInMillis(s.getFirstTimeStamp() + span / 2);
                 String key = df.format(dayCal.getTime());
                 Long prev = screenByDay.get(key);
                 screenByDay.put(key, (prev == null ? 0L : prev) + ft);
@@ -343,9 +348,16 @@ public class UsageSignalPlugin extends Plugin {
                 String key = df.format(d.getTime());
                 Long screenMs = screenByDay.get(key);
                 if (screenMs == null) continue;   // 无数据的自然日跳过
+                // 物理上限（第 102 轮）：单日亮屏不可能超过当天的自然分钟数。
+                // 桶重叠/时钟变更导致的系统级双计超出容量时，钳到当天容量——
+                // 不编造分配方式，只承认"这一天的亮屏 ≤ 这一天有多长"。
+                java.util.Calendar dayEnd = (java.util.Calendar) d.clone();
+                dayEnd.add(java.util.Calendar.DAY_OF_YEAR, 1);
+                long capMs = Math.max(1, dayEnd.getTimeInMillis() - d.getTimeInMillis());
+                long shown = Math.min(screenMs, capMs);
                 JSObject item = new JSObject();
                 item.put("date", key);
-                item.put("screenMinutes", (int) Math.round(screenMs / 60000.0));
+                item.put("screenMinutes", (int) Math.round(shown / 60000.0));
                 item.put("unlocks", unlocksByDay.getOrDefault(key, 0));
                 item.put("unlockSource", unlockFromKeyguard ? "keyguard" : "screen");
                 arr.put(item);

@@ -120,22 +120,48 @@ export interface DailyHealthDay {
   unlocks: number;
 }
 
+/** 单日亮屏的物理上限（分钟）：一天只有这么长。系统桶在时钟变更/对齐后
+ *  可能跨日重叠双计（第 102 轮用户实测单日 34.6 小时）——那是测量错误，
+ *  不是真实使用，展示前必须钳住。 */
+export const MAX_DAILY_SCREEN_MINUTES = 1440;
+
+/**
+ * 用眼日报的形状与物理边界清洗（queryDailyHealth 透传前用）。
+ * 系统聚合不可信：日期无格式、分钟/次数为任意值都可能抵达这里。
+ * 抽成纯函数的原因：verify-eye-health 的行为护栏必须把【未钳制的透传】
+ * 喂进同一判据证明其不合法，而不是同义反复。
+ */
+export function sanitizeDailyHealth(raw: unknown): DailyHealthDay[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as unknown[])
+    .filter((d): d is Record<string, unknown> => {
+      if (!d) return false;
+      const date = (d as Record<string, unknown>).date;
+      // 日期必须是 yyyy-MM-dd 形状：图表用 d.date.slice(5) 当横轴标签，
+      // "not-a-date" 这类坏键会渲染成乱码（第 102 轮护栏断言抓出）
+      return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date);
+    })
+    .map((d) => {
+      const m = typeof d.screenMinutes === 'number' && Number.isFinite(d.screenMinutes) ? d.screenMinutes : 0;
+      const u = typeof d.unlocks === 'number' && Number.isFinite(d.unlocks) ? d.unlocks : 0;
+      const out: DailyHealthDay = {
+        date: d.date as string,
+        screenMinutes: Math.max(0, Math.min(MAX_DAILY_SCREEN_MINUTES, Math.round(m))),
+        unlocks: Math.max(0, Math.round(u)),
+      };
+      if (d.unlockSource === 'keyguard' || d.unlockSource === 'screen') {
+        out.unlockSource = d.unlockSource as 'keyguard' | 'screen';
+      }
+      return out;
+    });
+}
+
 export async function queryDailyHealth(days = 7): Promise<DailyHealthDay[]> {
   const pl = usage();
   if (!pl?.queryDailyHealth) return [];
   try {
     const res = await pl.queryDailyHealth({ days });
-    if (!Array.isArray(res?.days)) return [];
-    return res.days
-      .filter((d: any) => d && typeof d.date === 'string')
-      .map((d: any) => ({
-        date: d.date,
-        screenMinutes: typeof d.screenMinutes === 'number' ? d.screenMinutes : 0,
-        unlocks: typeof d.unlocks === 'number' ? d.unlocks : 0,
-        ...(d.unlockSource === 'keyguard' || d.unlockSource === 'screen'
-          ? { unlockSource: d.unlockSource as 'keyguard' | 'screen' }
-          : {}),
-      }));
+    return sanitizeDailyHealth(res?.days);
   } catch {
     return [];
   }

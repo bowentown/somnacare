@@ -171,6 +171,13 @@ const MUTATIONS: Mutation[] = [
     replace: 'if (visible) { petRoot.setVisibility(View.VISIBLE); } else { petRoot.setVisibility(View.GONE); }',
     note: '遮挡期不再停 tick → 被弹窗盖住时 30fps 主线程空转回归',
   },
+  {
+    file: 'src/utils/usageSignal.ts',
+    guard: 'verify-eye-health.mts',
+    find: 'Math.max(0, Math.min(MAX_DAILY_SCREEN_MINUTES, Math.round(m))),',
+    replace: 'Math.max(0, Math.round(m)),',
+    note: '去掉单日 1440 分钟钳制 → 34.6 小时/天的物理不可能数据重回图表',
+  },
 ];
 
 const originals = new Map<string, string>();

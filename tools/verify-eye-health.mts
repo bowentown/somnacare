@@ -75,6 +75,54 @@ ok('UI：20-20-20 卡片在护眼页（开关 + 今日最长连续）',
   ok('反向自检：阈值清零后判据不再成立', !doctored.includes('REST_INTERVAL_MS = 20 * 60_000L'));
 }
 
+// ── 用眼日报的物理边界（第 102 轮，行为断言）──
+// 用户实测单日 34.6 小时：系统桶在时钟变更/对齐后跨日重叠双计。修复分三层
+// （Java 归日 + 当天容量钳制 → TS sanitizeDailyHealth 钳制 → 图表展示），
+// 本块 import 真实 TS 清洗函数，断言"单日亮屏 ≤ 1440 分钟"这条物理不变式。
+{
+  const store = new Map<string, string>();
+  (globalThis as any).localStorage = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => { store.set(k, String(v)); },
+    removeItem: (k: string) => { store.delete(k); },
+  };
+  const { sanitizeDailyHealth, MAX_DAILY_SCREEN_MINUTES } = await import(
+    new URL('../src/utils/usageSignal.ts', import.meta.url).href
+  );
+  const raw = [
+    { date: '2026-10-26', screenMinutes: 2076, unlocks: 38, unlockSource: 'keyguard' },   // 34.6h（用户实测）
+    { date: '2026-10-27', screenMinutes: 508, unlocks: 30, unlockSource: 'screen' },
+    { date: '2026-10-28', screenMinutes: -5, unlocks: -3 },
+    { date: 'not-a-date', screenMinutes: 100 },
+    null,
+  ];
+  const out: Array<{ date: string; screenMinutes: number; unlocks: number; unlockSource?: string }> =
+    sanitizeDailyHealth(raw);
+  // 判据（正反共用）：单日分钟数落在 [0, 1440]
+  const physical = (list: Array<{ screenMinutes: number }>): boolean =>
+    list.every((d) => d.screenMinutes >= 0 && d.screenMinutes <= MAX_DAILY_SCREEN_MINUTES);
+
+  ok('用眼日报：单日亮屏钳到物理上限（34.6h = 2076min → 1440）',
+    MAX_DAILY_SCREEN_MINUTES === 1440
+    && out.find((d) => d.date === '2026-10-26')?.screenMinutes === 1440);
+  ok('用眼日报：正常值透传 / 负值归零 / 坏条目剔除',
+    out.find((d) => d.date === '2026-10-27')?.screenMinutes === 508
+    && out.find((d) => d.date === '2026-10-28')?.screenMinutes === 0
+    && out.find((d) => d.date === 'not-a-date') === undefined
+    && out.length === 3);
+  ok('用眼日报：unlockSource 白名单外不落字段',
+    out.find((d) => d.date === '2026-10-27')?.unlockSource === 'screen');
+  // 反向自检：修复前的透传（只滤形状不钳数值）必须不满足同一物理判据
+  {
+    const preFix = (raw as unknown[]).filter(
+      (d): d is { date: string; screenMinutes: number } =>
+        !!d && typeof (d as any).date === 'string',
+    );
+    ok('反向自检：修复前的透传不满足物理边界（钳制不是摆设）',
+      physical(out) && !physical(preFix));
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——护眼健康台护栏不符`);
   process.exit(1);
