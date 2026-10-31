@@ -831,7 +831,7 @@ test('旅程20 删除撤销：恢复记录 + 能量只补实际扣掉的差额',
   await seed(page, [mkRecord(date, '23:40', '07:10', 92)], {
     ...NIGHT_SCHEMA,
     somnacare_travel_state: JSON.stringify({
-      currentEnergy: 50, countedScores: { [date]: 92 },
+      currentEnergy: 50, countedScores: { [date]: 98 },
       unlockedCardIds: [], goldStars: {}, pendingArrival: null,
     }),
   });
@@ -849,8 +849,8 @@ test('旅程20 删除撤销：恢复记录 + 能量只补实际扣掉的差额',
   await page.getByRole('button', { name: '撤销' }).click();
 
   const travel = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_travel_state') || '{}'));
-  expect(travel.countedScores?.[date]).toBe(92);
-  expect(travel.currentEnergy).toBe(50);   // 删除时被 max(0) 截断，撤销不能凭空补成 92
+  expect(travel.countedScores?.[date]).toBe(98);   // 记录经 v2 重打分后的当前分
+  expect(travel.currentEnergy).toBe(50);   // 删除时被 max(0) 截断，撤销不能凭空补分
   const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
   expect((recs as any[]).some((r) => r.date === date)).toBe(true);
   expect(errors).toEqual([]);
@@ -1392,7 +1392,7 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
   await page.clock.install({ time: fixed });
   // 配了 Key → 走直连（第 91 轮）。页面【初始】标签只有 "DeepSeek"（无括号），
   // 直连成功后是 "DeepSeek (deepseek-flash)"——这个差别正好用来验缓存还原。
-  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 88)], {
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 98)], {
     somnacare_record_date_schema: 'night-v1',
     somnacare_user_profile: JSON.stringify({
       name: '缓存用户', age: 30, targetHours: 8,

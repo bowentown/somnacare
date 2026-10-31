@@ -1,13 +1,22 @@
 import { SleepRecord, SleepStageSegment, WakingMood } from '../types/sleep';
 import { localDateOffset } from './dateUtils';
+import { nightsOnly } from './recordFilter';
+import { sleepIntervalsOf } from './sleepRegularity';
 
 /**
- * Calculates a 0-100 scientific sleep score based on:
- * - Total duration (40 pts) - scored against the user's own target (CBT-I sleep diary
- *   convention: compare against the prescribed window, not a population constant)
- * - Deep sleep ratio (20 pts) - optimal 16%-25% (adult N3 ≈ 13-23% of sleep)
- * - REM sleep ratio (20 pts) - optimal 20%-26%
- * - Sleep efficiency & awakenings (20 pts) - awakenings penalty, latency
+ * Calculates a 0-100 sleep score.
+ *
+ * 【v2 口径（第 105 轮）——只对"可测/可行为佐证"的维度计分】
+ * - Duration fit (40 pts)：与【个人睡眠需求】对比（调用方传 computeSleepNeed
+ *   的结果；v1 是用户手设的固定目标）
+ * - Rest quality (30 pts)：睡眠效率 + 夜醒惩罚（效率口径不变：纯睡眠/卧床）
+ * - Latency (15 pts)：入睡耗时分档
+ * - Continuity (15 pts)：夜醒次数分档
+ *
+ * deep/REM 占比【不再计分】：一键/手动路径的分期来自 generateSleepStages 的
+ * 构造先验（前 4h 计 25% 深/20% REM），占比对多数记录是先验的回声——把
+ * 先验再当成测量打 40 分是伪测量（v1 的缺陷）。它们保留为信息字段，
+ * 沿用"模型估算，非测量"的既有标注。
  */
 export function calculateSleepScore(
   durationMinutes: number,
@@ -23,8 +32,7 @@ export function calculateSleepScore(
   const totalBedMinutes = durationMinutes + awakeMinutes;
   const efficiency = totalBedMinutes > 0 ? Math.round((durationMinutes / totalBedMinutes) * 100) : 0;
 
-  // 1. Duration score (max 40) — 相对用户自设目标的偏差计分；过长与过短对称扣分
-  //    （睡眠科学与流行病学研究均支持时长过短与过长关联更差结局）
+  // 1. Duration fit (max 40) — 与个人需求对比；过长与过短对称扣分
   const durationHours = durationMinutes / 60;
   const absDiffHours = Math.abs(durationHours - targetDurationMinutes / 60);
   let durationScore = 0;
@@ -40,50 +48,126 @@ export function calculateSleepScore(
     durationScore = 10;
   }
 
-  // 2. Deep sleep ratio score (max 20)
-  const deepRatio = durationMinutes > 0 ? deepSleepMinutes / durationMinutes : 0;
-  let deepScore = 0;
-  if (deepRatio >= 0.16 && deepRatio <= 0.25) {
-    deepScore = 20;
-  } else if (deepRatio >= 0.12) {
-    deepScore = 16;
-  } else if (deepRatio >= 0.08) {
-    deepScore = 12;
-  } else {
-    deepScore = 8;
-  }
-
-  // 3. REM sleep ratio score (max 20)
-  const remRatio = durationMinutes > 0 ? remSleepMinutes / durationMinutes : 0;
-  let remScore = 0;
-  if (remRatio >= 0.20 && remRatio <= 0.26) {
-    remScore = 20;
-  } else if (remRatio >= 0.15) {
-    remScore = 16;
-  } else if (remRatio >= 0.10) {
-    remScore = 11;
-  } else {
-    remScore = 7;
-  }
-
-  // 4. Efficiency & awakenings penalty (max 20)
-  let restScore = 20;
-  if (wakeCount > 3) restScore -= (wakeCount - 3) * 2;
-  if (latencyMinutes > 30) restScore -= Math.min(6, Math.floor((latencyMinutes - 30) / 10) * 2);
-  if (efficiency < 85) restScore -= Math.min(6, Math.floor((85 - efficiency) / 3));
-  // CBT-I 对齐：效率极低（卧床时间远超实际睡眠）要显著扣分，
-  // 不能让"躺在床上更久"反而拿到更高分（与睡眠限制疗法方向一致）
+  // 2. Rest quality (max 30) — 效率 + 夜醒（CBT-I 对齐：低效显著扣分）
+  let restScore = 30;
+  if (wakeCount > 3) restScore -= Math.min(9, (wakeCount - 3) * 3);
+  if (efficiency < 85) restScore -= Math.min(9, Math.floor((85 - efficiency) / 3));
   if (efficiency < 60) restScore -= Math.min(12, Math.round((60 - efficiency) / 5));
   restScore = Math.max(0, restScore);
 
-  // 低分不托底：短睡/零深睡就该拿低分（此前 Math.max(25,…) 会让差记录虚高 15-20 分）
-  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore + remScore + restScore));
+  // 3. Latency (max 15)
+  const latencyScore =
+    latencyMinutes <= 12 ? 15
+    : latencyMinutes <= 20 ? 12
+    : latencyMinutes <= 30 ? 8
+    : latencyMinutes <= 45 ? 4
+    : 1;
+
+  // 4. Continuity (max 15) — 夜醒次数
+  const continuityScore =
+    wakeCount <= 0 ? 15
+    : wakeCount === 1 ? 13
+    : wakeCount === 2 ? 10
+    : wakeCount === 3 ? 7
+    : wakeCount <= 5 ? 4
+    : 1;
+
+  // 低分不托底：短睡/低效就该拿低分（v1 已去掉 Math.max(25,…)）
+  const finalScore = Math.min(100, Math.max(5, durationScore + restScore + latencyScore + continuityScore));
 
   return {
     score: finalScore,
     // 如实报告效率：此前 Math.max(50,…) 会把真实 25% 的效率显示成 50%
     efficiency: Math.min(100, Math.max(0, efficiency)),
   };
+}
+
+/**
+ * 个人睡眠需求（第 105 轮）：近 14 个已完成夜晚的 durationMinutes 中位数，
+ * 夹在 5–11 小时的合理域内。样本 < 5 晚时回退用户设定（basis='fallback'）。
+ *
+ * 这是 Whoop 式"动态需求"的基线项；睡债/日间负荷的展示层调整见趋势页
+ * （本轮不进计分——需求随时间变化会让存量分漂移，计分用的是"当夜的
+ * 需求"，由迁移按各记录之前的夜集确定，无前视）。
+ */
+export interface SleepNeedResult {
+  needMinutes: number;
+  baselineMinutes: number;
+  samples: number;
+  basis: 'personal' | 'fallback';
+}
+
+export function computeSleepNeed(
+  records: SleepRecord[],
+  fallbackMinutes = 480,
+  chronotype: 'night' | 'day' | 'irregular' = 'night',
+  now: Date = new Date(),
+  days = 14,
+): SleepNeedResult {
+  const windowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days).getTime();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const nights = nightsOnly(records)
+    .filter((r) => {
+      const t = new Date(r.date + 'T12:00:00').getTime();
+      return t >= windowStart && t < dayStart;   // 已完成的夜（不含今晚）
+    })
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .slice(-days);
+  if (nights.length < 5) {
+    return { needMinutes: fallbackMinutes, baselineMinutes: fallbackMinutes, samples: nights.length, basis: 'fallback' };
+  }
+  const durations = nights.map((r) => r.durationMinutes).sort((a, b) => a - b);
+  const mid = Math.floor(durations.length / 2);
+  const median = durations.length % 2
+    ? durations[mid]
+    : Math.round((durations[mid - 1] + durations[mid]) / 2);
+  const baseline = Math.max(300, Math.min(660, median));   // 5–11 小时合理域
+  return { needMinutes: baseline, baselineMinutes: baseline, samples: nights.length, basis: 'personal' };
+}
+
+/**
+ * MSFsc（第 105 轮）：MCTQ 的科学时型度量——自由日睡眠中点，再按工作日/
+ * 自由日的睡眠时长差校正（补自由日的补觉偏移）。需要自由日（醒在周六/周日）
+ * 与工作日各 ≥ 3 晚，否则 null。
+ * "自由日"近似为醒来的那天是周六/周日（无 MCTQ 问卷时的标准近似，注释在案）。
+ */
+export interface MSFscResult {
+  msfMinutes: number;   // 0-1439（本地钟点，可能落在凌晨）
+  label: string;        // HH:MM
+  freeSamples: number;
+  workSamples: number;
+}
+
+export function computeMSFsc(
+  records: SleepRecord[],
+  chronotype: 'night' | 'day' | 'irregular' = 'night',
+  now: Date = new Date(),
+  days = 28,
+): MSFscResult | null {
+  const windowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days).getTime();
+  const nights = nightsOnly(records).filter((r) => new Date(r.date + 'T12:00:00').getTime() >= windowStart);
+  const rows = sleepIntervalsOf(nights, chronotype).map((iv) => {
+    const wakeDay = new Date(iv.end).getDay();          // 醒来那天的星期
+    const isFree = wakeDay === 0 || wakeDay === 6;
+    const dur = iv.end - iv.start;
+    return { isFree, dur, mid: iv.start + dur / 2 };    // 睡眠中点（epoch）
+  });
+  const free = rows.filter((r) => r.isFree);
+  const work = rows.filter((r) => !r.isFree);
+  if (free.length < 3 || work.length < 3) return null;
+  const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const msfFree = mean(free.map((r) => r.mid));
+  const sdWorkMin = mean(work.map((r) => r.dur)) / 60000;
+  const sdFreeMin = mean(free.map((r) => r.dur)) / 60000;
+  const msfsc = msfFree - ((sdWorkMin - sdFreeMin) / 2) * 60000;
+  // 归一必须相对【本地午夜】：epoch % 86400000 是 UTC 日界，UTC+8 下本地
+  // 05:00 会被算成前一天 21:00（第 105 轮护栏锚点实测抓出）
+  const mid = new Date(msfsc);
+  const localMid = new Date(mid.getFullYear(), mid.getMonth(), mid.getDate()).getTime();
+  let minutes = Math.round((msfsc - localMid) / 60000);
+  minutes = ((minutes % 1440) + 1440) % 1440;   // MCTQ 允许 MSF > 24h
+  const label = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  return { msfMinutes: minutes, label, freeSamples: free.length, workSamples: work.length };
 }
 
 /**

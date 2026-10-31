@@ -1,5 +1,5 @@
 import { SleepRecord } from '../types/sleep';
-import { calculateSleepScore, generateSleepStages } from './sleepScore';
+import { calculateSleepScore, generateSleepStages, computeSleepNeed } from './sleepScore';
 import { deriveKind } from './recordFilter';
 import { nightKeyOfBed } from './dateUtils';
 
@@ -37,6 +37,9 @@ export interface BuildInput {
   userWakingMood?: SleepRecord['wakingMood'];
   userPreSleepHabits?: string[];
   userDreamNotes?: string;
+  /** 既往记录（第 105 轮）：≥5 晚时打分目标改用【个人睡眠需求】（近 14 晚
+   *  中位，v2 口径）；缺省回退 targetDurationHours。deep/REM 自 v2 起不参与计分。 */
+  priorRecords?: SleepRecord[];
 }
 
 export interface BuiltRecord {
@@ -83,6 +86,14 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
 
   // 统一语义：durationMinutes = 纯睡眠（卧床窗 − 觉醒段）
   const sleepMinutes = Math.max(1, exactDurationMinutes - awakeMin);
+  // 打分目标（第 105 轮 v2）：个人睡眠需求（近 14 晚中位，≥5 晚启用），
+  // 否则回退用户设定。deep/REM 不再计分——构造先验的伪测量。
+  const need = input.priorRecords
+    ? computeSleepNeed(input.priorRecords, Math.round((input.targetDurationHours || 8) * 60), input.chronotype)
+    : null;
+  const targetMinutes = need && need.basis === 'personal'
+    ? need.needMinutes
+    : Math.round((input.targetDurationHours || 8) * 60);
   const { score, efficiency } = calculateSleepScore(
     sleepMinutes,
     deepMin,
@@ -90,7 +101,7 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
     awakeMin,
     wakeCountUsed,
     latencyUsed,
-    Math.round((input.targetDurationHours || 8) * 60)
+    targetMinutes
   );
 
   const fmtClock = (base: Date, min: number) => {

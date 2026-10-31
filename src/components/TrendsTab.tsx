@@ -54,7 +54,7 @@ import {
 // 且查询结果回流给提议侧（此前这里直连 usageSignal，两套数据源不互通）
 import { forceRefreshUsage, getCachedUsageDays } from '../utils/usageStore';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
-import { formatDurationChinese } from '../utils/sleepScore';
+import { formatDurationChinese, computeSleepNeed, computeMSFsc } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
 import { hapticStep } from '../utils/haptics';
 import { EmptyState, StatCard } from './ui';
@@ -68,6 +68,8 @@ interface TrendsTabProps {
   /** 目标作息窗（起卧图的参照带）；缺省时退回近 7 晚均值 */
   targetBedtime?: string;
   targetWakeTime?: string;
+  /** 用户的设定目标（小时）：个人基线样本不足时的回退（第 105 轮） */
+  targetDurationHours?: number;
 }
 
 type MetricViewMode = 'quality' | 'stages' | 'circadian';
@@ -187,6 +189,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
   chronotype = 'night',
   targetBedtime,
   targetWakeTime,
+  targetDurationHours,
 }) => {
   const innerBg = theme?.cardInnerBg || 'bg-[#0a0f1d]';
   const innerBorder = theme?.cardInnerBorder || 'border-slate-700/80';
@@ -903,6 +906,9 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         const sum = summarizeWeek(records);
         // 真 SRI（第 104 轮）：逐分钟 24h 滞后对照（Fischer 2021），由记录构造
         const sri = computeSRI(records, chronotype);
+        // 个人睡眠需求 + MSFsc 时型（第 105 轮，科学口径）
+        const need = computeSleepNeed(records, Math.round((targetDurationHours || 8) * 60), chronotype);
+        const msf = computeMSFsc(records, chronotype);
         const recentNights = nightsOnly(records).slice(0, 7);
         const avgEfficiency = recentNights.length
           ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
@@ -989,6 +995,22 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 📊 记录满 3 晚后，这里会显示作息规律度（就寝与起床的稳定程度）
               </p>
             )}
+            <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 space-y-1.5`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-200">睡眠需求</span>
+                <span className="font-mono font-black text-lg text-sky-300">{formatDurationChinese(need.needMinutes)}</span>
+              </div>
+              <p className={`text-[10px] ${textMuted} leading-relaxed`}>
+                {need.basis === 'personal'
+                  ? `近 14 晚中位 ${formatDurationChinese(need.baselineMinutes)}（${need.samples} 晚）· 打分对照这个数，不是固定 8 小时`
+                  : `记录满 5 晚后，打分目标会改为你的个人基线（当前按 ${formatDurationChinese(need.needMinutes)}）`}
+              </p>
+              {msf && (
+                <p className={`text-[10px] ${textMuted} leading-relaxed`}>
+                  自由日睡眠中点 MSFsc {msf.label}（{msf.freeSamples} 个自由日 · 时型科学度量）
+                </p>
+              )}
+            </div>
             {weekReport.streak > 0 && (
               <p className={`text-[11px] font-bold ${theme.accentText}`}>
                 🔥 连续达标 {weekReport.streak} 晚{weekReport.graceUsed ? '（今晚续上）' : ''}

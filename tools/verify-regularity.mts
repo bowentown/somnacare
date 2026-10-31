@@ -184,6 +184,55 @@ const check = (name: string, ok: boolean, detail = '') => {
   // 实现会得到 0/100，两条锚点同时报红（match/mismatch 不可能都过）
 }
 
+// 7) 个人睡眠需求 + MSFsc（第 105 轮，科学口径的行为断言）
+{
+  const { computeSleepNeed, computeMSFsc } = await import(new URL('../src/utils/sleepScore.ts', import.meta.url).href);
+  const NOW = new Date(2026, 10, 15);            // 2026-11-15（周日，固定时钟）
+  const mkDate = (i: number): string => {
+    const d = new Date(2026, 10, 2 + i);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const mkNeedNight = (i: number, dur: number) =>
+    ({ id: 'n' + i, date: mkDate(i), bedtime: '23:00', wakeTime: '07:00', durationMinutes: dur, sleepScore: 85, deepSleepMinutes: 90, lightSleepMinutes: 270, remSleepMinutes: 80, awakeMinutes: 10, sleepEfficiency: 90, latencyMinutes: 10, wakeCount: 1, wakingMood: 'refreshed', preSleepHabits: [], stages: [] });
+
+  // 需求 = 近 14 晚中位：8 晚 6 小时 → 360（personal）；样本 < 5 → 回退 480
+  {
+    const recs = Array.from({ length: 8 }, (_, i) => mkNeedNight(i, 360));
+    const s = computeSleepNeed(recs as any, 480, 'night', NOW, 14);
+    check('需求：6 小时 × 8 晚 → 个人基线 360（personal）',
+      s !== null && s.needMinutes === 360 && s.basis === 'personal' && s.samples === 8,
+      `need=${s?.needMinutes} basis=${s?.basis}`);
+    check('需求：样本 < 5 晚 → 回退用户设定（basis=fallback）',
+      computeSleepNeed(recs.slice(0, 2) as any, 480, 'night', NOW, 14).basis === 'fallback');
+    // 中位数取中间值（偶数取均值）：4 晚 360 + 4 晚 480 → 420
+    const mix = Array.from({ length: 4 }, (_, i) => mkNeedNight(i, 360))
+      .concat(Array.from({ length: 4 }, (_, i) => mkNeedNight(6 + i, 480)));
+    check('需求：偶数样本取中位均值（360×4 + 480×4 → 420）',
+      computeSleepNeed(mix as any, 480, 'night', NOW, 14).needMinutes === 420);
+  }
+
+  // MSFsc：工作日 23:00→07:00（8h，中点 03:00），自由日 00:00→09:00（9h，
+  // 中点 04:30）→ MSFsc = 04:30 − (8−9)/2h = 05:00（自由日补觉被校正掉）
+  {
+    // 醒在周六/日 → 就寝 date 是周五/六（2026-11-02 = 周一）
+    const freeDates = [4, 5, 11, 12];
+    const workDates = [-1, 0, 1, 2, 3];            // 醒在周一~周五
+    const recs = [
+      ...freeDates.map((i) => mkNeedNight(i, 540)),
+      ...workDates.map((i) => mkNeedNight(i, 420)),
+    ].map((r, i) => ({ ...r, id: 'm' + i, bedtime: r.durationMinutes === 540 ? '00:00' : '23:00', wakeTime: r.durationMinutes === 540 ? '09:00' : '07:00' }));
+    const s = computeMSFsc(recs as any, 'night', NOW, 28);
+    check('MSFsc：自由日 04:30 校正后 05:00（MCTQ 口径）',
+      s !== null && s.label === '05:00' && s.freeSamples === 4 && s.workSamples === 5,
+      `label=${s?.label} free=${s?.freeSamples} work=${s?.workSamples}`);
+    // 门槛：自由日 < 3 → null
+    const short = recs.filter((r) => r.bedtime === '00:00').slice(0, 2)
+      .concat(recs.filter((r) => r.bedtime !== '00:00'));
+    check('MSFsc 门槛：自由日样本 < 3 → null',
+      computeMSFsc(short as any, 'night', NOW, 28) === null);
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——规律度口径与断言不符`);
   process.exit(1);

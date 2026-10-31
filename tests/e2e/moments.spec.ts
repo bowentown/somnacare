@@ -65,7 +65,7 @@ test('本地兜底：打开朋友圈自动生成，数字真实、好友纪律�
   const moments = await readStore(page, 'somnacare_pet_moments');
   const today = (moments as any[]).find((m) => !m.postcardId);
   expect(today).toBeTruthy();
-  expect(today.text).toContain('92');   // 数字来自真实记录
+  expect(today.text).toContain('98');   // 数字来自真实记录（种子 92 经 v2 重打分→98）
   expect((today.comments ?? []).length).toBeLessThanOrEqual(2);
   for (const c of today.comments ?? []) {
     expect(['楼下Claude', '美国豆包Gemini', '被压榨的Qwen', '被蒸馏的Kimi', '意难平的豆包姐姐']).toContain(c.friend);
@@ -92,14 +92,14 @@ test('LLM 正常路径：结构化返回被采用并渲染', async ({ page }) =>
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
   });
-  // 数字 8/0/92 均出自事实清单（时长 8 小时 0 分 + 评分 92）——白名单放行
+  // 数字 8/0/98 均出自事实清单（时长 8 小时 0 分 + 评分 98）——白名单放行
   await page.route('https://api.deepseek.com/**', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-      text: '昨晚 8 小时 0 分拿下 92 分，哼，算你识相 😊',
+      text: '昨晚 8 小时 0 分拿下 98 分，哼，算你识相 😊',
       cards: ['data'],
-      comments: [{ friend: '楼下Claude', text: '恕我直言，92 分的含金量，明天请继续保持。' }],
+      comments: [{ friend: '楼下Claude', text: '恕我直言，98 分的含金量，明天请继续保持。' }],
     }) } }], usage: { prompt_tokens: 120, completion_tokens: 40, prompt_cache_hit_tokens: 80, prompt_cache_miss_tokens: 40 } }),
   }));
   await openMoments(page);
@@ -155,7 +155,7 @@ test('LLM 编数字：数字白名单拒收整条，回退本地模板', async (
     records: [mkRecord(dstr(0), '00:20', '08:20', 92)],
     profile: { aiConfig: { provider: 'deepseek', deepseekApiKey: 'sk-test', deepseekModel: 'deepseek-chat' } },
   });
-  // 99 / 3.5 / 88 都不在事实清单（评分 92、时长 8 小时 0 分）——必须整条拒收
+  // 99 / 3.5 / 88 都不在事实清单（评分 98、时长 8 小时 0 分）——必须整条拒收
   await page.route('https://api.deepseek.com/**', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -175,7 +175,7 @@ test('LLM 编数字：数字白名单拒收整条，回退本地模板', async (
   const moments = await readStore(page, 'somnacare_pet_moments');
   const today = (moments as any[]).find((m) => !m.postcardId);
   expect(String(today?.text)).not.toContain('99');
-  expect(String(today?.text)).toContain('92');
+  expect(String(today?.text)).toContain('98');
 });
 
 test('评论回复链路：请求体含评论与正文，模型回复直接回应评论（B1 回归）', async ({ page }) => {

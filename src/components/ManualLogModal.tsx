@@ -20,6 +20,8 @@ interface ManualLogModalProps {
   initialBedtime?: string;
   initialWakeTime?: string;
   chronotype?: 'night' | 'day' | 'irregular';
+  /** 既往记录（第 105 轮）：≥5 晚时打分目标改用个人睡眠需求 */
+  records?: SleepRecord[];
 }
 
 // id/label 与 ActiveSleepModal 共用 habitCatalog；图标是本文件的展示层
@@ -45,6 +47,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   onSaveRecord,
   theme,
   targetDurationHours,
+  records,
   initialDate,
   initialBedtime,
   initialWakeTime,
@@ -140,6 +143,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
       sleepStartMs: startMs,
       wakeMs,
       targetDurationHours,
+      priorRecords: records,
       id: `manual-${Date.now()}`,
       recordSource: 'manual',
       chronotype,

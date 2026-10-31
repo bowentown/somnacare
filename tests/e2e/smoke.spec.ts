@@ -58,8 +58,16 @@ test('分区懒渲染：首帧只渲染当前分区，访问后挂载且常驻',
 test('得分曲线几何自洽：100 分点在 90 分绿线上方', async ({ page }) => {
   await seed(page);
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '趋势' }).click();
-  // Phase 1：默认视图是起卧时段，切到得分曲线
-  await page.getByRole('button', { name: '得分曲线' }).click();
+  // 吸附动画落定（AGENTS.md：指数缓出前 100ms 走完 80%，两帧稳定判定会
+  // 在尾段放行 → 紧跟的点击落到隔壁分区静默失效）
+  await page.waitForTimeout(380);
+  // Phase 1：默认视图是起卧时段，切到得分曲线。
+  // 等待而非盲等（第 105 轮）：裸 click + 固定 wait 会与"吸附动画 + 懒
+  // chunk 就绪"竞态——点击落在隔壁控件或按钮未挂载而静默失效（AGENTS.md
+  // 的落定模式；此前 ~1/3 概率整页停在睡眠分区）
+  const curveBtn = page.getByRole('button', { name: '得分曲线' });
+  await curveBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await curveBtn.click();
   await page.waitForTimeout(600);
   const geo = await page.evaluate(() => {
     // 90 分参考线（emerald stroke）与 100 分数据点（cy 最小的 circle）。

@@ -19,6 +19,8 @@ interface ActiveSleepModalProps {
   targetDurationHours?: number;
   /** 作息类型：kind 归类（夜间作息用户白天记的短睡是小睡，不能顶掉当晚夜睡） */
   chronotype?: 'night' | 'day' | 'irregular';
+  /** 既往记录（第 105 轮）：≥5 晚时打分目标改用个人睡眠需求 */
+  records?: SleepRecord[];
 }
 
 // 整夜监测会话的落盘键：息屏/进程被杀后整晚记录不再丢失（第 81 轮 P0）。
@@ -47,6 +49,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
   onFinishSleep,
   theme,
   targetDurationHours,
+  records,
   chronotype,
 }) => {
   const [currentTime, setCurrentTime] = useState('');
@@ -344,6 +347,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
       sleepStartMs: startTime.getTime(),
       wakeMs: endTime.getTime(),
       targetDurationHours,
+      priorRecords: records,
       id: `sleep-${Date.now()}`,
       recordSource: 'onetap',
       chronotype,

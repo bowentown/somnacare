@@ -118,9 +118,9 @@ const MUTATIONS: Mutation[] = [
   {
     file: 'src/utils/sleepScore.ts',
     guard: 'verify-record-builder.mts',
-    find: '  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore + remScore + restScore));',
-    replace: '  const finalScore = Math.min(100, Math.max(5, durationScore + deepScore));',
-    note: '评分漏掉 REM 与休息项 → 黄金样本的 sleepScore 字段失配',
+    find: '  const finalScore = Math.min(100, Math.max(5, durationScore + restScore + latencyScore + continuityScore));',
+    replace: '  const finalScore = Math.min(100, Math.max(5, durationScore + restScore + latencyScore));',
+    note: 'v2 评分漏掉连续性分量 → 黄金样本 sleepScore 失配（第 105 轮重捕获后更新）',
   },
   {
     file: 'src/utils/sleepFacts.ts',
@@ -184,6 +184,13 @@ const MUTATIONS: Mutation[] = [
     find: 'Math.round(200 * (match / cmp) - 100)',
     replace: 'Math.round(200 * ((cmp - match) / cmp) - 100)',
     note: 'SRI 同态率错写成异态率 → 一致作息得 0、交替作息得 100（双锚点同时报红）',
+  },
+  {
+    file: 'src/utils/sleepScore.ts',
+    guard: 'verify-regularity.mts',
+    find: 'const baseline = Math.max(300, Math.min(660, median));   // 5–11 小时合理域',
+    replace: 'const baseline = Math.max(300, Math.min(660, fallbackMinutes));',
+    note: '睡眠需求不再跟随个人数据 → 个人基线断言红（"科学化"名存实亡）',
   },
 ];
 

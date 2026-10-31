@@ -46,6 +46,7 @@ import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
+import { rescoreRecordsIfNeeded, rescoreRecords } from './utils/scoreMigration';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey, markRecordDateMigrationDone, recordDateMigrationDone } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { TravelCodexModal } from './components/travel/TravelCodexModal';
@@ -212,7 +213,12 @@ export const App: React.FC = () => {
         const c = p ? (JSON.parse(p) as any)?.chronotype : null;
         if (c === 'day' || c === 'irregular') chronotype = c;
       } catch { /* ignore */ }
-      return maybeMigrateRecordDates(loaded, chronotype);
+      const dateFixed = maybeMigrateRecordDates(loaded, chronotype);
+      const scored = rescoreRecordsIfNeeded(dateFixed, chronotype);
+      // v2 重打分改变了数据：首挂载跳过写回的标记必须撤销，否则 v2 分只在
+      // 内存里、下次启动又算一遍（第 105 轮）
+      if (scored.migrated) skipFirstPersistRef.current = false;
+      return scored.records;
     }
     // 仅在 JSON 损坏/结构非法时落备份：挂载写回会覆盖原值，不备份就永远找不回；
     // 合法数据每次启动都镜像一份会白吃 ~MB 级 localStorage 配额
@@ -649,8 +655,11 @@ export const App: React.FC = () => {
     // records-only 导入已就地迁移为新口径：置位标记，防止下次启动对
     // 这些数据再迁一遍（第 66 轮审计；整包备份恢复在 backup.ts 里置位）
     markRecordDateMigrationDone();
+    // 导入的记录按 v2 重算（第 105 轮）：备份可能出自 v1 设备——分数口径
+    // 必须与本机一致，趋势/连胜才可比
+    const rescored = rescoreRecords(sorted, userProfile.chronotype ?? 'night');
     setUndoDeleted(null);
-    setRecords(sorted);
+    setRecords(rescored);
     // 整包替换：旧真值全部失效，再按现存夜清理条目（第 54 轮）
     clearShadowOutcomes();
     pruneShadowEntries(new Set(nightsOnly(sorted).map((r) => r.date)));
@@ -1105,6 +1114,7 @@ export const App: React.FC = () => {
                       chronotype={userProfile.chronotype ?? 'night'}
                       targetBedtime={userProfile.targetBedtime}
                       targetWakeTime={userProfile.targetWakeTime}
+                      targetDurationHours={userProfile.targetDurationHours}
                     />
                   )}
 
@@ -1159,6 +1169,7 @@ export const App: React.FC = () => {
         onFinishSleep={handleSaveActiveSleep}
         theme={currentTheme}
         targetDurationHours={userProfile.targetDurationHours}
+        records={records}
         chronotype={userProfile.chronotype ?? 'night'}
       />
 
@@ -1169,6 +1180,7 @@ export const App: React.FC = () => {
         onSaveRecord={handleSaveManualRecord}
         theme={currentTheme}
         targetDurationHours={userProfile.targetDurationHours}
+        records={records}
         initialDate={manualLogPrefill?.date}
         initialBedtime={manualLogPrefill?.bedtime}
         initialWakeTime={manualLogPrefill?.wakeTime}

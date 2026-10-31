@@ -10,7 +10,7 @@
       "lightSleepMinutes": 266,
       "remSleepMinutes": 103,
       "awakeMinutes": 17,
-      "sleepScore": 100,
+      "sleepScore": 98,
       "sleepEfficiency": 96,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -122,8 +122,7 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 480
+    "truncated": false
   },
   "micro45m": {
     "record": {
@@ -136,7 +135,7 @@
       "lightSleepMinutes": 38,
       "remSleepMinutes": 0,
       "awakeMinutes": 2,
-      "sleepScore": 49,
+      "sleepScore": 68,
       "sleepEfficiency": 96,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -164,8 +163,7 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 45
+    "truncated": false
   },
   "tiny12m": {
     "record": {
@@ -178,7 +176,7 @@
       "lightSleepMinutes": 9,
       "remSleepMinutes": 0,
       "awakeMinutes": 2,
-      "sleepScore": 49,
+      "sleepScore": 70,
       "sleepEfficiency": 83,
       "latencyMinutes": 2,
       "latencyEstimated": true,
@@ -206,8 +204,7 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 12
+    "truncated": false
   },
   "m14": {
     "record": {
@@ -220,7 +217,7 @@
       "lightSleepMinutes": 11,
       "remSleepMinutes": 0,
       "awakeMinutes": 2,
-      "sleepScore": 49,
+      "sleepScore": 70,
       "sleepEfficiency": 86,
       "latencyMinutes": 2,
       "latencyEstimated": true,
@@ -248,8 +245,7 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 14
+    "truncated": false
   },
   "exact960m": {
     "record": {
@@ -262,7 +258,7 @@
       "lightSleepMinutes": 550,
       "remSleepMinutes": 227,
       "awakeMinutes": 17,
-      "sleepScore": 70,
+      "sleepScore": 68,
       "sleepEfficiency": 98,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -434,8 +430,7 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 960
+    "truncated": false
   },
   "m961": {
     "record": {
@@ -448,7 +443,7 @@
       "lightSleepMinutes": 550,
       "remSleepMinutes": 227,
       "awakeMinutes": 17,
-      "sleepScore": 70,
+      "sleepScore": 68,
       "sleepEfficiency": 98,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -620,8 +615,7 @@
         }
       ]
     },
-    "truncated": true,
-    "windowMinutes": 961
+    "truncated": true
   },
   "m3000": {
     "record": {
@@ -634,7 +628,7 @@
       "lightSleepMinutes": 550,
       "remSleepMinutes": 227,
       "awakeMinutes": 17,
-      "sleepScore": 70,
+      "sleepScore": 68,
       "sleepEfficiency": 98,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -804,10 +798,10 @@
           "endTime": "02:00",
           "durationMinutes": 5
         }
-      ]
+      ],
+      "kind": "nap"
     },
-    "truncated": true,
-    "windowMinutes": 3000
+    "truncated": true
   },
   "crossMidnight": {
     "record": {
@@ -820,7 +814,7 @@
       "lightSleepMinutes": 16,
       "remSleepMinutes": 0,
       "awakeMinutes": 2,
-      "sleepScore": 49,
+      "sleepScore": 68,
       "sleepEfficiency": 90,
       "latencyMinutes": 12,
       "latencyEstimated": true,
@@ -848,7 +842,6 @@
         }
       ]
     },
-    "truncated": false,
-    "windowMinutes": 20
+    "truncated": false
   }
 }
