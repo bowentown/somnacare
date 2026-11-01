@@ -134,7 +134,7 @@ export const SleepDial: React.FC<Props> = ({ record, scoreHex, scoreLabel, size 
       </svg>
 
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <span className="font-black font-mono text-white tabular-nums leading-none" style={{ fontSize: size * 0.23 }}>
+        <span className="font-bold font-display text-white tabular-nums leading-none" style={{ fontSize: size * 0.23 }}>
           {displayScore}
         </span>
         <span className="font-black mt-0.5 tracking-wider" style={{ color: scoreHex, fontSize: size * 0.095 }}>

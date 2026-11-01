@@ -177,7 +177,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
     if (diff === 0) return { target, text: '与目标一致', tone: 'text-emerald-400' };
     return diff > 0
       ? { target, text: `晚于目标 ${diff} 分钟`, tone: 'text-rose-400' }
-      : { target, text: `早于目标 ${-diff} 分钟`, tone: 'text-sky-400' };
+      : { target, text: `早于目标 ${-diff} 分钟`, tone: theme.accentText };
   })();
 
   // 首页昼夜双布局的排序表：晚上先给"现在要做的事"，昨晚评分收到最后

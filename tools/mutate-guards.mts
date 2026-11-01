@@ -241,6 +241,20 @@ const MUTATIONS: Mutation[] = [
     replace: '<XDurationValue',
     note: '时长分层排版脱钩 → "8H0M" 式挤压排版回潮（第 111 轮）',
   },
+  {
+    file: 'src/components/AIAdvicePanel.tsx',
+    guard: 'verify-design-system.mts',
+    find: '${theme.accentText} shrink-0',
+    replace: 'text-sky-300 shrink-0',
+    note: '交互入口硬编码色相回潮 → 换主题色时入口不变色（第 112 轮一体性）',
+  },
+  {
+    file: 'src/components/SleepDial.tsx',
+    guard: 'verify-design-system.mts',
+    find: 'font-bold font-display',
+    replace: 'font-black font-mono',
+    note: '首屏大数字 mono 回潮 → 终端感重现（第 112 轮一体性）',
+  },
 ];
 
 const originals = new Map<string, string>();

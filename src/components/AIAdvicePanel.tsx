@@ -820,13 +820,13 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
         <div className="flex-1 min-w-0">
           <h3 className="text-xs font-black text-white flex items-center gap-1.5">
             大肥鱼的朋友圈
-            <Camera className="w-3.5 h-3.5 text-sky-400" />
+            <Camera className={`w-3.5 h-3.5 ${theme.accentText}`} />
           </h3>
           <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
             每天发动态 · AI 好友毒舌点评
           </p>
         </div>
-        <span className="text-[10px] font-black text-sky-300 shrink-0">进入 ›</span>
+        <span className={`text-[10px] font-black ${theme.accentText} shrink-0`}>进入 ›</span>
       </button>
 
       {/* 1. 个性化洞察（数据驱动，点按即提问） */}

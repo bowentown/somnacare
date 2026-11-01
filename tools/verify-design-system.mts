@@ -82,6 +82,31 @@ ok('时长数值：DurationValue 分层单位（"8H0M" 式挤压排版全应用�
   && !trends.includes('<span className="text-sm">H</span>')
   && !eyeCare.includes('<span className="text-sm">H</span>'));
 
+// ── 一体性：品牌/交互色随主题（第 112 轮）──
+// 硬编码 sky/indigo 绕过用户主题——换主题色时这些入口不变色，应用就不像
+// 一个整体。语义色（emerald 达标/amber 警示/rose 不良/AI 的 indigo=info
+// 层级）与角色化设计（MomentsOverlay 水世界蓝、Settings 分类色块、小睡
+// 徽章）有意保留，不在本判据内。
+const ai = read('src/components/AIAdvicePanel.tsx');
+const alarm = read('src/components/AlarmManager.tsx');
+const today = read('src/components/TodayTab.tsx');
+const dial = read('src/components/SleepDial.tsx');
+ok('一体性：交互入口与品牌图标随主题 token（AI 顾问/闹钟/今天/护眼）',
+  ai.includes('${theme.accentText} shrink-0')
+  && !ai.includes('text-sky-300 shrink-0')
+  && !ai.includes('text-sky-400" />')
+  && alarm.includes('${theme?.accentText')
+  && !alarm.includes('text-sky-300 underline')
+  && today.includes('tone: theme.accentText')
+  && !today.includes("tone: 'text-sky-400'")
+  && eyeCare.includes('valueClassName={theme.accentText}')
+  && !eyeCare.includes('valueClassName="text-sky-300"')
+  && !eyeCare.includes('<Eye className="w-4 h-4 text-sky-300')
+  && !eyeCare.includes('<Clock className="w-4 h-4 text-indigo-300" />'));
+ok('一体性：首屏仪表盘大数字走 font-display（SleepDial，font-mono 退守读数角色）',
+  dial.includes('font-bold font-display')
+  && !dial.includes('font-black font-mono'));
+
 // ── 反向自检：删掉插画变量后判据失效 ──
 {
   const doctored = illustration.replace("'--primary-svg-color'", "'--unused-var'");
@@ -95,6 +120,10 @@ ok('时长数值：DurationValue 分层单位（"8H0M" 式挤压排版全应用�
     '<span className="text-sm">H</span>',
   );
   ok('反向自检：H/M 挤压排版注入被检出', doctoredEye.includes('<span className="text-sm">H</span>'));
+  const doctoredAi = ai.replace('${theme.accentText} shrink-0', 'text-sky-300 shrink-0');
+  ok('反向自检：AI 顾问入口硬编码色相注入被检出', doctoredAi.includes('text-sky-300 shrink-0'));
+  const doctoredDial = dial.replace('font-bold font-display', 'font-black font-mono');
+  ok('反向自检：首屏大数字 mono 回潮被检出', doctoredDial.includes('font-black font-mono'));
 }
 
 if (failures > 0) {

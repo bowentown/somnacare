@@ -490,7 +490,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
         <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
-              <Eye className="w-4 h-4 text-sky-300 shrink-0" />
+              <Eye className={`w-4 h-4 ${theme.accentText} shrink-0`} />
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-white">20-20-20 远眺提醒</h3>
               </div>
@@ -531,7 +531,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
                 theme={theme}
                 label={todayHealth.unlockSource === 'screen' ? '今日亮屏次数' : '今日解锁'}
                 value={todayHealth.unlocks}
-                valueClassName="text-sky-300"
+                valueClassName={theme.accentText}
               />
             </div>
           )}
@@ -554,7 +554,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-indigo-300" />
+            <Clock className={`w-4 h-4 ${theme.accentText}`} />
             <h3 className="text-sm font-bold text-white">定时开启</h3>
           </div>
           <Switch

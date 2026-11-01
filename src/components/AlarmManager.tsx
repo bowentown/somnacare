@@ -283,7 +283,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                   tapTick();
                   void nativePlugin('GemmaLLM')?.openBatteryOptimizationSettings?.();
                 }}
-                className="text-[10px] font-bold text-sky-300 underline underline-offset-2 cursor-pointer whitespace-nowrap"
+                className={`text-[10px] font-bold ${theme?.accentText ?? "text-slate-300"} underline underline-offset-2 cursor-pointer whitespace-nowrap`}
               >
                 把本应用加入电池白名单（国产 ROM 保活）→
               </button>
