@@ -1528,7 +1528,7 @@ public class GemmaLLMPlugin extends Plugin {
             // ——尽力删除让用户重新下载（删除失败不阻断报错）
             try {
                 if (f.exists() && !f.delete()) {
-                    java.util.File[] siblings = f.getParentFile() == null ? new java.io.File[0] : f.getParentFile().listFiles();
+                    java.io.File[] siblings = f.getParentFile() == null ? new java.io.File[0] : f.getParentFile().listFiles();
                     if (siblings != null) {
                         for (java.io.File sib : siblings) {
                             if (sib.getName().startsWith(filename)) sib.delete();
@@ -1581,6 +1581,9 @@ public class GemmaLLMPlugin extends Plugin {
         BACKGROUND.execute(() -> {
             StringBuilder full = new StringBuilder();
             LlmInferenceSession session = null;
+            // requestId 提升到 try 外（第 114–121 轮修正）：finally 里的
+            // activeFutures.remove 需要它——原来声明在 try 内，finally 不可见
+            final int requestId = call.getData().has("requestId") ? call.getData().optInt("requestId", 0) : 0;
             try {
                 // 每轮生成使用全新 session（JS 侧每次都传完整历史，避免原生上下文无界增长）
                 LlmInferenceSession.LlmInferenceSessionOptions sessionOptions =
@@ -1597,7 +1600,6 @@ public class GemmaLLMPlugin extends Plugin {
                     }
                 }
 
-                final int requestId = call.getData().has("requestId") ? call.getData().optInt("requestId", 0) : 0;
                 Future<String> future = session.generateResponseAsync((String partial, boolean done) -> {
                     JSObject p = new JSObject();
                     p.put("text", partial == null ? "" : partial);
