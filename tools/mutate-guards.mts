@@ -206,6 +206,13 @@ const MUTATIONS: Mutation[] = [
     replace: '',
     note: 'tooltip 样式被剥 → 悬停提示无底色不可读（交互退化回手绘时代）',
   },
+  {
+    file: 'src/components/SleepCalendar.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: "light: ['#ebedf0'",
+    replace: '',
+    note: '只传 dark → 库回退默认主题 color-mix 插值 → 冻结版 WebView 恶性崩溃（第 108 轮真机实锤）',
+  },
 ];
 
 const originals = new Map<string, string>();

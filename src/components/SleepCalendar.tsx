@@ -12,9 +12,24 @@ import { SleepRecord } from '../types/sleep';
  * 当夜详情由 TrendsTab 渲染（renderBlock 官方挂 onClick + data-date，
  * data-date 同时是 e2e 的定位锚点）。选中格描白边给出视觉反馈。
  *
+ * 【第 108 轮真机恶性 bug 修复】light/dark 必须都显式给满五色：
+ * 只传 dark 时库会把 light 回退到默认主题，而默认主题用
+ * color-mix(in oklab, …) 现场插值，产物再过它自己的
+ * CSS.supports 校验——不支持 color-mix 的冻结版 WebView（国产 ROM
+ * 常见）直接 throw，整个趋势分区崩。显式五色数组库原样返回，
+ * 插值路径彻底不进。色值一律 rgba()，不赌 8 位 hex。
+ *
  * 数据诚实：无记录 = level 0 空格（theme 第一档色），不冒充"0 分"。
  * 评分档位沿用既有口径：80 起达标（GOOD_NIGHT_THRESHOLD 同源直觉）。
  */
+
+/** '#818cf8' + alpha → 'rgba(129,140,248,0.3)'（WebView 兼容，不用 8 位 hex） */
+const hexToRgba = (hex: string, alpha: number): string => {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+};
 export const SleepCalendar: React.FC<{
   records: SleepRecord[];
   accentHex: string;
@@ -70,7 +85,11 @@ export const SleepCalendar: React.FC<{
         showMonthLabels
         showWeekdayLabels={false}
         labels={{ months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'] }}
-        theme={{ dark: ['rgba(255,255,255,0.07)', `${accentHex}4D`, `${accentHex}8C`, `${accentHex}C7`, accentHex] }}
+        theme={{
+          // 两 scheme 都满五色（长度=级数 → 库原样返回，不触发 color-mix 插值）
+          dark: ['rgba(255,255,255,0.07)', hexToRgba(accentHex, 0.3), hexToRgba(accentHex, 0.55), hexToRgba(accentHex, 0.78), accentHex],
+          light: ['#ebedf0', hexToRgba(accentHex, 0.25), hexToRgba(accentHex, 0.5), hexToRgba(accentHex, 0.75), accentHex],
+        }}
         tooltips={{ activity: { text: (activity) => tipText(activity.date) } }}
         renderBlock={(block, activity) => {
           const extra = {

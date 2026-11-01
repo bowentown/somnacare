@@ -1448,8 +1448,22 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
 // 旅程33 睡眠日历交互（第 107 轮重做）：第 106 轮的手绘图零交互，重做后
 // react-activity-calendar 点选出当夜详情。锁三条行为链：默认选中最近一夜
 //（详情即开即见）、点选切夜详情跟着切、无记录日诚实空态（不冒充 0 分）。
+// 第 108 轮追加： sabotaged CSS.supports 模拟冻结版 WebView（不认 color-mix/
+// oklab）——第 107 轮真机恶性 bug（库对默认主题做 color-mix 插值再自校验，
+// 老 WebView 直接 throw 炸掉趋势分区）在桌面 Chromium 上无法复现，只能靠
+// 这种注入模拟；修复后双 scheme 显式满五色，插值路径根本不进。
 test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实空态', async ({ page }) => {
   const errors = watchErrors(page);
+  // 模拟老 WebView：color-mix/oklab 一律"不支持"（先于应用代码执行）
+  await page.addInitScript(() => {
+    const orig = window.CSS && typeof window.CSS.supports === 'function'
+      ? window.CSS.supports.bind(window.CSS)
+      : null;
+    (window.CSS as any).supports = (...args: unknown[]) => {
+      if (args.some((a) => typeof a === 'string' && /color-mix\(|oklab/.test(a))) return false;
+      return orig ? orig(...(args as [string])) : false;
+    };
+  });
   // 三晚记录：92（强）/76（中）/58（弱），再往前留空档给"无记录日"
   await seed(page, [
     mkRecord(dstr(-1), '23:10', '07:10', 92),

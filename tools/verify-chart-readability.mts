@@ -104,6 +104,11 @@ ok('睡眠日历：点按可选中（renderBlock 挂 onClick，data-date 供 e2e
   && cal.includes("'data-date'"));
 ok('睡眠日历：无记录 = 空格（level 0），不冒充 0 分',
   cal.includes('score === undefined ? 0 : score >= 90 ? 4 : score >= 80 ? 3 : score >= 60 ? 2 : 1'));
+ok('睡眠日历：双 scheme 显式满五色 + rgba()（缺一侧库就回退默认主题做 color-mix 插值 → 冻结版 WebView 真机崩溃，第 108 轮）',
+  cal.includes('light: [')
+  && cal.includes('dark: [')
+  && cal.includes('hexToRgba(accentHex, 0.3)')
+  && cal.includes('hexToRgba(accentHex, 0.75)'));
 ok('作息曲线：recharts 双线 + 缺口断线（漏记夜不连线）+ 午夜参照线',
   rhythm.includes("from 'recharts'")
   && (rhythm.match(/connectNulls=\{false\}/g) ?? []).length === 2   // 就寝/起床双线各自断缺口
@@ -126,6 +131,8 @@ ok('作息曲线：双线可辨识（实线就寝/虚线起床有图例，轴刻
   ok('反向自检：作息曲线缺口开关被改坏后判据不再成立', !doctoredRhythm.includes('connectNulls={false}'));
   const doctoredCal = cal.replace("'data-date'", "'data-x'");
   ok('反向自检：日历点选锚点被删后判据不再成立', !doctoredCal.includes("'data-date'"));
+  const doctoredScheme = cal.replace("light: ['#ebedf0'", "lightX: ['#ebedf0'");
+  ok('反向自检：light scheme 被删后判据不再成立', !doctoredScheme.includes('light: ['));
 }
 
 if (failures > 0) {
