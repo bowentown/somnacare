@@ -1,26 +1,21 @@
-import React, { useMemo } from 'react';
-import { ActivityCalendar } from 'react-activity-calendar';
-import 'react-activity-calendar/tooltips.css';
+import React, { useMemo, useState } from 'react';
 import { SleepRecord } from '../types/sleep';
 
 /**
- * 睡眠日历（第 107 轮重做）：直接套 GitHub 贡献图同款开源组件
- * react-activity-calendar（MIT，v3 自带浮动 tooltip），替换第 106 轮
- * 的手绘 SVG——那个版本没有悬停、没有点按、观感也差。
+ * 睡眠日历（第 109 轮改月历形态）：形态取自 cal-heatmap 的经典
+ * month-domain 日历热力图——日期数字直接在格子里、星期表头、月份标题，
+ * "哪天是哪天"一眼可读。真机反馈（第 109 轮）：GitHub 贡献墙的条带形态
+ * 不直观、日期月份难分辨，自适应后又退化成窄条。
  *
- * 交互：悬停出内置 tooltip（该日评分），点按任意格子选中该夜 →
- * 当夜详情由 TrendsTab 渲染（renderBlock 官方挂 onClick + data-date，
- * data-date 同时是 e2e 的定位锚点）。选中格描白边给出视觉反馈。
+ * 为什么自绘而不是直接装 cal-heatmap（第 109 轮调研结论）：v4.2.4 拖带
+ * @observablehq/plot（unpacked 6.9MB vs react-activity-calendar 的 178KB），
+ * 且官方文档域名已失效（301 到无关站点）——为一个月历不值得；其经典
+ * 形态按此复刻，交互（点选出当夜详情）与数据口径与第 107/108 轮一致。
+ * 第 108 轮教训延续：全程 rgba()/hex 字面色，不自造现代 CSS 颜色串。
  *
- * 【第 108 轮真机恶性 bug 修复】light/dark 必须都显式给满五色：
- * 只传 dark 时库会把 light 回退到默认主题，而默认主题用
- * color-mix(in oklab, …) 现场插值，产物再过它自己的
- * CSS.supports 校验——不支持 color-mix 的冻结版 WebView（国产 ROM
- * 常见）直接 throw，整个趋势分区崩。显式五色数组库原样返回，
- * 插值路径彻底不进。色值一律 rgba()，不赌 8 位 hex。
- *
- * 数据诚实：无记录 = level 0 空格（theme 第一档色），不冒充"0 分"。
- * 评分档位沿用既有口径：80 起达标（GOOD_NIGHT_THRESHOLD 同源直觉）。
+ * 交互：点按任意日期 → 当夜详情由 TrendsTab 渲染；‹ › 切换月份
+ * （下界 = 首条夜睡记录所在月，不展示无数据的空洞月份）。选中格
+ * 实白描边 > 今日淡白描边。无记录 = 无底色，不冒充 0 分。
  */
 
 /** '#818cf8' + alpha → 'rgba(129,140,248,0.3)'（WebView 兼容，不用 8 位 hex） */
@@ -30,13 +25,18 @@ const hexToRgba = (hex: string, alpha: number): string => {
   const n = parseInt(full, 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 };
+
+const dateKeyOf = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']; // 周一开头，同 GitHub/cal-heatmap 惯例
+
 export const SleepCalendar: React.FC<{
   records: SleepRecord[];
   accentHex: string;
   selected: string | null;
   onSelect: (dateKey: string) => void;
-  weeks?: number;
-}> = ({ records, accentHex, selected, onSelect, weeks = 12 }) => {
+}> = ({ records, accentHex, selected, onSelect }) => {
   // 只认夜睡记录：午睡混进日历会把"昨晚"的格子顶掉
   const byDate = useMemo(
     () => new Map(
@@ -47,60 +47,117 @@ export const SleepCalendar: React.FC<{
     [records],
   );
 
-  // 12 周逐日条目（含无记录日 = level 0）：给日历定死起止范围
-  const data = useMemo(() => {
-    const today = new Date();
-    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (weeks * 7 - 1));
-    const days: Array<{ date: string; count: number; level: number }> = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const score = byDate.get(key)?.sleepScore;
-      days.push({
-        date: key,
-        count: score ?? 0,
-        level: score === undefined ? 0 : score >= 90 ? 4 : score >= 80 ? 3 : score >= 60 ? 2 : 1,
-      });
-    }
-    return days;
-  }, [byDate, weeks]);
+  const today = new Date();
+  const todayKey = dateKeyOf(today);
 
-  const tipText = (date: string): string => {
-    const r = byDate.get(date);
-    return `${date.slice(5)} · ${r && typeof r.sleepScore === 'number' ? `${r.sleepScore} 分` : '无记录'}`;
-  };
+  // 月份导航下界：最早夜睡记录所在月（再往前都是无数据空洞）
+  const firstMonth = useMemo(() => {
+    let first: string | null = null;
+    for (const r of byDate.keys()) if (!first || r < first) first = r;
+    if (!first) return new Date(today.getFullYear(), today.getMonth(), 1);
+    const [y, m] = first.split('-').map(Number);
+    return new Date(y, m - 1, 1);
+  }, [byDate, today]);
+
+  // 默认视图 = 最近一夜所在月（有数据的那个月，与详情默认选中最近一夜呼应）；
+  // 打开日历就该看到自己的记录，而不是一片空的当前月
+  const [view, setView] = useState(() => {
+    let latest: string | null = null;
+    for (const r of byDate.keys()) if (!latest || r > latest) latest = r;
+    if (!latest) return new Date(today.getFullYear(), today.getMonth(), 1);
+    const [y, m] = latest.split('-').map(Number);
+    return new Date(y, m - 1, 1);
+  });
+  const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const canGoBack = view.getTime() > firstMonth.getTime();
+  const canGoFwd = view.getTime() < thisMonth.getTime();
+
+  // 月网格：周一开头的前导空位 + 1..月末；未来日期淡化（还没发生，不冒充）
+  const cells = useMemo(() => {
+    const y = view.getFullYear();
+    const m = view.getMonth();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const lead = (new Date(y, m, 1).getDay() + 6) % 7;
+    const out: Array<{ key: string; day: number; future: boolean } | null> = [];
+    for (let i = 0; i < lead; i++) out.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = dateKeyOf(new Date(y, m, d));
+      out.push({ key, day: d, future: key > todayKey });
+    }
+    return out;
+  }, [view, todayKey]);
+
+  // 评分档位 → accent 透明度（与旧条带同一阶梯）
+  const tierAlpha = (score: number | undefined): number | null =>
+    score === undefined ? null : score >= 90 ? 1 : score >= 80 ? 0.78 : score >= 60 ? 0.55 : 0.3;
 
   return (
-    <div data-testid="sleep-calendar" role="group" aria-label="近 12 周每日睡眠评分日历，点按查看单晚详情" className="w-full overflow-x-auto">
-      <ActivityCalendar
-        data={data}
-        colorScheme="dark"
-        weekStart={1}
-        blockSize={11}
-        blockMargin={3}
-        blockRadius={2.5}
-        fontSize={9}
-        showColorLegend={false}
-        showTotalCount={false}
-        showMonthLabels
-        showWeekdayLabels={false}
-        labels={{ months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'] }}
-        theme={{
-          // 两 scheme 都满五色（长度=级数 → 库原样返回，不触发 color-mix 插值）
-          dark: ['rgba(255,255,255,0.07)', hexToRgba(accentHex, 0.3), hexToRgba(accentHex, 0.55), hexToRgba(accentHex, 0.78), accentHex],
-          light: ['#ebedf0', hexToRgba(accentHex, 0.25), hexToRgba(accentHex, 0.5), hexToRgba(accentHex, 0.75), accentHex],
-        }}
-        tooltips={{ activity: { text: (activity) => tipText(activity.date) } }}
-        renderBlock={(block, activity) => {
-          const extra = {
-            'data-date': activity.date,
-            onClick: () => onSelect(activity.date),
-            style: { cursor: 'pointer' },
-            ...(activity.date === selected ? { stroke: '#f8fafc', strokeWidth: 1.4 } : {}),
-          } as React.SVGAttributes<SVGRectElement>;
-          return React.cloneElement(block, extra);
-        }}
-      />
+    <div data-testid="sleep-calendar" role="group" aria-label="睡眠评分月历，点按查看单晚详情" className="space-y-2">
+      {/* 月份标题即导航：‹ 10月 ›（跨年月份补年份） */}
+      <div className="flex items-center justify-center gap-4">
+        <button
+          type="button"
+          aria-label="上一月"
+          disabled={!canGoBack}
+          onClick={() => setView(new Date(view.getFullYear(), view.getMonth() - 1, 1))}
+          className={`flex min-h-9 min-w-9 items-center justify-center rounded-full text-base text-slate-300 ${canGoBack ? 'bg-slate-800/70 active:scale-95' : 'opacity-30'}`}
+        >
+          ‹
+        </button>
+        <span className="text-[12px] font-bold text-slate-200">
+          {view.getMonth() + 1}月{view.getFullYear() !== today.getFullYear() ? ` ${view.getFullYear()}` : ''}
+        </span>
+        <button
+          type="button"
+          aria-label="下一月"
+          disabled={!canGoFwd}
+          onClick={() => setView(new Date(view.getFullYear(), view.getMonth() + 1, 1))}
+          className={`flex min-h-9 min-w-9 items-center justify-center rounded-full text-base text-slate-300 ${canGoFwd ? 'bg-slate-800/70 active:scale-95' : 'opacity-30'}`}
+        >
+          ›
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-[3px]">
+        {WEEKDAYS.map((w) => (
+          <div key={w} aria-hidden className="text-center text-[9px] font-mono text-slate-500">
+            {w}
+          </div>
+        ))}
+        {cells.map((c, i) =>
+          c === null ? (
+            <div key={`blank-${i}`} />
+          ) : (() => {
+            const r = byDate.get(c.key);
+            const score = r && typeof r.sleepScore === 'number' ? r.sleepScore : undefined;
+            const alpha = tierAlpha(score);
+            const isSel = c.key === selected;
+            return (
+              <button
+                key={c.key}
+                type="button"
+                data-date={c.key}
+                aria-label={`${view.getMonth() + 1}月${c.day}日${score !== undefined ? `，${score} 分` : '，无记录'}`}
+                onClick={() => onSelect(c.key)}
+                className={`flex aspect-square items-center justify-center rounded-lg text-[10px] font-mono active:scale-95 ${
+                  isSel ? 'ring-2 ring-white/90' : c.key === todayKey ? 'ring-1 ring-white/40' : ''
+                }`}
+                style={{
+                  background:
+                    alpha === null
+                      ? c.future
+                        ? 'transparent'
+                        : 'rgba(255,255,255,0.04)'
+                      : hexToRgba(accentHex, alpha),
+                }}
+              >
+                <span className={alpha !== null && alpha >= 0.55 ? 'text-[#0b1220]' : c.future ? 'text-slate-600' : 'text-slate-400'}>
+                  {c.day}
+                </span>
+              </button>
+            );
+          })(),
+        )}
+      </div>
     </div>
   );
 };

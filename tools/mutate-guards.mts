@@ -202,16 +202,16 @@ const MUTATIONS: Mutation[] = [
   {
     file: 'src/components/SleepCalendar.tsx',
     guard: 'verify-chart-readability.mts',
-    find: "import 'react-activity-calendar/tooltips.css';",
-    replace: '',
-    note: 'tooltip 样式被剥 → 悬停提示无底色不可读（交互退化回手绘时代）',
+    find: 'data-date={c.key}',
+    replace: 'dataX={c.key}',
+    note: '日历点选锚点被剥 → e2e 无法定位日期格（交互回归盲区）',
   },
   {
     file: 'src/components/SleepCalendar.tsx',
     guard: 'verify-chart-readability.mts',
-    find: "light: ['#ebedf0'",
-    replace: '',
-    note: '只传 dark → 库回退默认主题 color-mix 插值 → 冻结版 WebView 恶性崩溃（第 108 轮真机实锤）',
+    find: "'一', '二', '三', '四', '五', '六', '日'",
+    replace: "'一', '三', '五'",
+    note: '星期表头截断 → 月历失去列锚点（第 109 轮真机反馈：日期月份难分辨）',
   },
 ];
 

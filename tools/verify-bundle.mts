@@ -59,12 +59,11 @@ check('recharts 落在某个懒 chunk（EyeHealthChart）',
 check('three 落在池塘懒 chunk（bootstrap-*.js）',
   allJs.some((c) => /^bootstrap-.*\.js$/.test(c.name) && has(c.src, 'WebGLRenderer')));
 
-// 第 107 轮：睡眠日历引入 react-activity-calendar（含 date-fns/floating-ui），
-// 同样只许随 TrendsTab 懒加载——指纹取包名（运行时 className 用的就是这个
-// 字符串字面量，压缩后必然存活；实测 dist 懒 chunk 命中、主包无）。
-check('主包不含 react-activity-calendar（包名指纹）', !has(main, 'react-activity-calendar'));
-check('react-activity-calendar 落在懒 chunk（睡眠日历）',
-  allJs.some((c) => c.name !== js[0] && has(c.src, 'react-activity-calendar')));
+// 第 109 轮：月历改为自绘（cal-heatmap v4 拖 @observablehq/plot 6.9MB 且文档域名
+// 已失效，react-activity-calendar 的默认主题 color-mix 插值在冻结 WebView 必崩
+// ——第 108 轮真机实锤）。两个第三方日历库都不允许回装，指纹查全部 chunk。
+check('无第三方日历库指纹（react-activity-calendar 已移除，月历自绘）',
+  !allJs.some((c) => has(c.src, 'react-activity-calendar')));
 
 // 主包体积上界（防止下一个重库悄悄进来）：第 103 轮实测 637K 字符
 // （.length 口径；磁盘 689KB 字节，差异来自包内 CJK 字符串）。超限不是

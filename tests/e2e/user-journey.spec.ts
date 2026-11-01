@@ -1484,13 +1484,18 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
   await expect(detail).toContainText('评分');
   await expect(detail).toContainText('就寝 23:10 · 起床 07:10');
 
+  // 月历默认打开在【有数据的那个月】（最近一夜所在月，10月），不是空洞的
+  // 当前月；首条记录月即下界 → ‹ 禁用，› 可去当前月
+  await expect(cal.getByRole('button', { name: '上一月' })).toBeDisabled();
+  await expect(cal.getByRole('button', { name: '下一月' })).toBeEnabled();
+
   // 点选前晚 → 详情切换（旧夜的时刻必须消失，不能只是叠加）
-  await cal.locator(`rect[data-date="${dstr(-2, base)}"]`).click();
+  await cal.locator(`[data-date="${dstr(-2, base)}"]`).click();
   await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
   await expect(detail).not.toContainText('就寝 23:10');
 
   // 点选无记录日 → 诚实空态
-  await cal.locator(`rect[data-date="${dstr(-6, base)}"]`).click();
+  await cal.locator(`[data-date="${dstr(-6, base)}"]`).click();
   await expect(detail).toContainText('该日无记录');
 
   expect(errors).toEqual([]);

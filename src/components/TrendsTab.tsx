@@ -1031,7 +1031,9 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
             <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 space-y-2`}>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-slate-200">睡眠日历</span>
-                <span className="text-[10px] font-mono text-slate-400">{calSel ? calSel.slice(5) : ''}</span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  {calSel ? `${Number(calSel.slice(5, 7))}月${Number(calSel.slice(8, 10))}日` : ''}
+                </span>
               </div>
               <SleepCalendar records={records} accentHex={theme.accentHex} selected={calSel} onSelect={setCalDay} />
               {calRec ? (

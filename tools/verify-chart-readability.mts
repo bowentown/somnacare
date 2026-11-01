@@ -93,22 +93,23 @@ ok('起卧图：无竖线拥挤（均值线/须线/带边框/悬停色块全部�
 ok('App 把用户目标作息传入趋势页',
   app.includes('targetBedtime={userProfile.targetBedtime}')
   && app.includes('targetWakeTime={userProfile.targetWakeTime}'));
-ok('睡眠日历：套 react-activity-calendar 开源组件（MIT）且内置 tooltip 在位',
-  pkg.includes('"react-activity-calendar"')
-  && cal.includes("from 'react-activity-calendar'")
-  && cal.includes("import 'react-activity-calendar/tooltips.css'")
-  && cal.includes('tooltips={{ activity'));
-ok('睡眠日历：点按可选中（renderBlock 挂 onClick，data-date 供 e2e 定位）',
-  cal.includes('renderBlock')
+ok('睡眠日历：第三方日历库已移除（第 109 轮）——react-activity-calendar 的默认主题会 color-mix 插值再自校验，冻结版 WebView 必崩（第 108 轮实锤）',
+  !pkg.includes('"react-activity-calendar"')
+  && !cal.includes("from 'react-activity-calendar'"));
+ok('睡眠日历：月历形态（复刻 cal-heatmap 经典 month-domain，第 109 轮真机反馈：条带形态日期月份难分辨）',
+  cal.includes('grid-cols-7')
+  && cal.includes("'一', '二', '三', '四', '五', '六', '日'")
+  && cal.includes('aspect-square')
+  && cal.includes('{c.day}'));
+ok('睡眠日历：月份标题即导航（‹ ›，下界 = 首条记录月，不展示空洞月份）',
+  cal.includes('aria-label="上一月"')
+  && cal.includes('aria-label="下一月"')
+  && cal.includes('firstMonth'));
+ok('睡眠日历：点按可选中（data-date 供 e2e 定位）+ 无记录不冒充（无底色/未来日透明）',
+  cal.includes('data-date={c.key}')
   && cal.includes('onSelect')
-  && cal.includes("'data-date'"));
-ok('睡眠日历：无记录 = 空格（level 0），不冒充 0 分',
-  cal.includes('score === undefined ? 0 : score >= 90 ? 4 : score >= 80 ? 3 : score >= 60 ? 2 : 1'));
-ok('睡眠日历：双 scheme 显式满五色 + rgba()（缺一侧库就回退默认主题做 color-mix 插值 → 冻结版 WebView 真机崩溃，第 108 轮）',
-  cal.includes('light: [')
-  && cal.includes('dark: [')
-  && cal.includes('hexToRgba(accentHex, 0.3)')
-  && cal.includes('hexToRgba(accentHex, 0.75)'));
+  && cal.includes('alpha === null')
+  && cal.includes("c.future"));
 ok('作息曲线：recharts 双线 + 缺口断线（漏记夜不连线）+ 午夜参照线',
   rhythm.includes("from 'recharts'")
   && (rhythm.match(/connectNulls=\{false\}/g) ?? []).length === 2   // 就寝/起床双线各自断缺口
@@ -129,10 +130,18 @@ ok('作息曲线：双线可辨识（实线就寝/虚线起床有图例，轴刻
   // 第 107 轮新增图的两个锚点各做一次反向验证（双线各有一处 connectNulls，全量替换）
   const doctoredRhythm = rhythm.split('connectNulls={false}').join('connectNulls');
   ok('反向自检：作息曲线缺口开关被改坏后判据不再成立', !doctoredRhythm.includes('connectNulls={false}'));
-  const doctoredCal = cal.replace("'data-date'", "'data-x'");
-  ok('反向自检：日历点选锚点被删后判据不再成立', !doctoredCal.includes("'data-date'"));
-  const doctoredScheme = cal.replace("light: ['#ebedf0'", "lightX: ['#ebedf0'");
-  ok('反向自检：light scheme 被删后判据不再成立', !doctoredScheme.includes('light: ['));
+  const doctoredCal = cal.replace('data-date={c.key}', 'dataX={c.key}');
+  ok('反向自检：日历点选锚点被删后判据不再成立', !doctoredCal.includes('data-date={c.key}'));
+  const doctoredWeekdays = cal.replace("'一', '二', '三', '四', '五', '六', '日'", "'一', '三', '五'");
+  ok('反向自检：星期表头被截断后判据不再成立', !doctoredWeekdays.includes("'一', '二', '三', '四', '五', '六', '日'"));
+  // "库已移除"断言的两个探测器各验一次：注入回装，探测器必须命中
+  const doctoredPkg = pkg.replace('"react-is"', '"react-is","react-activity-calendar"');
+  ok('反向自检：package.json 回装被检出', doctoredPkg.includes('"react-activity-calendar"'));
+  const doctoredImport = cal.replace(
+    "import React, { useMemo, useState } from 'react';",
+    "import React, { useMemo, useState } from 'react';\nimport X from 'react-activity-calendar';",
+  );
+  ok('反向自检：import 式回装被检出', doctoredImport.includes("from 'react-activity-calendar'"));
 }
 
 if (failures > 0) {
