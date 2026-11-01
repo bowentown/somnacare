@@ -8,6 +8,7 @@
  */
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from './recordFilter';
+import { GOOD_NIGHT_THRESHOLD, weekNightsOf } from './weekReport';
 
 export function fmtDuration(min: number): string {
   const h = Math.floor(min / 60);
@@ -61,16 +62,11 @@ export function buildSleepFacts(
   //   周 = 周一起算；夜按"放下手机那晚"归属本周（夜归属 date=周一晚 = 本周第 1 夜）。
   //   已度过 = 今天之前本周已过的夜数（周一=0 … 今天不计——今晚尚未发生，
   //   白天查看不能把今晚报成"未记录"）；x = 有记录的夜数；m = 未记录的夜数。
-  const dowIdx = (now.getDay() + 6) % 7;            // 周一=0 … 周日=6
-  const elapsedSlots = dowIdx;                       // 已度过的夜数（昨晚=最后一块拼图）
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
-  const weekDates = new Set<string>();
-  for (let i = 0; i < elapsedSlots; i++) {
-    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-    weekDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-  }
-  const weekRecs = nightsOnly(records as SleepRecord[]).filter((r) => weekDates.has(r.date));
-  const goodWeek = weekRecs.filter((r) => r.sleepScore >= 80).length;
+  // 第 116 轮：日期键/去重/记录走 weekNightsOf 共享实现（此前平行实现且漏
+  // 按夜去重，导入数据同日多条会报"达标 2/1"——第 54 轮同类缺陷）；
+  // 阈值走全仓达标常量（weekReport 导出），不再硬编码 80。
+  const { weekDates, elapsedNights: elapsedSlots, weekRecs } = weekNightsOf(records as SleepRecord[], now);
+  const goodWeek = weekRecs.filter((r) => r.sleepScore >= GOOD_NIGHT_THRESHOLD).length;
   const missed = Math.max(0, elapsedSlots - weekRecs.length);
   // 没有记录就不生成战报事实：周一的 0/0 + "全部有记录" 是当众撒谎，
   // 也会让朋友圈配一张只有破折号的怪卡
@@ -81,10 +77,8 @@ export function buildSleepFacts(
     const slots: string[] = [];
     for (let i = 0; i < 7; i++) {
       if (i >= elapsedSlots) { slots.push('-'); continue; }
-      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const rec = weekRecs.find((r) => r.date === key);
-      slots.push(!rec ? '0' : rec.sleepScore >= 80 ? '2' : '1');
+      const rec = weekRecs.find((r) => r.date === weekDates[i]);
+      slots.push(!rec ? '0' : rec.sleepScore >= GOOD_NIGHT_THRESHOLD ? '2' : '1');
     }
     facts.push(`本周逐夜 ${slots.join('')}`);
   }

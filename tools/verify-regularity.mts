@@ -266,8 +266,28 @@ const check = (name: string, ok: boolean, detail = '') => {
     computeSleepDebt(none as any, 420, 'night', NOW2, 14).debtMinutes === 0);
 }
 
+// 9) 科学建议作息（第 114 轮）：需求 + MSFsc → 可一键采用的目标
+{
+  const { computeSuggestedSchedule } = await import(new URL('../src/utils/scheduleSuggestion.ts', import.meta.url).href);
+  const cur = { bed: '23:30', wake: '07:30', durationHours: 8 };
+  const s1 = computeSuggestedSchedule(480, 390, cur);
+  check('建议：MSFsc 锚定 + 就寝域钳制（06:30 − 4h = 02:30 域外 → 01:00）',
+    !!s1 && s1.bed === '01:00' && s1.wake === '09:00' && s1.durationHours === 8 && s1.basis === 'msf', JSON.stringify(s1));
+  const s2 = computeSuggestedSchedule(475, 390, cur);
+  check('建议：需求对齐半小时档（475 → 480）', !!s2 && s2.durationHours === 8);
+  check('建议：与当前一致 → null（不制造假建议）',
+    computeSuggestedSchedule(480, null, { bed: '23:30', wake: '07:30', durationHours: 8 }) === null);
+  const s4 = computeSuggestedSchedule(450, null, cur);
+  check('建议：MSFsc 不可用走需求推算（现就寝 23:30 + 7.5h → 07:00）',
+    !!s4 && s4.bed === '23:30' && s4.wake === '07:00' && s4.durationHours === 7.5 && s4.basis === 'need', JSON.stringify(s4));
+  const s5 = computeSuggestedSchedule(600, 330, cur);
+  check('建议：深夜域内不钳（05:30 − 5h → 00:30）', !!s5 && s5.bed === '00:30' && s5.wake === '10:30');
+  const s6 = computeSuggestedSchedule(480, 900, cur);
+  check('建议：域外钳到更近域边（11:00 → 21:00）', !!s6 && s6.bed === '21:00' && s6.wake === '05:00');
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——规律度口径与断言不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-regularity：跨午夜 / 不足 3 晚 / 满分 / 波动档位全部符合口径');
+console.log('\n✓ verify-regularity：跨午夜 / 不足 3 晚 / 满分 / 波动档位 / 科学建议全部符合口径');

@@ -107,6 +107,49 @@ ok('一体性：首屏仪表盘大数字走 font-display（SleepDial，font-mono
   dial.includes('font-bold font-display')
   && !dial.includes('font-black font-mono'));
 
+// ── 数值排版收编（第 117 轮）：通用数值组件一处转正，抽查文件 no mono 数值 ──
+const statCard = read('src/components/ui/StatCard.tsx');
+const oneTap = read('src/components/OneTapSleepTracker.tsx');
+const activeSleep = read('src/components/ActiveSleepModal.tsx');
+ok('数值排版：StatCard 走 font-display（通用数值组件一处收口）',
+  statCard.includes('text-xl font-bold font-display tabular-nums')
+  && !statCard.includes('font-mono'));
+ok('数值排版：抽查清单迁移（提案时刻/亮屏 hero/计时器）',
+  oneTap.includes('font-bold font-display text-white tabular-nums min-w-12')
+  && today.includes('text-3xl font-bold font-display tabular-nums')
+  && activeSleep.includes('text-5xl font-display font-bold')
+  && !activeSleep.includes('text-5xl font-mono'));
+{
+  const doctoredStat = statCard.replace('text-xl font-bold font-display tabular-nums', 'text-xl font-black font-mono tabular-nums');
+  ok('反向自检：StatCard mono 回潮被检出', doctoredStat.includes('font-mono'));
+}
+
+// ── 对外形象：分享卡 canvas 接品牌字体（第 118 轮）──
+const shareCard = read('src/utils/sleepShareCard.ts');
+ok('对外形象：分享卡大数字走 Space Grotesk（canvas 不吃 CSS，显式 fonts.load 预热）',
+  shareCard.includes("const DISPLAY = '\"Space Grotesk\", system-ui, sans-serif'")
+  && shareCard.includes("await document.fonts.load('700 64px \"Space Grotesk\"')")
+  && shareCard.includes("'700 116px ' + DISPLAY")
+  && !shareCard.includes("900 116px system-ui"));
+
+// ── 动效时长 token（第 121 轮首批）：跨文件复用的毫秒一个出处 ──
+const appSrc = read('src/App.tsx');
+const splash = read('src/components/LaunchSplash.tsx');
+const motion = read('src/utils/motionTokens.ts');
+ok('动效 token：motionTokens 在场且 App/LaunchSplash 接线',
+  motion.includes('snapMs: 300') && motion.includes('splashMaxMs: 3300')
+  && appSrc.includes('const SNAP_MS = MOTION.snapMs;')
+  && !appSrc.includes('const SNAP_MS = 300;')
+  && splash.includes('MOTION.splashMinMs') && splash.includes('MOTION.splashMaxMs'));
+{
+  const doctoredApp = appSrc.replace('const SNAP_MS = MOTION.snapMs;', 'const SNAP_MS = 300;');
+  ok('反向自检：SNAP_MS 裸数字回潮被检出', doctoredApp.includes('const SNAP_MS = 300;'));
+}
+{
+  const doctoredShare = shareCard.split("700 64px").join("0");
+  ok('反向自检：字体预热被剥后判据不再成立', !doctoredShare.includes("await document.fonts.load('700 64px"));
+}
+
 // ── 反向自检：删掉插画变量后判据失效 ──
 {
   const doctored = illustration.replace("'--primary-svg-color'", "'--unused-var'");

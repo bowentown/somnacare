@@ -238,7 +238,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
             <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 shadow-inner`}>
               <div className="flex justify-between text-xs text-slate-200 mb-1.5 font-bold">
                 <span>入睡耗时</span>
-                <span className={`${theme?.accentText} font-mono`}>{latencyMinutes} 分钟</span>
+                <span className={`font-display ${theme?.accentText}`}>{latencyMinutes} 分钟</span>
               </div>
               <input
                 type="range"
@@ -255,7 +255,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
             <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 shadow-inner`}>
               <div className="flex justify-between text-xs text-slate-200 mb-1.5 font-bold">
                 <span>夜醒次数</span>
-                <span className="text-amber-300 font-mono">{wakeCount} 次</span>
+                <span className="text-amber-300 font-display">{wakeCount} 次</span>
               </div>
               <input
                 type="range"

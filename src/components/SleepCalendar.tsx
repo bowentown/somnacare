@@ -138,7 +138,7 @@ export const SleepCalendar: React.FC<{
                 data-date={c.key}
                 aria-label={`${view.getMonth() + 1}月${c.day}日${score !== undefined ? `，${score} 分` : '，无记录'}`}
                 onClick={() => onSelect(c.key)}
-                className={`flex aspect-square items-center justify-center rounded-lg text-[10px] font-mono active:scale-95 ${
+                className={`flex aspect-square items-center justify-center rounded-lg text-[10px] font-display active:scale-95 ${
                   isSel ? 'ring-2 ring-white/90' : c.key === todayKey ? 'ring-1 ring-white/40' : ''
                 }`}
                 style={{

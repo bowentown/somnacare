@@ -28,7 +28,7 @@ export const StatCard: React.FC<StatCardProps> = ({
     className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-3 min-w-0 ${className}`}
   >
     <span className={`text-[10px] ${theme.textMuted} block mb-0.5 truncate`}>{label}</span>
-    <span className={`text-xl font-black font-mono tabular-nums ${valueClassName ?? theme.accentText}`}>
+    <span className={`text-xl font-bold font-display tabular-nums ${valueClassName ?? theme.accentText}`}>
       {value}
     </span>
     {hint != null && (

@@ -16,6 +16,8 @@ import { nightsOnly } from './recordFilter';
 import { loadTravelState } from '../services/travelService';
 import { getPostcardById, thumbUrlOf } from '../data/travelPostcards';
 
+const DISPLAY = '"Space Grotesk", system-ui, sans-serif';   // 数据大数字角色（第 118 轮）
+
 export const CARD_W = 1080;
 export const CARD_H = 1440;
 
@@ -180,6 +182,14 @@ export interface WeeklyCardData {
 }
 
 export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCardData> {
+  // 品牌字体预热：canvas 不走 CSS 级 font-display，未加载时 fillText 会静默
+  // 回退系统字——绘制前显式 load 两个大数字字重（失败则回退，不阻断）
+  if (typeof document !== 'undefined') {
+    try {
+      await document.fonts.load('700 64px "Space Grotesk"');
+      await document.fonts.load('700 116px "Space Grotesk"');
+    } catch { /* 回退系统字 */ }
+  }
   const now = input.now ?? new Date();
   const records = input.records;
   const regularity = computeRegularity(records);
@@ -278,7 +288,7 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
     ctx.font = '500 34px system-ui, sans-serif';
     ctx.fillText('作息规律度（近 7 晚）', L.regX!, L.labelY);
     ctx.fillStyle = input.accentHex;
-    ctx.font = '900 116px system-ui, sans-serif';
+    ctx.font = '700 116px ' + DISPLAY;
     ctx.fillText(String(regularity.score), L.regX!, L.numY);
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.font = '400 26px system-ui, sans-serif';
@@ -290,7 +300,7 @@ export async function renderWeeklyCard(input: WeeklyCardInput): Promise<WeeklyCa
     ctx.font = '500 34px system-ui, sans-serif';
     ctx.fillText('平均睡眠时长', L.durX!, L.labelY);
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = '900 64px system-ui, sans-serif';
+    ctx.font = '700 64px ' + DISPLAY;
     ctx.fillText(`${Math.floor(avgDurationMin / 60)} 小时 ${avgDurationMin % 60} 分`, L.durX!, L.numY);
   }
   // 规律度需要 ≥3 晚：开关开着但数据不足时，画一行诚实提示（不再静默缺席）

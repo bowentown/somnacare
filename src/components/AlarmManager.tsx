@@ -433,7 +433,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                   style={{ accentColor: theme?.accentHex }}
                 />
                 <span className="text-[10px] text-slate-400 font-mono">30m</span>
-                <span className={`text-[11px] ${theme?.accentText} font-mono font-bold w-9 text-right tabular-nums`}>
+                <span className={`text-[11px] ${theme?.accentText} font-display font-bold w-9 text-right tabular-nums`}>
                   {newSmartWindow}m
                 </span>
               </div>
@@ -496,7 +496,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
 
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-2xl font-mono font-black tracking-tight text-white">
+                      <span className="text-2xl font-display font-bold tracking-tight text-white">
                         {alarm.time}
                       </span>
                       <span className="text-xs text-white font-bold truncate max-w-[9rem]">{alarm.label}</span>

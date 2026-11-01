@@ -26,6 +26,7 @@ const manifest = read('plugins/cap-usage-signal/android/src/main/AndroidManifest
 const usageSignal = read('src/utils/usageSignal.ts');
 const today = read('src/components/TodayTab.tsx');
 const eye = read('src/components/EyeCareTab.tsx');
+const motion = read('src/utils/motionTokens.ts');
 
 // ── 原生：queryWindDownApps ──
 ok('原生：queryWindDownApps 存在且窗口钳制在 15–120 分钟',
@@ -74,6 +75,16 @@ ok('UI：诚实文案只在 ≥55 分钟时出现（不制造因果断言）',
   && today.includes('放下前手机几乎没停过'));
 ok('UI：无数据/无权限时卡片不渲染（apps.length > 0 门控）',
   /windDown && windDown\.apps\.length > 0/.test(today));
+// ── 睡债接入（第 115 轮）：科学驱动睡前行为 ──
+ok('UI：睡债量化文案仅个人基线且欠债 ≥60 分钟时出现（诚实边界）',
+  today.includes("wNeed.basis === 'personal'")
+  && today.includes('wDebt.debtMinutes >= 60')
+  && today.includes('今晚建议提前 30 分钟放下手机')
+  && today.includes('winddown-debt'));
+{
+  const doctored = today.replace('wDebt.debtMinutes >= 60', 'wDebt.debtMinutes >= 0');
+  ok('反向自检：债门槛归零（零债也出文案）后判据不再成立', !doctored.includes('wDebt.debtMinutes >= 60'));
+}
 
 // ── 数字健康台彻底移除 ──
 ok('移除：EyeCareTab 无每应用榜/分类规则残留',
@@ -98,19 +109,20 @@ ok('开屏：大号白字+光晕（bg-clip:text 与 filter 的组合在旧 WebVi
 {
   const SLOGAN_LEN = '懂睡眠，更懂你'.length;   // 7 字（含逗号），末字下标 6
   const mChar = splash.match(/splash-rise (\d+)ms ease-out \$\{860 \+ i \* (\d+)\}ms/);
-  const mMin = splash.match(/elapsed >= (\d+) && \(readyRef\.current \|\| elapsed >= (\d+)\)/);
-  const mFade = splash.match(/window\.setTimeout\(dismiss, (\d+)\)/);
+  const mToken = motion.match(/splashMinMs: (\d+)/);
+  const mFadeTok = motion.match(/splashFadeMs: (\d+)/);
+  const mCap = motion.match(/splashMaxMs: (\d+)/);
   const charDur = mChar ? Number(mChar[1]) : 0;
   const charStag = mChar ? Number(mChar[2]) : 0;
   const lastCharEnd = 860 + (SLOGAN_LEN - 1) * charStag + charDur;
-  const minCeremony = mMin ? Number(mMin[1]) : 0;
-  const hardCap = mMin ? Number(mMin[2]) : 0;
-  const fadeMs = mFade ? Number(mFade[1]) : 0;
+  const minCeremony = mToken ? Number(mToken[1]) : 0;
+  const hardCap = mCap ? Number(mCap[1]) : 0;
+  const fadeMs = mFadeTok ? Number(mFadeTok[1]) : 0;
   ok('开屏：最短仪式 ≥ 宣传语末字完成时刻（淡出不掐字）',
-    mChar !== null && mMin !== null && minCeremony >= lastCharEnd,
+    mChar !== null && mToken !== null && minCeremony >= lastCharEnd,
     `仪式 ${minCeremony}ms vs 末字 ${lastCharEnd}ms`);
   ok('开屏：硬上限 + 淡出 < e2e 等待 4200ms（非跳过路径不点空气）',
-    mMin !== null && mFade !== null && hardCap + fadeMs < 4200,
+    mToken !== null && mFadeTok !== null && hardCap + fadeMs < 4200,
     `${hardCap}+${fadeMs}=${hardCap + fadeMs}ms`);
 }
 
@@ -156,4 +168,10 @@ if (failures > 0) {
   console.error(`\n${failures} 项失败——睡前一小时/开屏涟漪/性能护栏不符`);
   process.exit(1);
 }
+// ── 开屏时长 token（第 121 轮）：最短仪式 ≥2600 的教训进 token 后仍要钉住 ──
+ok('开屏：最短仪式走 token 且 ≥2600ms（1200ms 会文字出场途中淡出）',
+  splash.includes('MOTION.splashMinMs') && motion.includes('splashMinMs: 2600'));
+ok('反向自检：开屏最短仪式退回 1200 后判据不再成立',
+  (() => { const d = motion.replace('splashMinMs: 2600', 'splashMinMs: 1200'); return !d.includes('splashMinMs: 2600'); })());
+
 console.log('\n✓ verify-wind-down：睡前一小时 / 数字健康台移除 / 开屏涟漪 / 性能项全部在位');

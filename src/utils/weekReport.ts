@@ -30,6 +30,31 @@ export interface WeekReport {
   graceUsed: boolean;
 }
 
+/** 本周（周一起）已度过的夜键 + 去重后的当夜记录（第 116 轮抽共享：
+ * sleepFacts 战报此前平行实现且漏了按夜去重——导入数据同日多条会报
+ * "本周达标 2/1"（第 54 轮同类缺陷）。 */
+export function weekNightsOf(records: SleepRecord[], now: Date = new Date()): {
+  weekDates: string[];      // 周一起、按序的已度过夜键（长度 = elapsedNights）
+  elapsedNights: number;
+  weekRecs: SleepRecord[];  // 按夜去重后的当夜记录
+} {
+  const dowIdx = (now.getDay() + 6) % 7;
+  const elapsedNights = dowIdx;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
+  const weekDates: string[] = [];
+  for (let i = 0; i < elapsedNights; i++) {
+    weekDates.push(toLocalDateString(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)));
+  }
+  const seen = new Set<string>();
+  const weekRecs: SleepRecord[] = [];
+  for (const r of nightsOnly(records)) {
+    if (!weekDates.includes(r.date) || seen.has(r.date)) continue;
+    seen.add(r.date);
+    weekRecs.push(r);
+  }
+  return { weekDates, elapsedNights, weekRecs };
+}
+
 export function computeWeekReport(records: SleepRecord[], now: Date = new Date()): WeekReport {
   const nights = nightsOnly(records);
 
@@ -46,21 +71,10 @@ export function computeWeekReport(records: SleepRecord[], now: Date = new Date()
     if (!best || r.sleepScore > best.score) best = { date: r.date, score: r.sleepScore };
   }
 
-  // 本周已度过夜数（周一=0 .. 昨天=本周最后一个已过去的夜）
-  const dowIdx = (now.getDay() + 6) % 7;
-  const elapsedNights = dowIdx;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dowIdx);
-  const weekKeys = new Set<string>();
-  for (let i = 0; i < elapsedNights; i++) {
-    weekKeys.add(toLocalDateString(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)));
-  }
-  // 按夜去重：导入数据同一天可能有多条夜睡（导入路径只排序不去重），
-  // 不去重会出现"本周达标 2/1"（第 54 轮）
-  const weekSeen = new Set<string>();
+  // 本周（周一起）已度过夜键、去重当夜记录——weekNightsOf 共享实现（第 116 轮）
+  const { elapsedNights, weekRecs } = weekNightsOf(records, now);
   let goodNights = 0;
-  for (const r of nights) {
-    if (!weekKeys.has(r.date) || weekSeen.has(r.date)) continue;
-    weekSeen.add(r.date);
+  for (const r of weekRecs) {
     if (r.sleepScore >= GOOD_NIGHT_THRESHOLD) goodNights++;
   }
 

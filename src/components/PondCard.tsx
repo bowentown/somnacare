@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from '../utils/recordFilter';
+import { computeSleepDebtRatio } from '../utils/sleepScore';
 import { ThemeConfig } from '../utils/themeStyles';
 
 /**
@@ -23,13 +24,9 @@ const THEME_WEATHER: Record<ThemeConfig['id'], 'moonlight' | 'sunny' | 'sunset' 
 
 const W = 480, H = 140;
 
-/** 近 7 夜睡眠债 0（睡饱）~1（严重欠觉）：池塘天气的唯一数据源（纯联动，无新功能）。 */
+/** 近 7 夜欠觉比：公式唯一实现迁至 sleepScore.computeSleepDebtRatio（第 116 轮）。 */
 function sleepDebtOf(records: SleepRecord[], userProfile: UserProfile): number {
-  const nights = nightsOnly(records).slice(0, 7);
-  if (nights.length === 0) return 0.4;
-  const target = Math.max(240, (userProfile.targetDurationHours || 8) * 60);
-  const avg = nights.reduce((a, r) => a + r.durationMinutes, 0) / nights.length;
-  return Math.max(0, Math.min(1, 1 - avg / target));
+  return computeSleepDebtRatio(records, (userProfile.targetDurationHours || 8) * 60);
 }
 
 interface PondHandle {

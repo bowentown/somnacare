@@ -344,7 +344,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs font-bold">
                 <span className="text-slate-200">色相</span>
-                <span className="text-orange-400 font-mono">{Math.round(hue)}°</span>
+                <span className="text-orange-400 font-display">{Math.round(hue)}°</span>
               </div>
               <input
                 type="range"
@@ -453,7 +453,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs font-bold">
             <span className="text-slate-200">滤镜强度</span>
-            <span className="text-orange-400 font-mono">{cfg.warmStrength}%</span>
+            <span className="text-orange-400 font-display">{cfg.warmStrength}%</span>
           </div>
           <input
             type="range"
@@ -469,7 +469,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs font-bold">
             <span className="text-slate-200">屏幕减光</span>
-            <span className="text-indigo-400 font-mono">{cfg.dimStrength}%</span>
+            <span className="text-indigo-400 font-display">{cfg.dimStrength}%</span>
           </div>
           <input
             type="range"

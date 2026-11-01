@@ -297,6 +297,13 @@ export async function downloadLocalLlm(
       if (!res.ok || !res.body) throw new Error(`下载源响应异常 (HTTP ${res.status})`);
 
       const total = Number(res.headers.get('content-length') || 0);
+      // 大小硬校验（第 120 轮，P2）：expectedBytes 从"界面展示参考"升级——
+      // 源声明与清单偏差 >10% → 源异常，直接换源；expectedBytes 本身是近似值
+      //（不同镜像构建可能差几 MB），所以这里用宽容差，真正精确的校验在流结束
+      if (total > 0 && LOCAL_LLM_MODEL.expectedBytes > 0
+          && Math.abs(total - LOCAL_LLM_MODEL.expectedBytes) > LOCAL_LLM_MODEL.expectedBytes * 0.1) {
+        throw new Error(`模型源声明大小异常（${total}B ≠ ~${LOCAL_LLM_MODEL.expectedBytes}B），换下一源`);
+      }
       let loaded = 0;
       const progressStream = new TransformStream({
         transform(chunk, controller) {
@@ -310,6 +317,11 @@ export async function downloadLocalLlm(
 
       const cache = await caches.open(LLM_CACHE_NAME);
       await cache.put(url, streamedRes);
+      // 流完整性：实际落盘字节数 ≠ 源声明 → 截断/代理损坏，清缓存换源重试
+      if (total > 0 && loaded !== total) {
+        await cache.delete(url);
+        throw new Error(`模型文件不完整（${loaded}B ≠ 声明 ${total}B）——已清理缓存`);
+      }
       onProgress(100);
       return;
     } catch (e: any) {
@@ -408,7 +420,11 @@ async function generateViaNative(
       const abortRace = signal
         ? new Promise<never>((_, reject) => {
             if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            signal.addEventListener('abort', () => {
+              // 原生真取消（第 120 轮，P3）：先让插件打断底层等待，再竞速上抛
+              try { void (plugin as any).cancelGenerate?.({ requestId }); } catch { /* 旧版插件无此接口 */ }
+              reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
           })
         : null;
       const genOpts = {

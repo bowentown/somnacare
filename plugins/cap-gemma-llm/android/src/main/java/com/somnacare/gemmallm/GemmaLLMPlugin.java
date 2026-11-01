@@ -57,6 +57,9 @@ public class GemmaLLMPlugin extends Plugin {
             new java.util.concurrent.atomic.AtomicInteger();
     private final Object unloadLock = new Object();
     private final java.util.List<LlmInference> pendingCloses = new java.util.ArrayList<>();
+    // 真取消（第 120 轮，P3）：requestId → 在途 Future；cancelGenerate 中断等待
+    private final java.util.Map<Integer, java.util.concurrent.Future<String>> activeFutures =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private volatile boolean downloadCancelled = false;
     private static final java.util.concurrent.ExecutorService BACKGROUND =
             java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -751,6 +754,7 @@ public class GemmaLLMPlugin extends Plugin {
         }
         Integer ctxScore = call.getInt("lastScore");
         Integer ctxMissed = call.getInt("missedDays");
+        Integer ctxStreak = call.getInt("streak");
         getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(PetOverlayService.K_PET_SAY, safe(call, "say", ""))
                 .putInt(PetOverlayService.K_BUBBLE_EVERY, every)
@@ -758,6 +762,7 @@ public class GemmaLLMPlugin extends Plugin {
                 .putInt(PetOverlayService.K_CTX_SCORE, ctxScore != null ? ctxScore : -1)
                 .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
                 .putBoolean(PetOverlayService.K_CTX_LAST_NIGHT, Boolean.TRUE.equals(call.getBoolean("lastNightRecorded")))
+                .putInt(PetOverlayService.K_CTX_STREAK, ctxStreak != null ? ctxStreak : 0)
                 .apply();
     }
 
@@ -1519,7 +1524,20 @@ public class GemmaLLMPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             unloadInternal();
-            call.reject("模型加载失败: " + e.getMessage());
+            // 模型文件损坏自愈（第 120 轮，P2）：加载失败大概率是文件损坏/截断
+            // ——尽力删除让用户重新下载（删除失败不阻断报错）
+            try {
+                if (f.exists() && !f.delete()) {
+                    java.util.File[] siblings = f.getParentFile() == null ? new java.io.File[0] : f.getParentFile().listFiles();
+                    if (siblings != null) {
+                        for (java.io.File sib : siblings) {
+                            if (sib.getName().startsWith(filename)) sib.delete();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            call.reject("模型加载失败（已清理损坏文件，请重新下载）: " + e.getMessage());
         }
     }
 
@@ -1587,6 +1605,7 @@ public class GemmaLLMPlugin extends Plugin {
                     p.put("requestId", requestId);
                     notifyListeners("llmToken", p);
                 });
+                activeFutures.put(requestId, future);
                 String result = future.get();
                 if (result != null) full.append(result);
                 JSObject ret = new JSObject();
@@ -1595,6 +1614,7 @@ public class GemmaLLMPlugin extends Plugin {
             } catch (Exception e) {
                 call.reject("生成失败: " + e.getMessage());
             } finally {
+                activeFutures.remove(requestId);
                 try {
                     if (session != null) session.close();
                 } catch (Exception ignored) {
@@ -1615,6 +1635,19 @@ public class GemmaLLMPlugin extends Plugin {
                 }
             }
         });
+    }
+
+    /**
+     * 原生生成真取消（第 120 轮，P3）：此前 JS 只能竞速弃单——后台那次生成
+     * 会继续跑完烧电。future.cancel(true) 中断底层等待并触发会话清理
+     * （finally 里 close），LiteRT 侧的取消语义到 Future 粒度为止。
+     */
+    @PluginMethod
+    public void cancelGenerate(PluginCall call) {
+        int requestId = call.getData().has("requestId") ? call.getData().optInt("requestId", 0) : 0;
+        Future<String> f = activeFutures.remove(requestId);
+        if (f != null) f.cancel(true);
+        call.resolve();
     }
 
     @PluginMethod

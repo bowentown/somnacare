@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { EmptyState } from './ui';
 import { ProfileUpdater, SleepRecord, UserProfile } from '../types/sleep';
-import { formatDurationChinese } from '../utils/sleepScore';
+import { computeMSFsc, computeSleepDebt, computeSleepNeed, formatDurationChinese } from '../utils/sleepScore';
+import { computeSuggestedSchedule } from '../utils/scheduleSuggestion';
 import { OneTapSleepTracker } from './OneTapSleepTracker';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
 import { toLocalDateString } from '../utils/dateUtils';
@@ -320,19 +321,19 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
             <div className="flex-1 min-w-0 space-y-2.5 text-xs">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-slate-300 font-bold whitespace-nowrap">总睡眠时长</span>
-                <span className="font-black text-white font-mono text-sm whitespace-nowrap">
+                <span className="font-bold text-white font-display text-sm whitespace-nowrap">
                   {formatDurationChinese(latestRecord.durationMinutes)}
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-slate-300 font-bold whitespace-nowrap">入睡 / 醒来</span>
-                <span className="font-mono text-slate-100 font-bold whitespace-nowrap">
+                <span className="font-display text-slate-100 font-bold whitespace-nowrap">
                   {latestRecord.bedtime} - {latestRecord.wakeTime}
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-slate-300 font-bold whitespace-nowrap">睡眠效率</span>
-                <span className="font-mono text-emerald-400 font-black whitespace-nowrap">
+                <span className="font-display text-emerald-400 font-bold whitespace-nowrap">
                   {latestRecord.sleepEfficiency}%
                 </span>
               </div>
@@ -366,6 +367,15 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
       {/* 放下手机前的一小时（第 82 轮）：昨夜睡前最后 60 分钟的真实画面 */}
       {windDown && windDown.apps.length > 0 && (() => {
         const totalMin = windDown.apps.reduce((a, x) => a + x.minutes, 0);
+        // 睡债接入（第 115 轮）：科学第一次驱动睡前行为——个人基线下近 7 晚
+        // 欠债 ≥1h → 量化文案 + 提前建议；基线未个人化（<5 晚）→ 诚实缺省
+        const wNeed = computeSleepNeed(records, Math.round(userProfile.targetDurationHours * 60), userProfile.chronotype ?? 'night');
+        const wDebt = wNeed.basis === 'personal'
+          ? computeSleepDebt(records, wNeed.baselineMinutes, userProfile.chronotype ?? 'night')
+          : null;
+        const debtNudge = wDebt && wDebt.debtMinutes >= 60
+          ? `近 7 晚欠下 ${formatDurationChinese(wDebt.debtMinutes)} 睡债——今晚建议提前 30 分钟放下手机。`
+          : null;
         const putDown = new Date(windDown.windowEnd);
         const hm = `${String(putDown.getHours()).padStart(2, '0')}:${String(putDown.getMinutes()).padStart(2, '0')}`;
         return (
@@ -381,7 +391,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
               <span className="text-[10px] text-slate-400 font-mono shrink-0">{hm} 放下</span>
             </div>
             <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-black font-mono tabular-nums ${theme.accentText}`}>{totalMin}</span>
+              <span className={`text-3xl font-bold font-display tabular-nums ${theme.accentText}`}>{totalMin}</span>
               <span className="text-xs text-slate-300">分钟还在亮屏</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -398,6 +408,11 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
             {totalMin >= 55 && (
               <p className="text-[10px] text-amber-300 leading-relaxed">
                 放下前手机几乎没停过——大脑可能需要更久才能平静下来。
+              </p>
+            )}
+            {debtNudge && (
+              <p className={`text-[10px] ${theme.accentText} leading-relaxed`} data-testid="winddown-debt">
+                {debtNudge}
               </p>
             )}
           </div>
@@ -572,6 +587,35 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
 
         {goalOpen && (
         <div className="space-y-4">
+          {/* 科学建议作息（第 114 轮）：个人需求 + MSFsc → 一键采用；与当前一致不出现 */}
+          {(() => {
+            const needMin = computeSleepNeed(records, Math.round(userProfile.targetDurationHours * 60), userProfile.chronotype ?? 'night').needMinutes;
+            const msfMin = computeMSFsc(records, userProfile.chronotype ?? 'night')?.msfMinutes ?? null;
+            const suggestion = computeSuggestedSchedule(needMin, msfMin, {
+              bed: userProfile.targetBedtime, wake: userProfile.targetWakeTime, durationHours: userProfile.targetDurationHours,
+            });
+            if (!suggestion) return null;
+            return (
+              <button
+                type="button"
+                data-no-swipe
+                aria-label={`按科学建议采用作息：${suggestion.bed} 入睡，${suggestion.wake} 醒来`}
+                onClick={() => onUpdateProfile({
+                  targetBedtime: suggestion.bed,
+                  targetWakeTime: suggestion.wake,
+                  targetDurationHours: suggestion.durationHours,
+                })}
+                className={`w-full flex items-center justify-between gap-2 min-h-10 px-3.5 rounded-xl border ${theme.cardInnerBorder} ${theme.cardInnerBg} cursor-pointer active:scale-[0.98] transition-transform`}
+              >
+                <span className="text-[11px] font-bold text-slate-200">
+                  按科学建议采用 <span className="font-display">{suggestion.bed} – {suggestion.wake}</span>
+                </span>
+                <span className={`text-[10px] font-bold ${theme.accentText}`}>
+                  {suggestion.basis === 'msf' ? 'MSFsc 锚定 ›' : '需求推算 ›'}
+                </span>
+              </button>
+            );
+          })()}
           <div className="grid grid-cols-2 gap-3">
             <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 shadow-inner`}>
               <span className="text-xs font-bold text-slate-200 block mb-1">目标就寝</span>
@@ -609,7 +653,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
           <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 shadow-inner space-y-2`}>
             <div className="flex justify-between text-xs font-bold">
               <span className="text-slate-200">目标睡眠时长</span>
-              <span className={`${theme.accentText} font-mono text-sm`}>{userProfile.targetDurationHours} 小时</span>
+              <span className={`${theme.accentText} font-display text-sm`}>{userProfile.targetDurationHours} 小时</span>
             </div>
             <input
               type="range"

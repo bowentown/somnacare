@@ -8,6 +8,7 @@
  */
 import { SleepRecord } from '../types/sleep';
 import { toLocalDateString } from './dateUtils';
+import { computeWeekReport } from './weekReport';
 
 export interface PetContext {
   /** 昨晚评分（-1=无记录） */
@@ -16,6 +17,8 @@ export interface PetContext {
   missedDays: number;
   /** 昨晚是否已入账 */
   lastNightRecorded: boolean;
+  /** 连续达标夜数（第 119 轮）：晨间里程碑播报用（0 = 无连胜；1 晚宽限口径同 weekReport） */
+  streak: number;
 }
 
 export function petContext(records: SleepRecord[], now: Date): PetContext {
@@ -33,5 +36,6 @@ export function petContext(records: SleepRecord[], now: Date): PetContext {
     if (records.some((r) => night(r) && r.date === key)) break;
     missedDays++;
   }
-  return { lastScore: lastNight ? lastNight.sleepScore : -1, missedDays, lastNightRecorded: !!lastNight };
+  const streak = computeWeekReport(records, now).streak;
+  return { lastScore: lastNight ? lastNight.sleepScore : -1, missedDays, lastNightRecorded: !!lastNight, streak };
 }

@@ -100,6 +100,10 @@ check('missedDays 按夜归属从昨天起数（i=1，第 51 轮口径）',
 check('插件落盘上下文（K_CTX_*）', plugin.includes('K_CTX_SCORE') && plugin.includes('K_CTX_MISSED') && plugin.includes('K_CTX_LAST_NIGHT'));
 check('服务转推上下文（调用点而非仅签名，变异 3）', service.includes('whale.setContext('));
 check('视图消费上下文 setContext', view.includes('public void setContext(int lastScore, int missedDays, boolean lastNightRecorded)'));
+  check('streak 接线（第 119 轮）：插件落盘 K_CTX_STREAK + 服务里程碑气泡（3/7/14，每日去重）',
+    plugin.includes('K_CTX_STREAK') && plugin.includes('call.getInt("streak")')
+    && service.includes('K_CTX_STREAK') && service.includes('streak == 3 || streak == 7 || streak == 14')
+    && service.includes('K_STREAK_DATE'));
 check('权重表记录感知：蔫/精神/想你补记',
   view.includes('missedDays >= 3') && view.includes('lastScore >= 85') && view.includes('!lastNightRecorded && hour >= 21'));
 
@@ -127,6 +131,11 @@ check('权重表记录感知：蔫/精神/想你补记',
   const c4 = petContext([], now);
   check('逻辑：无记录 → missedDays 封顶 14、lastScore=-1',
     c4.missedDays === 14 && c4.lastScore === -1, JSON.stringify(c4));
+  // streak（第 119 轮）：里程碑播报的数据源
+  const c5 = petContext([rec(dstr(-1)), rec(dstr(-2)), rec(dstr(-3))], now);
+  check('逻辑：连续 3 晚达标 → streak=3（里程碑触达）',
+    c5.streak === 3, JSON.stringify(c5));
+  check('逻辑：无记录 → streak=0（不播里程碑）', petContext([], now).streak === 0);
 }
 
 // ── 6) 达标祝贺每天一次 + 睡前提醒权限门控 ──

@@ -524,7 +524,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     onClick={() => { hapticStep(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
                     className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
-                  <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
+                  <span className="text-sm font-bold font-display text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
                   <button
                     type="button"
                     aria-label="就寝推迟15分钟"
@@ -545,7 +545,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
                     onClick={() => { hapticStep(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
                     className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
                   >−</button>
-                  <span className="text-sm font-black font-mono text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
+                  <span className="text-sm font-bold font-display text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
                   <button
                     type="button"
                     aria-label="起床推迟15分钟"
@@ -759,7 +759,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
             <div className="grid grid-cols-3 gap-2.5 mb-6">
               <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
                 <span className="text-xs text-slate-300 block mb-1 font-bold">实际时长</span>
-                <span className="text-base font-black font-mono text-white">
+                <span className="text-base font-bold font-display text-white">
                   {completedRecord.durationMinutes < 60
                     ? `${completedRecord.durationMinutes}分钟`
                     : `${(completedRecord.durationMinutes / 60).toFixed(1)}h`}
@@ -767,13 +767,13 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
               </div>
               <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
                 <span className="text-xs text-slate-300 block mb-1 font-bold">深睡时长</span>
-                <span className="text-base font-black font-mono text-emerald-400">
+                <span className="text-base font-bold font-display text-emerald-400">
                   {completedRecord.deepSleepMinutes}分
                 </span>
               </div>
               <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
                 <span className="text-xs text-slate-300 block mb-1 font-bold">睡眠效率</span>
-                <span className={`text-base font-black font-mono ${theme.accentText}`}>
+                <span className={`text-base font-bold font-display ${theme.accentText}`}>
                   {completedRecord.sleepEfficiency}%
                 </span>
               </div>

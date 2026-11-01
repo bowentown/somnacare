@@ -439,14 +439,14 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
           <div className={`text-xs ${theme.accentText} font-medium tracking-wide mb-1`}>
             {currentDate} · {getMoonInfo().phaseName}（月龄 {getMoonInfo().age.toFixed(1)} 天）
           </div>
-          <div className="text-5xl font-mono font-bold tracking-tight text-white mb-2 tabular-nums">
+          <div className="text-5xl font-display font-bold tracking-tight text-white mb-2 tabular-nums">
             {currentTime || '23:45:00'}
           </div>
 
           {/* Elapsed Duration Display */}
           <div className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full ${theme.cardInnerBg} border ${theme.cardInnerBorder} text-xs ${theme.textSecondary} mb-6`}>
             <span>已记录睡眠：</span>
-            <span className={`font-mono ${theme.accentText} font-semibold tabular-nums`}>
+            <span className={`font-display ${theme.accentText} font-semibold tabular-nums`}>
               {elapsedHours > 0 ? `${elapsedHours}小时` : ''}
               {elapsedMins}分{elapsedSecs}秒
             </span>
@@ -464,7 +464,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
                 <Volume2 className={`w-3.5 h-3.5 ${theme.accentText}`} />
                 <span>枕边环境声级 · 实时采样</span>
               </div>
-              <span className={`font-mono ${theme.textPrimary} tabular-nums`}>
+              <span className={`font-display ${theme.textPrimary} tabular-nums`}>
                 {decibels !== null ? `~${decibels}` : '--'} dB(A)
               </span>
             </div>

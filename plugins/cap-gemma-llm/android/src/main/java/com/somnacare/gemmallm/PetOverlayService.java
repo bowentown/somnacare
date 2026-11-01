@@ -58,6 +58,8 @@ public class PetOverlayService extends Service {
     static final String K_CTX_SCORE = "pet_ctx_score";        // 昨晚评分（-1=无记录）
     static final String K_CTX_MISSED = "pet_ctx_missed";      // 连续未记录夜数（含最近一夜）
     static final String K_CTX_LAST_NIGHT = "pet_ctx_last_night"; // 昨晚是否已入账
+    static final String K_CTX_STREAK = "pet_ctx_streak";        // 连续达标夜数（第 119 轮）
+    static final String K_STREAK_DATE = "pet_streak_date";      // 里程碑播报去重键
     // 达标祝贺/深夜劝睡的"每天一次"去重键（方案 §5.4 记忆 + §三 事件）
     static final String K_CHEER_DATE = "pet_cheer_date";
     static final String K_NAG_DATE = "pet_nag_date";
@@ -1093,7 +1095,16 @@ public class PetOverlayService extends Service {
         int score = sp.getInt(K_CTX_SCORE, -1);
         int missed = sp.getInt(K_CTX_MISSED, 0);
         boolean lastNightRecorded = sp.getBoolean(K_CTX_LAST_NIGHT, false);
+        int streak = sp.getInt(K_CTX_STREAK, 0);
         whale.setContext(score, missed, lastNightRecorded);
+        // 连续达标里程碑（第 119 轮）：3/7/14 晚各播报一次（每日去重）；
+        // 不发系统通知——应用内气泡是激励，通知栏是打扰（第 113 轮产品裁决）
+        if (streak >= 3 && (streak == 3 || streak == 7 || streak == 14)
+                && !todayKey().equals(sp.getString(K_STREAK_DATE, null))) {
+            sp.edit().putString(K_STREAK_DATE, todayKey()).apply();
+            whale.cheer();
+            showBubble("连续 " + streak + " 晚达标……本鱼都看在眼里，才不夸你。继续保持", 4000);
+        }
         if (score >= 85 && !todayKey().equals(sp.getString(K_CHEER_DATE, null))) {
             sp.edit().putString(K_CHEER_DATE, todayKey()).apply();
             whale.cheer();

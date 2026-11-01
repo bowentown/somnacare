@@ -12,6 +12,8 @@ import { AIAdvicePanel } from './components/AIAdvicePanel';
 import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
+import { MOTION } from './utils/motionTokens';
+import { unmaskProfileSecrets, maskProfileSecrets } from './utils/secretMask';
 import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
@@ -232,7 +234,7 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('somnacare_user_profile');
     if (saved) {
       try {
-        const parsedProfile = JSON.parse(saved) as UserProfile;
+        const parsedProfile = unmaskProfileSecrets(JSON.parse(saved) as UserProfile);
         // 老默认闹钟名对称化：工作日 → 周内（仅迁移未改过名的默认项）
         if (Array.isArray(parsedProfile?.alarms)) {
           parsedProfile.alarms = parsedProfile.alarms.map((a) =>
@@ -346,7 +348,8 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     try {
-      localStorage.setItem('somnacare_user_profile', JSON.stringify(userProfile));
+      // 密钥掩码落盘（第 120 轮）：aiConfig 的 *ApiKey 不再明文（secretMask）
+      localStorage.setItem('somnacare_user_profile', JSON.stringify(maskProfileSecrets(userProfile)));
     } catch (e) {
       // 配额满：profile 只在内存，重启即丢——按 records 的惯例给出可见反馈
       console.warn('[storage] 用户档案写入失败', e);
@@ -434,7 +437,7 @@ export const App: React.FC = () => {
   // 的原生横滑。改为在"锁定横向"的瞬间 preventDefault 夺权，纵向手势原样交还浏览器。
   const paneWRef = useRef(0);
   const trackPosRef = useRef(0);
-  const SNAP_MS = 300;
+  const SNAP_MS = MOTION.snapMs;   // 动效 token（第 121 轮）
   const SWIPE_START = 8;      // 起拖阈值：够跟手，又不至于把点按误判成滑动
   const DIR_BIAS = 1.1;      // 横向需比纵向大 10% 才锁定，抵消拇指自然斜度
   const COMMIT_RATIO = 0.18; // 翻页所需位移（占屏宽）
@@ -1115,6 +1118,7 @@ export const App: React.FC = () => {
                       targetBedtime={userProfile.targetBedtime}
                       targetWakeTime={userProfile.targetWakeTime}
                       targetDurationHours={userProfile.targetDurationHours}
+                      onUpdateProfile={handleUpdateProfile}
                     />
                   )}
 

@@ -74,8 +74,21 @@ const mk = (date: string, score: number, duration = 470): any =>
   check('空输入安全', r7.nights === 0 && r7.streak === 0 && r7.graceUsed === false);
 }
 
+// 单一实现（第 116 轮）：sleepFacts 战报走 weekNightsOf + 阈值常量，
+// 平行实现（自算日期键 + 硬编码 80，且漏按夜去重）退役
+{
+  const { readFileSync } = await import('node:fs');
+  const factsSrc = readFileSync(new URL('../src/utils/sleepFacts.ts', import.meta.url), 'utf-8');
+  check('单一实现：sleepFacts 战报走 weekNightsOf + GOOD_NIGHT_THRESHOLD（不再硬编码 80）',
+    factsSrc.includes('weekNightsOf')
+    && (factsSrc.match(/GOOD_NIGHT_THRESHOLD/g) || []).length === 3   // import + 达标数 + 逐夜档
+    && !/>= 80/.test(factsSrc));
+  check('反向自检：阈值常量全量替换后判据不再成立',
+    (() => { const d = factsSrc.split('GOOD_NIGHT_THRESHOLD').join('X'); return (d.match(/GOOD_NIGHT_THRESHOLD/g) || []).length === 0; })());
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——周报/连胜口径不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-week-report：连胜/宽限/断签/均值/最佳夜 全部符合');
+console.log('\n✓ verify-week-report：连胜/宽限/断签/均值/最佳夜/单一实现 全部符合');

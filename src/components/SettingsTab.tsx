@@ -964,15 +964,15 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">积累夜数</p>
-                  <p className="text-base font-black font-mono text-white">{shadow.nights}</p>
+                  <p className="text-base font-bold font-display text-white">{shadow.nights}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">采纳率</p>
-                  <p className="text-base font-black font-mono text-white">{shadow.adoptionRate !== null ? `${shadow.adoptionRate}%` : '—'}</p>
+                  <p className="text-base font-bold font-display text-white">{shadow.adoptionRate !== null ? `${shadow.adoptionRate}%` : '—'}</p>
                 </div>
                 <div className={`rounded-xl p-2.5 ${theme.cardInnerBg} border ${theme.cardInnerBorder}`}>
                   <p className="text-[9px] text-slate-400">独立命中率</p>
-                  <p className="text-base font-black font-mono text-white">{shadow.independent.hitRate !== null ? `${shadow.independent.hitRate}%` : '—'}</p>
+                  <p className="text-base font-bold font-display text-white">{shadow.independent.hitRate !== null ? `${shadow.independent.hitRate}%` : '—'}</p>
                 </div>
               </div>
               {/* 语义必须分开说清：采纳率=使用习惯；独立命中率（仅手动补录夜）才反映模型准度 */}

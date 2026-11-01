@@ -9,6 +9,7 @@
  */
 import type { SleepRecord, UserProfile } from '../types/sleep';
 import { petContext } from './petContext';
+import { computeWeekReport } from './weekReport';
 import { generatePetSayLinesLlm, getCachedLlmSay, petSayFingerprint } from './petMoments';
 import { nativePlugin } from './nativeBridge';
 export { getCachedLlmSay };
@@ -154,6 +155,13 @@ export function buildPetSayLines(
     }
   } else {
     say.push('一次睡眠记录都没有，本鱼管谁去？喂，今晚给我按开始！');
+  }
+
+  // 连续达标里程碑（第 119 轮）：streak 是真数据（computeWeekReport 口径），
+  // 只在 ≥3 晚时提——不编数字，不无中生有
+  const streak = computeWeekReport(records, now).streak;
+  if (streak >= 3) {
+    say.push(`连续 ${streak} 晚达标……本鱼都看在眼里，才不夸你。继续保持，鱼片。`);
   }
 
   say.push('天黑了就把护眼滤镜点上……本鱼才不会替你按，按钮就在那儿！');

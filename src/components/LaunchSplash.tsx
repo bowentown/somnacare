@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ThemeConfig } from '../utils/themeStyles';
+import { MOTION } from '../utils/motionTokens';
 
 const KEY = 'somnacare_splash_shown';
 
@@ -349,11 +350,11 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
       if (armed) return;
       armed = true;
       setFading(true);
-      t2 = window.setTimeout(dismiss, 640);
+      t2 = window.setTimeout(dismiss, MOTION.splashFadeMs);
     };
     const tick = () => {
       const elapsed = performance.now() - start;
-      if (elapsed >= 2600 && (readyRef.current || elapsed >= 3300)) {
+      if (elapsed >= MOTION.splashMinMs && (readyRef.current || elapsed >= MOTION.splashMaxMs)) {
         arm();
         return;
       }
@@ -362,7 +363,7 @@ export const LaunchSplash: React.FC<{ theme: ThemeConfig; ready?: boolean }> = (
     raf = requestAnimationFrame(tick);
     // rAF 停摆兜底（第 88 轮）：后台/降级内核下 rAF 可能不跑——帧驱动后
     // 曾出现开屏 7s 不撤。定时器与 rAF 双路径取先到者
-    const fallbackTimer = window.setTimeout(arm, 3300);
+    const fallbackTimer = window.setTimeout(arm, MOTION.splashMaxMs);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t2);

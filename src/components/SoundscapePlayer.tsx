@@ -300,7 +300,7 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
                       className="w-20 h-6 accent-white bg-transparent cursor-pointer [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-runnable-track]:bg-white/10 [&::-webkit-slider-runnable-track]:rounded-lg [&::-webkit-slider-thumb]:-mt-1"
                       aria-label={`${t.name}音量`}
                     />
-                    <span className="text-[10px] font-mono text-slate-300 w-8 text-right tabular-nums">
+                    <span className="text-[10px] font-display text-slate-300 w-8 text-right tabular-nums">
                       {Math.round(layerVol * 100)}%
                     </span>
                   </div>
@@ -317,7 +317,7 @@ const SoundscapePlayerInner: React.FC<{ theme: ThemeConfig; onClose: () => void 
           <Timer className={`w-3.5 h-3.5 ${theme.accentText}`} />
           <span className="text-[11px] font-bold text-slate-200">定时关闭</span>
           {timerRemainingSeconds !== null && (
-            <span className="text-[11px] font-mono text-slate-400 ml-1 tabular-nums">
+            <span className="text-[11px] font-display text-slate-400 ml-1 tabular-nums">
               {Math.floor(timerRemainingSeconds / 60)}:{String(timerRemainingSeconds % 60).padStart(2, '0')}
             </span>
           )}

@@ -412,7 +412,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-bold text-white">模型文件（首次需下载，建议 Wi-Fi）</span>
                   {llmCache?.cached && (
-                    <span className="text-emerald-400 font-mono">{(llmCache.cachedBytes / 1024 ** 2).toFixed(0)} MB 已就绪</span>
+                    <span className="text-emerald-400 font-display">{(llmCache.cachedBytes / 1024 ** 2).toFixed(0)} MB 已就绪</span>
                   )}
                 </div>
 

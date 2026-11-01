@@ -1450,6 +1450,108 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
   expect(errors).toEqual([]);
 });
 
+// 旅程34 科学建议作息（第 114 轮）：需求+MSFsc → 一键采用，目标/提醒/月历入口同源
+test('旅程34 科学建议作息：需求卡一键采用 → 目标落库双入口同源', async ({ page }) => {
+  const errors = watchErrors(page);
+  // 近 12 晚：睡到自然醒的夜（醒来日=周末）给 02:30→10:30，工作日 22:50→06:50
+  //（全 8h）→ 需求个人化 480、MSFsc = 自由日睡眠中点 06:30 → 建议 = 01:00–09:00
+  // ≠ 当前 23:30/07:30。注意夜归属：记录 D 的醒来日是 D+1，自由日按 D+1 判。
+  const base = new Date();
+  base.setHours(21, 0, 0, 0);
+  const recs: unknown[] = [];
+  for (let i = 1; i <= 12; i++) {
+    const wake = new Date(base);
+    wake.setDate(wake.getDate() - i + 1);
+    const free = wake.getDay() === 0 || wake.getDay() === 6;
+    recs.push(mkRecord(dstr(-i, base), free ? '02:30' : '22:50', free ? '10:30' : '06:50', 85));
+  }
+  await seed(page, recs, NIGHT_SCHEMA);
+  await openAt(page, 21, 0);
+  await navTo(page, '趋势');
+
+  // 建议按钮出现且带 MSFsc 锚定标注
+  const adopt = page.getByRole('button', { name: /按科学建议采用作息/ });
+  await expect(adopt).toBeVisible();
+  await expect(adopt).toContainText('01:00 – 09:00');
+  await expect(adopt).toContainText('MSFsc 锚定');
+
+  // 采用 → 与目标一致 → 按钮消失；档案落库（就寝提醒/深夜救援由既有 watcher 重排）
+  await adopt.click();
+  await expect(adopt).toHaveCount(0);
+  const profile = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_user_profile') || '{}'));
+  expect(profile.targetBedtime).toBe('01:00');
+  expect(profile.targetWakeTime).toBe('09:00');
+  expect(profile.targetDurationHours).toBe(8);
+
+  // 睡眠页作息目标卡：同源建议入口（此时一致 → 不出现），摘要显示新目标
+  await navTo(page, '睡眠');
+  await expect(page.getByText('01:00 · 8h · 09:00')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+// 旅程35 睡债接入睡前一小时（第 115 轮）：个人基线欠债 ≥1h → 量化文案；
+// 基线未个人化（零记录）→ 诚实缺省不出现
+test('旅程35 睡债睡前建议：个人基线欠债出量化文案', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(8, 0, 0, 0);
+  const events = synthEvents(fixed);
+  const windowEnd = fixed.getTime() - (7 * 3600 + 13 * 60) * 1000;
+  // 7 晚：5 晚 7h + 2 晚 5h → 中位数基线 420 → 睡债 = 2×(420−300) = 240 分钟
+  const recs: unknown[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const dur = i <= 2 ? 300 : 420;
+    recs.push({ ...mkRecord(dstr(-i, fixed), '23:00', '07:00', 70), durationMinutes: dur });
+  }
+  await seed(page, recs, NIGHT_SCHEMA);
+  await mockNativeUsage(page, {
+    events,
+    usageDays: [{ date: dstr(-1, fixed), lastActive: '00:47', firstActive: '07:02', nightPickups: 0 }],
+    windDown: { nightKey: dstr(-1, fixed), apps: [
+      { pkg: 'com.tencent.mm', label: '微信', minutes: 25 },
+      { pkg: 'com.tencent.sgame', label: '王者荣耀', minutes: 12 },
+    ], windowEnd },
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  const card = page.getByTestId('winddown-card');
+  await expect(card).toBeVisible();
+  const debt = card.getByTestId('winddown-debt');
+  await expect(debt).toBeVisible();
+  await expect(debt).toContainText('睡债');
+  await expect(debt).toContainText('提前 30 分钟');
+  // 37 分钟 < 55：55 分文案与债文案互不干扰
+  await expect(card.getByText(/几乎没停过/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('旅程35b 睡债睡前建议：零记录基线未个人化 → 诚实缺省', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(8, 0, 0, 0);
+  await seed(page, [], NIGHT_SCHEMA);
+  await mockNativeUsage(page, {
+    events: synthEvents(fixed),
+    usageDays: [],
+    windDown: { nightKey: dstr(-1, fixed), apps: [
+      { pkg: 'com.tencent.mm', label: '微信', minutes: 40 },
+    ], windowEnd: fixed.getTime() - (7 * 3600 + 13 * 60) * 1000 },
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  const card = page.getByTestId('winddown-card');
+  await expect(card).toBeVisible();
+  // 无记录 → 基线未个人化 → 债文案绝不出现（不拿默认 8h 编造睡债）
+  await expect(card.getByTestId('winddown-debt')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 // 旅程33 睡眠日历交互（第 107 轮重做）：第 106 轮的手绘图零交互，重做后
 // react-activity-calendar 点选出当夜详情。锁三条行为链：默认选中最近一夜
 //（详情即开即见）、点选切夜详情跟着切、无记录日诚实空态（不冒充 0 分）。

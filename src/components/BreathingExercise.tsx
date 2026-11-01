@@ -112,7 +112,7 @@ export const BreathingExercise: React.FC = () => {
         >
           {isActive ? (
             <>
-              <span className="text-3xl font-mono font-bold tabular-nums">{countdown}</span>
+              <span className="text-3xl font-display font-bold tabular-nums">{countdown}</span>
               <span className="text-xs font-medium mt-1">
                 {phase === 'inhale' ? '吸气 4s' : phase === 'hold' ? '屏气 7s' : '呼气 8s'}
               </span>

@@ -55,6 +55,7 @@ import {
 import { forceRefreshUsage, getCachedUsageDays } from '../utils/usageStore';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { formatDurationChinese, computeSleepNeed, computeMSFsc, computeSleepDebt } from '../utils/sleepScore';
+import { computeSuggestedSchedule } from '../utils/scheduleSuggestion';
 import { SleepCalendar } from './SleepCalendar';
 import { SleepRhythmChart } from './SleepRhythmChart';
 import { ThemeConfig } from '../utils/themeStyles';
@@ -72,6 +73,8 @@ interface TrendsTabProps {
   targetWakeTime?: string;
   /** 用户的设定目标（小时）：个人基线样本不足时的回退（第 105 轮） */
   targetDurationHours?: number;
+  /** 档案写入（第 114 轮）：科学建议作息一键采用 */
+  onUpdateProfile?: (patch: Partial<import('../types/sleep').UserProfile>) => void;
 }
 
 type MetricViewMode = 'quality' | 'stages' | 'circadian';
@@ -203,6 +206,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
   targetBedtime,
   targetWakeTime,
   targetDurationHours,
+  onUpdateProfile,
 }) => {
   const innerBg = theme?.cardInnerBg || 'bg-[#0a0f1d]';
   const innerBorder = theme?.cardInnerBorder || 'border-slate-700/80';
@@ -933,6 +937,15 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         const need = computeSleepNeed(records, Math.round((targetDurationHours || 8) * 60), chronotype);
         const msf = computeMSFsc(records, chronotype);
         const debt = computeSleepDebt(records, need.needMinutes, chronotype);
+        // 科学建议作息（第 114 轮）：需求 + MSFsc → 可一键采用的目标；
+        // 与当前一致 → null，按钮不出现（不制造假建议）
+        const scheduleSuggestion = onUpdateProfile
+          ? computeSuggestedSchedule(
+              need.needMinutes,
+              msf ? msf.msfMinutes : null,
+              { bed: targetBedtime ?? '23:30', wake: targetWakeTime ?? '07:30', durationHours: targetDurationHours ?? 8 },
+            )
+          : null;
         // 日历选中夜（第 107 轮）：默认最近一夜（点按改选）；夜睡优先，
         // 同日只有午睡记录时回退它——但日历格子本身只画夜睡
         const nightRecs = nightsOnly(records);
@@ -1035,6 +1048,26 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 <span className="text-[11px] font-bold text-slate-200">睡眠需求</span>
                 <span className={`font-display font-bold text-lg ${theme.accentText}`}>{formatDurationChinese(need.needMinutes)}</span>
               </div>
+              {scheduleSuggestion && (
+                <button
+                  type="button"
+                  data-no-swipe
+                  aria-label={`按科学建议采用作息：${scheduleSuggestion.bed} 入睡，${scheduleSuggestion.wake} 醒来`}
+                  onClick={() => onUpdateProfile?.({
+                    targetBedtime: scheduleSuggestion.bed,
+                    targetWakeTime: scheduleSuggestion.wake,
+                    targetDurationHours: scheduleSuggestion.durationHours,
+                  })}
+                  className={`w-full flex items-center justify-between gap-2 min-h-10 px-3 rounded-xl border ${theme.cardInnerBorder} ${theme.cardInnerBg} cursor-pointer active:scale-[0.98] transition-transform`}
+                >
+                  <span className="text-[11px] font-bold text-slate-200">
+                    按科学建议采用 <span className="font-mono">{scheduleSuggestion.bed} – {scheduleSuggestion.wake}</span>
+                  </span>
+                  <span className={`text-[10px] font-bold ${theme.accentText}`}>
+                    {scheduleSuggestion.basis === 'msf' ? 'MSFsc 锚定' : '需求推算'}
+                  </span>
+                </button>
+              )}
               <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
                 <span>MSFsc {msf ? msf.label : '—'}</span>
                 {debt.nights >= 3 && debt.debtMinutes >= 30 && (

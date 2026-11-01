@@ -85,8 +85,21 @@ check('评估契约仍在（system 段完整，不是被截断的空串）',
 check('反向自检：判据能识别泄漏样本、且放行真实输出',
   leaks(JSON.stringify(profile)) && !leaks(blob));
 
+// ── 密钥落盘掩码（第 120 轮，P2）：档案串不得含明文 ApiKey ──
+const app = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf-8');
+const maskUtil = readFileSync(join(ROOT, 'src', 'utils', 'secretMask.ts'), 'utf-8');
+check('落盘掩码接线：写侧 maskProfileSecrets / 读侧 unmaskProfileSecrets，裸 stringify 退役',
+  app.includes('JSON.stringify(maskProfileSecrets(userProfile))')
+  && app.includes('unmaskProfileSecrets(JSON.parse(saved) as UserProfile)')
+  && !app.includes('JSON.stringify(userProfile)'));
+check('掩码实现：XOR+Base64URL + 旧明文兼容（非 obv1: 原样返回）',
+  maskUtil.includes("const MASK_PREFIX = 'obv1:'") && maskUtil.includes('unmaskSecret'));
+check('反向自检：掩码接线被剥后判据不再成立',
+  (() => { const d = app.replace('JSON.stringify(maskProfileSecrets(userProfile))', 'JSON.stringify(userProfile)'); return d.includes('JSON.stringify(userProfile)'); })());
+
+console.log('\n✓ verify-llm-privacy：评估提示词零凭据（含反向自检）');
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——提示词凭据剥离不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-llm-privacy：评估提示词零凭据（含反向自检）');

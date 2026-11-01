@@ -194,6 +194,23 @@ export function computeSleepDebt(
 }
 
 /**
+ * 近 7 夜欠觉比 0（睡饱）~1（严重欠觉）（第 116 轮抽共享）：池塘天气的
+ * 唯一数据源（氛围用，刻意单档宽阈值，不是仪表盘指标）。与 computeSleepDebt
+ * 的差别：这里按平均时长比值计（睡多的夜不抵扣欠的夜），且含今晚。
+ */
+export function computeSleepDebtRatio(
+  records: SleepRecord[],
+  targetMinutes: number,
+  days = 7,
+): number {
+  const nights = nightsOnly(records).slice(0, days);
+  if (nights.length === 0) return 0.4;
+  const target = Math.max(240, targetMinutes);
+  const avg = nights.reduce((a, r) => a + r.durationMinutes, 0) / nights.length;
+  return Math.max(0, Math.min(1, 1 - avg / target));
+}
+
+/**
  * Generates realistic cyclical sleep stage segments (Deep -> Light -> REM -> Awake)
  * across 90-110 min sleep ultradian cycles.
  */

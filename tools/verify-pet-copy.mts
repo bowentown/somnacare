@@ -101,4 +101,7 @@ if (failures > 0) {
   console.error(`\n${failures} 项失败——预设文案语料违反人设/事实纪律`);
   process.exit(1);
 }
+check('语料：连续达标里程碑行在场（streak 真数据，只 ≥3 晚提）',
+  petOverlay.includes('连续 ${streak} 晚达标') && petOverlay.includes('computeWeekReport'));
+
 console.log('\n✓ verify-pet-copy：诗文引用/地理物种/人设自称/数据纪律全部符合');

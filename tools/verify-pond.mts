@@ -69,4 +69,17 @@ ok(oldGone, '整洁：旧自研 pond.ts 已删除（无双引擎死代码）');
 const pkg = JSON.parse(read('package.json')) as { dependencies?: Record<string, string> };
 ok(!!pkg.dependencies?.three, '依赖：three 已声明（nagomi 渲染核心的运行时）');
 
+// ⑥ 欠觉比单一实现（第 116 轮）：池塘天气的公式迁至 sleepScore 共享，
+// 本地重写即回潮（氛围可以宽阈值，但数字只能有一个出处）
+{
+  const pond = read('src/components/PondCard.tsx');
+  const sleepScore = read('src/utils/sleepScore.ts');
+  ok(pond.includes('computeSleepDebtRatio(records')
+    && !pond.includes('1 - avg / target')
+    && sleepScore.includes('export function computeSleepDebtRatio'),
+    '单一实现：池塘欠觉比走 computeSleepDebtRatio（本地公式退役）');
+  ok((() => { const d = pond.replace('computeSleepDebtRatio(records', 'function x(){ return 1 - avg / target; }'); return d.includes('1 - avg / target'); })(),
+    '反向自检：本地公式回潮被检出');
+}
+
 console.log(`\npond 护栏：${pass} 项通过${process.exitCode ? '（有失败）' : ''}`);
