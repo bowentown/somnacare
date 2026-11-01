@@ -93,6 +93,15 @@ ok('起卧图：无竖线拥挤（均值线/须线/带边框/悬停色块全部�
 ok('App 把用户目标作息传入趋势页',
   app.includes('targetBedtime={userProfile.targetBedtime}')
   && app.includes('targetWakeTime={userProfile.targetWakeTime}'));
+ok('历史卡展开唯一入口——小结卡不是隐形大按钮（第 110 轮：整卡 onClick 冒泡，图表每次点按都误展历史卡）',
+  (trends.match(/setIsHistoryExpanded/g) || []).length === 2   // useState 声明 + 历史卡自己的切换按钮
+  && !trends.includes('aria-label="展开近期睡眠小结详情"')
+  && !trends.includes('active:scale-[0.99]'));
+ok('图表手感：activeDot 几何滑行 + tooltip 淡入（第 110 轮，SVG cx/cy 可过渡）',
+  (trends.match(/cx 130ms ease-out/g) || []).length === 1
+  && (rhythm.match(/cx 130ms ease-out/g) || []).length === 2
+  && (trends.match(/animate-tab-fade-in rounded-xl/g) || []).length === 2
+  && rhythm.includes('animate-tab-fade-in'));
 ok('睡眠日历：第三方日历库已移除（第 109 轮）——react-activity-calendar 的默认主题会 color-mix 插值再自校验，冻结版 WebView 必崩（第 108 轮实锤）',
   !pkg.includes('"react-activity-calendar"')
   && !cal.includes("from 'react-activity-calendar'"));
@@ -142,6 +151,14 @@ ok('作息曲线：双线可辨识（实线就寝/虚线起床有图例，轴刻
     "import React, { useMemo, useState } from 'react';\nimport X from 'react-activity-calendar';",
   );
   ok('反向自检：import 式回装被检出', doctoredImport.includes("from 'react-activity-calendar'"));
+  // 第 110 轮两个手感/交互锚点的反向验证
+  const doctoredCard = trends.replace(
+    'theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4',
+    'theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4" onClick={() => setIsHistoryExpanded(true)} data-x="',
+  );
+  ok('反向自检：小结卡被加回整卡展开后判据不再成立', (doctoredCard.match(/setIsHistoryExpanded/g) || []).length === 3);
+  const doctoredGlide = rhythm.split("transition: 'cx 130ms ease-out, cy 130ms ease-out'").join('');
+  ok('反向自检：activeDot 滑行被剥后判据不再成立', (doctoredGlide.match(/cx 130ms ease-out/g) || []).length === 0);
 }
 
 if (failures > 0) {

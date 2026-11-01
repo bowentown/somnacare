@@ -34,7 +34,7 @@ const RhythmTooltip = (props: any) => {
   const rec = props?.payload?.[0]?.payload?.rec as SleepRecord | undefined;
   if (!props?.active || !rec) return null;
   return (
-    <div className="rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+    <div className="animate-tab-fade-in rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
       <p className="text-[10px] text-slate-300 font-mono tabular-nums whitespace-nowrap">
         {rec.date.slice(5)} · 就寝 <span className="text-white font-bold">{rec.bedtime}</span>
         {' → '}起床 <span className="text-white font-bold">{rec.wakeTime}</span>
@@ -127,7 +127,7 @@ export const SleepRhythmChart: React.FC<{ records: SleepRecord[]; accentHex: str
               connectNulls={false}
               isAnimationActive={false}
               dot={{ r: 2, fill: accentHex, stroke: 'none' }}
-              activeDot={{ r: 3.5, fill: '#ffffff', stroke: accentHex, strokeWidth: 2 }}
+              activeDot={{ r: 3.5, fill: '#ffffff', stroke: accentHex, strokeWidth: 2, style: { transition: 'cx 130ms ease-out, cy 130ms ease-out' } }}
             />
             <Line
               type="monotone"
@@ -139,7 +139,7 @@ export const SleepRhythmChart: React.FC<{ records: SleepRecord[]; accentHex: str
               connectNulls={false}
               isAnimationActive={false}
               dot={{ r: 2, fill: '#94a3b8', stroke: 'none' }}
-              activeDot={{ r: 3.5, fill: '#ffffff', stroke: '#94a3b8', strokeWidth: 2 }}
+              activeDot={{ r: 3.5, fill: '#ffffff', stroke: '#94a3b8', strokeWidth: 2, style: { transition: 'cx 130ms ease-out, cy 130ms ease-out' } }}
             />
           </LineChart>
         </ResponsiveContainer>

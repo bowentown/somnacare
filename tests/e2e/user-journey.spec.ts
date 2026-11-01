@@ -817,6 +817,11 @@ test('旅程19 晚间折叠：评分卡收为小卡 → 可展开；趋势图可
   await page.mouse.move(box!.x + box!.width * 0.1, box!.y + box!.height / 2, { steps: 6 });
   await page.mouse.up();
   await expect(page.getByTestId('score-detail')).toContainText(dstr(-2, fixed).slice(5));
+
+  // 第 110 轮恶性交互回归锁：小结卡曾整卡可点 → 图表每次点按/拖拽都冒泡
+  // 把上方历史记录卡展开。拖拽 scrub 后历史卡必须保持收起。
+  await expect(page.getByTestId('history-list')).toHaveCount(0);
+
   expect(errors).toEqual([]);
 });
 

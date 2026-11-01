@@ -303,7 +303,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
     const record = props?.payload?.[0]?.payload?.record as SleepRecord | undefined;
     if (!props?.active || !record) return null;
     return (
-      <div className="rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+      <div className="animate-tab-fade-in rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
         <p className="text-[10px] text-slate-300 font-mono tabular-nums">
           {record.date.slice(5)} <span className="text-white font-bold">{record.sleepScore} 分</span>
         </p>
@@ -361,7 +361,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
       { key: 'awake', label: '清醒', minutes: r.awakeMinutes },
     ] as const;
     return (
-      <div className="rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+      <div className="animate-tab-fade-in rounded-xl border border-slate-600/80 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
         <p className="text-[10px] text-white font-bold font-mono mb-1">{row.label}</p>
         {items.map((it) => (
           <p key={it.key} className="text-[9px] text-slate-300 font-mono flex items-center gap-1.5 tabular-nums">
@@ -598,7 +598,9 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                       connectNulls={false}
                       isAnimationActive={false}
                       dot={{ r: 2.2, fill: theme.accentHex, stroke: 'none' }}
-                      activeDot={{ r: 4, fill: '#ffffff', stroke: theme.accentHex, strokeWidth: 2 }}
+                      // 手感（第 110 轮）：activeDot 用 SVG 几何属性的 CSS transition
+                      // 在数据点之间"滑行"而非瞬移（SVG2 的 cx/cy 在 Chromium 可过渡）
+                      activeDot={{ r: 4, fill: '#ffffff', stroke: theme.accentHex, strokeWidth: 2, style: { transition: 'cx 130ms ease-out, cy 130ms ease-out' } }}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -927,14 +929,10 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
           ? Math.round(recentNights.reduce((a, r) => a + r.sleepEfficiency, 0) / recentNights.length)
           : null;
         return (
-          <div
-            role="button"
-            tabIndex={0}
-            aria-label="展开近期睡眠小结详情"
-            onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsHistoryExpanded(true); } }}
-            onClick={() => setIsHistoryExpanded(true)}
-            className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4 cursor-pointer hover:border-white/20 active:scale-[0.99] transition-all`}
-          >
+          // 小结卡【不是】隐形大按钮（第 110 轮）：此前整卡 onClick 展开历史卡，
+          // 卡内图表的每次点按/拖动都会冒泡误触——图表区是交互区，展开入口
+          // 只保留上方历史卡自己的 按钮
+          <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4`}>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
               <Sparkles className={`w-4 h-4 ${theme.accentText}`} />
               <h3 className="text-sm font-bold text-white">近期睡眠小结</h3>

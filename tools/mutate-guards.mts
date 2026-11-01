@@ -213,6 +213,20 @@ const MUTATIONS: Mutation[] = [
     replace: "'一', '三', '五'",
     note: '星期表头截断 → 月历失去列锚点（第 109 轮真机反馈：日期月份难分辨）',
   },
+  {
+    file: 'src/components/TrendsTab.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: 'theme.cardBorder} shadow-xl space-y-4',
+    replace: 'theme.cardBorder} shadow-xl space-y-4" onClick={() => setIsHistoryExpanded(true)} data-x="',
+    note: '小结卡整卡展开历史的恶性交互回潮（第 110 轮真机反馈：图表点按误展历史卡）',
+  },
+  {
+    file: 'src/components/SleepRhythmChart.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: "transition: 'cx 130ms ease-out, cy 130ms ease-out'",
+    replace: "transition: 'none'",
+    note: 'activeDot 滑行被剥 → 触控 scrub 在数据点间瞬移（手感退化）',
+  },
 ];
 
 const originals = new Map<string, string>();
