@@ -255,6 +255,13 @@ const MUTATIONS: Mutation[] = [
     replace: 'font-black font-mono',
     note: '首屏大数字 mono 回潮 → 终端感重现（第 112 轮一体性）',
   },
+  {
+    file: 'src/components/TrendsTab.tsx',
+    guard: 'verify-chart-readability.mts',
+    find: 'const [focusDate, setFocusDate] = useState<string | null>(null);',
+    replace: 'const [focusDate, setFocusDate] = useState<string | null>(null);\n  const [hoveredRecord, setHoveredRecord] = useState<SleepRecord | null>(null);',
+    note: '选中夜双状态回潮 → 图表/月历/历史各看各的（第 113 轮一体化倒退）',
+  },
 ];
 
 const originals = new Map<string, string>();

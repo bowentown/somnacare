@@ -1489,6 +1489,12 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
   await expect(detail).toContainText('评分');
   await expect(detail).toContainText('就寝 23:10 · 起床 07:10');
 
+  // 一体化（第 113 轮）：点历史行 → 选中夜全局切换，详情/月历同源联动
+  await page.getByRole('button', { name: /历史记录/ }).click();
+  await page.getByTestId('history-list').getByText(dstr(-2, base)).click();
+  await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
+  await expect(detail).not.toContainText('就寝 23:10');
+
   // 月历默认打开在【有数据的那个月】（最近一夜所在月，10月），不是空洞的
   // 当前月；首条记录月即下界 → ‹ 禁用，› 可去当前月
   await expect(cal.getByRole('button', { name: '上一月' })).toBeDisabled();

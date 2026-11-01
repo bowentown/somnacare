@@ -102,6 +102,13 @@ ok('图表手感：activeDot 几何滑行 + tooltip 淡入（第 110 轮，SVG c
   && (rhythm.match(/cx 130ms ease-out/g) || []).length === 2
   && (trends.match(/animate-tab-fade-in rounded-xl/g) || []).length === 2
   && rhythm.includes('animate-tab-fade-in'));
+ok('选中夜唯一（第 113 轮一体化）——hoveredRecord/calDay 双状态退役：月历、历史行、'
+  + '评分 scrub、分期、起卧点选都写 focusDate，详情/高亮/月历描边都读它',
+  !trends.includes('hoveredRecord')
+  && !trends.includes('calDay')
+  && (trends.match(/focusDate/g) || []).length >= 10
+  && trends.includes('onFocusNight')
+  && trends.includes('r.date === focusDate'));
 ok('睡眠日历：第三方日历库已移除（第 109 轮）——react-activity-calendar 的默认主题会 color-mix 插值再自校验，冻结版 WebView 必崩（第 108 轮实锤）',
   !pkg.includes('"react-activity-calendar"')
   && !cal.includes("from 'react-activity-calendar'"));
@@ -159,6 +166,11 @@ ok('作息曲线：双线可辨识（实线就寝/虚线起床有图例，轴刻
   ok('反向自检：小结卡被加回整卡展开后判据不再成立', (doctoredCard.match(/setIsHistoryExpanded/g) || []).length === 3);
   const doctoredGlide = rhythm.split("transition: 'cx 130ms ease-out, cy 130ms ease-out'").join('');
   ok('反向自检：activeDot 滑行被剥后判据不再成立', (doctoredGlide.match(/cx 130ms ease-out/g) || []).length === 0);
+  const doctoredFocus = trends.replace(
+    'const [focusDate, setFocusDate] = useState<string | null>(null);',
+    'const [focusDate, setFocusDate] = useState<string | null>(null);\n  const [hoveredRecord, setHoveredRecord] = useState<SleepRecord | null>(null);',
+  );
+  ok('反向自检：选中夜双状态回潮被检出', doctoredFocus.includes('hoveredRecord'));
 }
 
 if (failures > 0) {

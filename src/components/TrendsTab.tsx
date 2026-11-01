@@ -106,11 +106,15 @@ const HistoryList = React.memo(function HistoryList({
   onDeleteRecord,
   textMuted,
   accentText,
+  focusDate,
+  onFocusNight,
 }: {
   records: SleepRecord[];
   onDeleteRecord?: (id: string) => void;
   textMuted: string;
   accentText: string;
+  focusDate?: string | null;
+  onFocusNight?: (date: string) => void;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const win = (() => {
@@ -135,8 +139,15 @@ const HistoryList = React.memo(function HistoryList({
               return (
                 <div
                   key={r.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${r.date} 夜睡 ${r.sleepScore} 分，点按查看该夜详情`}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onFocusNight?.(r.date); } }}
+                  onClick={() => onFocusNight?.(r.date)}
                   style={{ top: index * HISTORY_ROW_H, height: HISTORY_ROW_H }}
-                  className="absolute left-0 right-0 flex items-center justify-between hover:bg-slate-800/30 px-2 rounded-xl transition-colors group"
+                  className={`absolute left-0 right-0 flex items-center justify-between px-2 rounded-xl transition-colors group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 ${
+                    r.date === focusDate ? 'bg-white/[0.06] ring-1 ring-white/10' : 'hover:bg-slate-800/30'
+                  }`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -203,12 +214,13 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
   // 默认视图 = 起卧时段（Phase 1 数据诚实重构）：主视图只放真实测量的
   // 数据只含用户真实记录的起卧时间；估算分期降为次要 tab
   const [viewMode, setViewMode] = useState<MetricViewMode>('circadian');
-  const [hoveredRecord, setHoveredRecord] = useState<SleepRecord | null>(null);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showClinical, setShowClinical] = useState(false);
-  // 睡眠日历点选的日期（null = 默认最近一夜，详情即开即见；第 107 轮）
-  const [calDay, setCalDay] = useState<string | null>(null);
+  // 选中夜（第 113 轮一体化）：全页唯一的"我在看哪一夜"状态——月历、
+  // 历史行、评分 scrub、分期、起卧点选都写它；详情、高亮、月历描边都读
+  // 它。null = 默认最近一夜（详情即开即见）。
+  const [focusDate, setFocusDate] = useState<string | null>(null);
   // ── 手机使用对照（P3）：native-only，权限/数据/引导标记 ──
   const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
   const [usageDays, setUsageDays] = useState<UsageDay[]>(() => getCachedUsageDays());
@@ -238,7 +250,10 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
 
   // Use up to last 7 days sorted chronologically
   const last7Records = nightsOnly(records).slice(0, 7).reverse();
-  const activeRecord = hoveredRecord || last7Records[last7Records.length - 1];
+  const focusRecord = focusDate
+    ? (records.find((r) => r.date === focusDate && r.kind !== 'nap') ?? records.find((r) => r.date === focusDate)) ?? null
+    : null;
+  const activeRecord = focusRecord || last7Records[last7Records.length - 1];
 
   // ── 评分趋势：交给 Recharts（MIT）处理坐标轴/平滑曲线/Tooltip ──
   // 参考 shadcn/ui Charts 与 Tremor 的图表语法：轴在绘图区外、网格低对比、
@@ -277,7 +292,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
       scoreHapticRef.current = record.id;
       hapticStep();
     }
-    setHoveredRecord(record);
+    setFocusDate(record.date);
   };
   const onScoreHover = (state: any): void => {
     // Recharts 3 的 onMouseMove 只给 activeTooltipIndex/activeLabel，
@@ -388,7 +403,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
       stageHapticRef.current = record.id;
       hapticStep();
     }
-    setHoveredRecord(record);
+    setFocusDate(record.date);
   };
 
   // 起卧图统一时间窗：21:00 → 次日 10:00
@@ -780,7 +795,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                       <button
                         key={record.id}
                         type="button"
-                        onClick={() => { hapticStep(); setHoveredRecord(record); }}
+                        onClick={() => { hapticStep(); setFocusDate(record.date); }}
                         aria-label={`${record.date} 就寝 ${record.bedtime}，醒来 ${record.wakeTime}${offTarget ? '，偏离目标' : ''}`}
                         title={`就寝 ${record.bedtime}${bedDev !== null ? `（比目标${bedDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(bedDev / 5) * 5)} 分）` : ''}，醒来 ${record.wakeTime}${wakeDev !== null ? `（比目标${wakeDev >= 0 ? '晚' : '早'} ${Math.abs(Math.round(wakeDev / 5) * 5)} 分）` : ''}`}
                         className="w-full flex items-center gap-2 text-left cursor-pointer group min-h-8"
@@ -897,6 +912,8 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 onDeleteRecord={onDeleteRecord}
                 textMuted={textMuted}
                 accentText={accentText}
+                focusDate={focusDate}
+                onFocusNight={(d) => { hapticStep(); setFocusDate(d); }}
               />
             )}
           </div>
@@ -920,7 +937,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
         // 同日只有午睡记录时回退它——但日历格子本身只画夜睡
         const nightRecs = nightsOnly(records);
         const latestNight = nightRecs.reduce<SleepRecord | null>((a, r) => (!a || r.date > a.date ? r : a), null);
-        const calSel = calDay ?? latestNight?.date ?? null;
+        const calSel = focusDate ?? latestNight?.date ?? null;
         const calRec = calSel
           ? (records.find((r) => r.date === calSel && r.kind !== 'nap') ?? records.find((r) => r.date === calSel))
           : undefined;
@@ -1038,7 +1055,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                   {calSel ? `${Number(calSel.slice(5, 7))}月${Number(calSel.slice(8, 10))}日` : ''}
                 </span>
               </div>
-              <SleepCalendar records={records} accentHex={theme.accentHex} selected={calSel} onSelect={setCalDay} />
+              <SleepCalendar records={records} accentHex={theme.accentHex} selected={calSel} onSelect={setFocusDate} />
               {calRec ? (
                 <div className="space-y-1.5" data-testid="calendar-detail">
                   {/* 裸列而非 StatCard：日历卡已是 innerBg，再套一层盒会糊（周小结的 StatCard 直接坐在外层 cardBg 上） */}
