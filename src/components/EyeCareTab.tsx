@@ -18,7 +18,7 @@ import {
 } from '../utils/eyeCare';
 import { queryDailyHealth, type DailyHealthDay } from '../utils/usageSignal';
 import { subscribeAppResume } from '../utils/appResume';
-import { EmptyState, StatCard, Switch } from './ui';
+import { DurationValue, EmptyState, StatCard, Switch } from './ui';
 
 // 用眼柱图 lazy（第 103 轮）：recharts+d3 不进主包，详见 EyeHealthChart.tsx。
 // EyeCareTab 本身保持同步（第 87 轮取舍），只有图表区域异步挂载。
@@ -524,7 +524,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
               <StatCard
                 theme={theme}
                 label="今日屏幕时间"
-                value={<>{Math.floor(todayHealth.screenMinutes / 60)}<span className="text-sm">H</span>{todayHealth.screenMinutes % 60}<span className="text-sm">M</span></>}
+                value={<DurationValue minutes={todayHealth.screenMinutes} />}
                 valueClassName="text-white"
               />
               <StatCard

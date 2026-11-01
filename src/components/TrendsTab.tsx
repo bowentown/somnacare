@@ -59,7 +59,7 @@ import { SleepCalendar } from './SleepCalendar';
 import { SleepRhythmChart } from './SleepRhythmChart';
 import { ThemeConfig } from '../utils/themeStyles';
 import { hapticStep } from '../utils/haptics';
-import { EmptyState, StatCard } from './ui';
+import { EmptyState, DurationValue } from './ui';
 
 interface TrendsTabProps {
   records: SleepRecord[];
@@ -964,30 +964,35 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 还没有夜睡记录——白天的午睡不计入周小结。
               </p>
             ) : (
-            <div className="grid grid-cols-3 gap-2.5">
-              <StatCard theme={theme} label="平均评分" value={sum.avgScore} />
-              <StatCard
-                theme={theme}
-                label="日均时长"
-                valueClassName="text-white"
-                value={<>
-                  {Math.floor(sum.avgDurationMin / 60)}<span className="text-sm">H</span>
-                  {sum.avgDurationMin % 60}<span className="text-sm">M</span>
-                </>}
-              />
-              <StatCard
-                theme={theme}
-                label="平均效率"
-                valueClassName="text-emerald-400"
-                value={<>{avgEfficiency}<span className="text-sm">%</span></>}
-              />
+            <div className="flex items-end justify-between gap-3">
+              {/* hero 层级（第 111 轮，Refactoring UI）：主指标大而重，次指标
+                  右侧轻声排列——不再三张同权重卡片平铺 */}
+              <div className="min-w-0">
+                <span className={`text-[10px] ${textMuted} block`}>平均评分</span>
+                <span className={`text-4xl leading-none font-display font-bold tabular-nums ${theme.accentText}`}>
+                  {sum.avgScore}
+                </span>
+              </div>
+              <div className="flex flex-col items-end gap-1.5 pb-0.5">
+                <div className="flex items-baseline gap-1.5">
+                  <span className={`text-[10px] ${textMuted}`}>日均时长</span>
+                  <DurationValue minutes={sum.avgDurationMin} className="text-base text-white" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className={`text-[10px] ${textMuted}`}>平均效率</span>
+                  <span className="font-display font-bold tabular-nums text-base text-emerald-400">
+                    {avgEfficiency}
+                    <span className="text-[10px] font-medium tracking-wide">%</span>
+                  </span>
+                </div>
+              </div>
             </div>
             )}
             {sum.regularity ? (
               <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 space-y-1.5`}>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-slate-200">作息规律度</span>
-                  <span className={`font-mono font-black text-lg ${
+                  <span className={`font-display font-bold text-lg ${
                     sum.regularity.score >= 80 ? 'text-emerald-400' : sum.regularity.score >= 50 ? 'text-amber-400' : 'text-rose-400'
                   }`}>{sum.regularity.score}</span>
                 </div>
@@ -998,7 +1003,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                 {sri && (
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono text-slate-400">SRI</span>
-                    <span className="font-mono font-bold text-sm text-slate-200">{sri.sri}</span>
+                    <span className="font-display font-bold text-sm text-slate-200">{sri.sri}</span>
                   </div>
                 )}
                 <SleepRhythmChart records={records} accentHex={theme.accentHex} />
@@ -1011,7 +1016,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
             <div className={`${innerBg} border ${innerBorder} rounded-2xl p-3.5 space-y-1.5`}>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-slate-200">睡眠需求</span>
-                <span className="font-mono font-black text-lg text-sky-300">{formatDurationChinese(need.needMinutes)}</span>
+                <span className={`font-display font-bold text-lg ${theme.accentText}`}>{formatDurationChinese(need.needMinutes)}</span>
               </div>
               <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
                 <span>MSFsc {msf ? msf.label : '—'}</span>
@@ -1040,18 +1045,15 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                   <div className="grid grid-cols-3 gap-2.5">
                     <div className="min-w-0">
                       <span className={`text-[10px] ${textMuted} block`}>评分</span>
-                      <span className={`text-xl font-black font-mono tabular-nums ${accentText}`}>{calRec.sleepScore ?? '—'}</span>
+                      <span className={`text-xl font-bold font-display tabular-nums ${accentText}`}>{calRec.sleepScore ?? '—'}</span>
                     </div>
                     <div className="min-w-0">
                       <span className={`text-[10px] ${textMuted} block`}>时长</span>
-                      <span className="text-xl font-black font-mono tabular-nums text-white">
-                        {Math.floor((calRec.durationMinutes ?? 0) / 60)}<span className="text-sm">H</span>
-                        {(calRec.durationMinutes ?? 0) % 60}<span className="text-sm">M</span>
-                      </span>
+                      <DurationValue minutes={calRec.durationMinutes ?? 0} className="text-xl text-white" />
                     </div>
                     <div className="min-w-0">
                       <span className={`text-[10px] ${textMuted} block`}>效率</span>
-                      <span className="text-xl font-black font-mono tabular-nums text-emerald-400">
+                      <span className="text-xl font-bold font-display tabular-nums text-emerald-400">
                         {calRec.sleepEfficiency ?? '—'}<span className="text-sm">%</span>
                       </span>
                     </div>

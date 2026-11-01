@@ -19,6 +19,10 @@
    在任何内核都落到字面值。新增用色后跑 npm run verify:css 里的
    verify-no-oklch 护栏，它会扫产物强制为零 oklch。 */
 @theme {
+  /* 字体角色（第 111 轮）：--font-display 承担"数据大数字"（评分/时长/需求）。
+     Space Grotesk 此前被 @fontsource 导入却从未使用（死导入）；转正为展示
+     字体后，font-mono 退守"仪表读数"角色（坐标轴/时间戳/元数据行）。 */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "HarmonyOS Sans SC", sans-serif;
   --color-amber-100: #fef3c6;
   --color-amber-200: #fee685;
   --color-amber-300: #ffd230;

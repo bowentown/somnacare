@@ -63,19 +63,42 @@ ok('消费：趋势空态走 EmptyState（不再手搓色块）',
   trends.includes('EmptyState')
   && trends.includes('illustration="no-data"')
   && !trends.includes('暂无睡眠数据</span>'));
-ok('消费：近期小结数据盒走 StatCard（Tremor 语法，无平行实现）',
-  trends.includes('<StatCard')
-  && trends.includes('label="平均评分"')
-  && !trends.includes('>平均评分</span>'));
+ok('消费：小结卡 hero 层级（第 111 轮，Refactoring UI）——主指标大而重、次指标轻声',
+  trends.includes('text-4xl leading-none font-display')
+  && trends.includes('<DurationValue')
+  && !trends.includes('<StatCard'));
+
+// ── 字体角色与数值排版（第 111 轮）──
+const indexCss = read('src/index.css');
+const duration = read('src/components/ui/DurationValue.tsx');
+const eyeCare = read('src/components/EyeCareTab.tsx');
+ok('字体角色：--font-display 在场（Space Grotesk 从死导入转正为数据大数字）',
+  indexCss.includes('--font-display: "Space Grotesk"'));
+ok('时长数值：DurationValue 分层单位（"8H0M" 式挤压排版全应用退役）',
+  duration.includes('font-display')
+  && duration.includes('小时')
+  && (trends.match(/<DurationValue/g) || []).length === 2   // 小结 hero + 日历详情
+  && eyeCare.includes('<DurationValue')
+  && !trends.includes('<span className="text-sm">H</span>')
+  && !eyeCare.includes('<span className="text-sm">H</span>'));
 
 // ── 反向自检：删掉插画变量后判据失效 ──
 {
   const doctored = illustration.replace("'--primary-svg-color'", "'--unused-var'");
   ok('反向自检：删除主题变量绑定后判据不再成立', !doctored.includes("'--primary-svg-color'"));
+  const doctoredHero = trends.replace('text-4xl leading-none font-display', 'text-4xl');
+  ok('反向自检：hero 锚点被剥后判据不再成立', !doctoredHero.includes('text-4xl leading-none font-display'));
+  const doctoredToken = indexCss.split('--font-display').join('--fontX-display');  // 注释与 token 行各一处，全量替换
+  ok('反向自检：font-display token 被删后判据不再成立', !doctoredToken.includes('--font-display'));
+  const doctoredEye = eyeCare.replace(
+    '<DurationValue minutes={todayHealth.screenMinutes} />',
+    '<span className="text-sm">H</span>',
+  );
+  ok('反向自检：H/M 挤压排版注入被检出', doctoredEye.includes('<span className="text-sm">H</span>'));
 }
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——设计系统护栏不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-design-system：组件层/插画/消费迁移全部在位');
+console.log('\n✓ verify-design-system：组件层/插画/消费迁移/字体角色全部在位');

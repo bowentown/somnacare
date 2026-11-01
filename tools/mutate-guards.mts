@@ -227,6 +227,20 @@ const MUTATIONS: Mutation[] = [
     replace: "transition: 'none'",
     note: 'activeDot 滑行被剥 → 触控 scrub 在数据点间瞬移（手感退化）',
   },
+  {
+    file: 'src/index.css',
+    guard: 'verify-design-system.mts',
+    find: '--font-display: "Space Grotesk"',
+    replace: '--fontX-display: "Space Grotesk"',
+    note: '数据大数字字体角色丢失 → 退化回等宽终端感（第 111 轮优雅化回潮）',
+  },
+  {
+    file: 'src/components/TrendsTab.tsx',
+    guard: 'verify-design-system.mts',
+    find: '<DurationValue',
+    replace: '<XDurationValue',
+    note: '时长分层排版脱钩 → "8H0M" 式挤压排版回潮（第 111 轮）',
+  },
 ];
 
 const originals = new Map<string, string>();
