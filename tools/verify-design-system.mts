@@ -124,6 +124,23 @@ ok('数值排版：抽查清单迁移（提案时刻/亮屏 hero/计时器）',
   ok('反向自检：StatCard mono 回潮被检出', doctoredStat.includes('font-mono'));
 }
 
+// ── 分钟时钟收敛（第 129 轮）：全应用单一 interval，组件不再自挂 ──
+const tickHook = read('src/hooks/useMinuteTick.ts');
+const clockUsers = ['src/components/TodayTab.tsx', 'src/components/PondCard.tsx',
+  'src/components/OneTapSleepTracker.tsx', 'src/components/EyeCareTab.tsx'];
+ok('时钟：共享 useMinuteTick 在场（模块级单 interval + 零订阅即停）',
+  tickHook.includes('const subs = new Set<Sub>()')
+  && tickHook.includes('maybeStopTimer'));
+ok('时钟：四个分钟级组件全部改用共享滴答（不再各自 setInterval 60s）',
+  clockUsers.every((p) => read(p).includes('useMinuteTick'))
+  && clockUsers.every((p) => !/setInterval\(\s*\(\)\s*=>\s*set(NowHour|PhaseNow|Now)\(new Date/.test(read(p))));
+{
+  const doctored = read('src/components/PondCard.tsx')
+    .replace('useMinuteTick().getHours()', 'new Date().getHours()');
+  ok('反向自检：池塘退回自读时钟后判据不再成立',
+    !doctored.includes('useMinuteTick().getHours()'));
+}
+
 // ── 对外形象：分享卡 canvas 接品牌字体（第 118 轮）──
 const shareCard = read('src/utils/sleepShareCard.ts');
 ok('对外形象：分享卡大数字走 Space Grotesk（canvas 不吃 CSS，显式 fonts.load 预热）',

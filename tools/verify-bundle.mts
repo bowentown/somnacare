@@ -65,6 +65,11 @@ check('three 落在池塘懒 chunk（bootstrap-*.js）',
 check('无第三方日历库指纹（react-activity-calendar 已移除，月历自绘）',
   !allJs.some((c) => has(c.src, 'react-activity-calendar')));
 
+// 第 128 轮启动链瘦身：重打分实现随 recordsHydrate 落懒 chunk，入口不做
+// 3.5MB 级同步解析（rescoreRecordsIfNeeded 指纹离开主包）
+check('主包不含重打分实现（rescoreRecordsIfNeeded 已随补水落懒 chunk）',
+  !has(main, 'rescoreRecordsIfNeeded'));
+
 // 主包体积上界（防止下一个重库悄悄进来）：第 103 轮实测 637K 字符
 // （.length 口径；磁盘 689KB 字节，差异来自包内 CJK 字符串）。超限不是
 // 必错，但必须先解释再放宽。

@@ -755,6 +755,9 @@ public class GemmaLLMPlugin extends Plugin {
         Integer ctxScore = call.getInt("lastScore");
         Integer ctxMissed = call.getInt("missedDays");
         Integer ctxStreak = call.getInt("streak");
+        Integer widgetScore = call.getInt("lastScore");
+        Integer widgetStreak = call.getInt("streak");
+        String widgetBed = call.getString("targetBedtime");
         getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(PetOverlayService.K_PET_SAY, safe(call, "say", ""))
                 .putInt(PetOverlayService.K_BUBBLE_EVERY, every)
@@ -763,7 +766,16 @@ public class GemmaLLMPlugin extends Plugin {
                 .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
                 .putBoolean(PetOverlayService.K_CTX_LAST_NIGHT, Boolean.TRUE.equals(call.getBoolean("lastNightRecorded")))
                 .putInt(PetOverlayService.K_CTX_STREAK, ctxStreak != null ? ctxStreak : 0)
+                // 桌面小组件三键（第 126–127 轮）：与 petSync 同通道落盘
+                .putInt(SleepWidgetProvider.K_WIDGET_SCORE, widgetScore != null ? widgetScore : -1)
+                .putInt(SleepWidgetProvider.K_WIDGET_STREAK, widgetStreak != null ? widgetStreak : 0)
+                .putString(SleepWidgetProvider.K_WIDGET_BED, widgetBed != null ? widgetBed : "23:30")
                 .apply();
+        // 快照变化即刷新已放置的小组件（无实例安全空操作）
+        try {
+            SleepWidgetProvider.updateAll(getContext());
+        } catch (Exception ignored) {
+        }
     }
 
     @PluginMethod

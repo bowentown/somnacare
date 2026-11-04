@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 睡眠桌面小组件元数据（第 126–127 轮）：2×2 常驻，半小时级自动刷新兜底
+     （正式数据更新走 petSync → updateAll；updatePeriodMillis 是系统兜底） -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="60dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/sleep_widget_layout"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

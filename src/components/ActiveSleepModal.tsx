@@ -82,6 +82,9 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
 
   // 声级历史（每 500ms 采样一次，保留最近 90 个点供迷你曲线）
   const splHistoryRef = useRef<number[]>([]);
+  // 声事件累积态（第 123 轮）：进行中的响段 + 已封段的清单
+  const soundEventRef = useRef<{ startAt: number; peak: number; lastLoud: number; confirmed: boolean }>({ startAt: 0, peak: 0, lastLoud: 0, confirmed: false });
+  const soundEventsRef = useRef<NonNullable<SleepRecord['soundEvents']>>([]);
   const lastSampleRef = useRef(0);
   // 麦克风会话代号：权限等待期间用户关掉弹窗时，迟到的流要立刻释放（否则麦克风常开泄漏）
   const micEpochRef = useRef(0);
@@ -207,6 +210,9 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
     setMicStatus('requesting');
     setMicError(null);
     const epoch = ++micEpochRef.current;
+    // 新会话清空声事件（第 123 轮）：上一次监测的清单不得漏进新记录
+    soundEventsRef.current = [];
+    soundEventRef.current = { startAt: 0, peak: 0, lastLoud: 0, confirmed: false };
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         setMicStatus('unavailable');
@@ -283,6 +289,33 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
           splHistoryRef.current = [...splHistoryRef.current.slice(-89), splSmoothRef.current];
           setSplHistory(splHistoryRef.current);
         }
+        // 声事件累积（第 123 轮，Sleep Secret 灵感）：平滑 SPL >45dB 连续 ≥5s
+        // 记一段（事件内取峰值），回落后 ≥5s 沉默才封段；上限 50 条
+        const smooth = splSmoothRef.current ?? 25;
+        const evRef = soundEventRef.current;
+        if (smooth > 45) {
+          if (evRef.startAt === 0) {
+            evRef.startAt = now;
+            evRef.peak = smooth;
+          } else {
+            evRef.peak = Math.max(evRef.peak, smooth);
+            if (now - evRef.startAt >= 5000) evRef.confirmed = true;
+          }
+          evRef.lastLoud = now;
+        } else if (evRef.startAt !== 0 && now - evRef.lastLoud >= 5000) {
+          if (evRef.confirmed && evRef.peak >= 45) {
+            const d = new Date(evRef.startAt);
+            const list = soundEventsRef.current;
+            if (list && list.length < 50) {
+              list.push({
+                time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+                decibel: evRef.peak,
+                label: evRef.peak >= 70 ? '很吵' : evRef.peak >= 55 ? '吵闹' : '轻微',
+              });
+            }
+          }
+          soundEventRef.current = { startAt: 0, peak: 0, lastLoud: 0, confirmed: false };
+        }
         analyser.getByteFrequencyData(freq);
         const bars: number[] = [];
         const bucket = Math.floor(freq.length / 10);
@@ -357,6 +390,7 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
       userWakingMood: selectedMood,
       userPreSleepHabits: selectedHabits,
       userDreamNotes: dreamNotes.trim() || undefined,
+      userSoundEvents: soundEventsRef.current.length > 0 ? [...soundEventsRef.current] : undefined,
     });
 
     onFinishSleep(built.record);

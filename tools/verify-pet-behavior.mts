@@ -99,11 +99,20 @@ check('missedDays 按夜归属从昨天起数（i=1，第 51 轮口径）',
   readFileSync(join(ROOT, 'src/utils/petContext.ts'), 'utf-8').includes('for (let i = 1; i <= 14; i++)'));
 check('插件落盘上下文（K_CTX_*）', plugin.includes('K_CTX_SCORE') && plugin.includes('K_CTX_MISSED') && plugin.includes('K_CTX_LAST_NIGHT'));
 check('服务转推上下文（调用点而非仅签名，变异 3）', service.includes('whale.setContext('));
-check('视图消费上下文 setContext', view.includes('public void setContext(int lastScore, int missedDays, boolean lastNightRecorded)'));
+check('视图消费上下文 setContext（含 streak，第 125 轮）', view.includes('public void setContext(int lastScore, int missedDays, boolean lastNightRecorded, int streak)'));
   check('streak 接线（第 119 轮）：插件落盘 K_CTX_STREAK + 服务里程碑气泡（3/7/14，每日去重）',
     plugin.includes('K_CTX_STREAK') && plugin.includes('call.getInt("streak")')
     && service.includes('K_CTX_STREAK') && service.includes('streak == 3 || streak == 7 || streak == 14')
     && service.includes('K_STREAK_DATE'));
+  check('streak 进权重表（第 125 轮）：≥7 晚放大 play/walk，字段随 setContext 透传',
+    view.includes('if (streak >= 7) {')
+    && view.includes('a.name.equals("play") || a.name.equals("walk")) w = (int) (w * 1.5f) + 1;')
+    && service.includes('whale.setContext(score, missed, lastNightRecorded, streak)'));
+  {
+    const doctored = view.replace('if (streak >= 7) {', 'if (streak >= 999) {');
+    check('反向自检：streak 阈值改 999（永不触发）后判据不再成立',
+      !doctored.includes('if (streak >= 7) {'));
+  }
 check('权重表记录感知：蔫/精神/想你补记',
   view.includes('missedDays >= 3') && view.includes('lastScore >= 85') && view.includes('!lastNightRecorded && hour >= 21'));
 

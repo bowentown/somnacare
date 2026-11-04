@@ -87,6 +87,7 @@ public class WhaleGirlView extends View {
     private int lastScore = -1;          // 昨晚评分（-1=无记录）
     private int missedDays = 0;          // 连续未记录夜数（含最近一夜，醒来日口径）
     private boolean lastNightRecorded = false; // 昨晚是否已入账（复审 N3 改名）
+    private int streak = 0;   // 连续达标夜数（第 125 轮）
     private boolean dragging;
     private boolean running;
     private boolean resumed;        // 小动作调度是否在跑
@@ -286,11 +287,13 @@ public class WhaleGirlView extends View {
         }
     }
 
-    /** 记录感知上下文（petSync 结构化通道，PetOverlayService 转推）。 */
-    public void setContext(int lastScore, int missedDays, boolean lastNightRecorded) {
+    /** 记录感知上下文（petSync 结构化通道，PetOverlayService 转推）。
+     *  streak（第 125 轮）：连续达标夜数——0 = 无连胜；进权重表驱动"连胜精神状态"。 */
+    public void setContext(int lastScore, int missedDays, boolean lastNightRecorded, int streak) {
         this.lastScore = lastScore;
         this.missedDays = missedDays;
         this.lastNightRecorded = lastNightRecorded;
+        this.streak = streak;
     }
 
     /** 拖拽中切"被拎起来"姿势，松手恢复。 */
@@ -380,6 +383,11 @@ public class WhaleGirlView extends View {
         }
         if (!lastNightRecorded && hour >= 21) {
             if (a.name.equals("think")) w += 10;
+        }
+        // 连续达标 ≥7 晚（第 125 轮）：连胜中的她格外有活力——多玩多遛。
+        // 只放大正向动作，不叠加到已蔫分支（missedDays 与 streak 互斥语义由数据保证）
+        if (streak >= 7) {
+            if (a.name.equals("play") || a.name.equals("walk")) w = (int) (w * 1.5f) + 1;
         }
         return w;
     }

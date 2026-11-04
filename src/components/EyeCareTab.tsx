@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
+import { useMinuteTick } from '../hooks/useMinuteTick';
 import { createPortal } from 'react-dom';
 import { Eye, MoonStar, BookOpen, Gamepad2, BedDouble, Pipette, Clock, CheckCircle2 } from 'lucide-react';
 import { ProfileUpdater, UserProfile, EyeCareConfig, DEFAULT_EYE_CARE } from '../types/sleep';
@@ -84,7 +85,7 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
     : rawCfg;
   const native = isEyeCareNative();
   const [granted, setGranted] = useState<boolean>(true);
-  const [now, setNow] = useState<Date>(new Date());
+  const now = useMinuteTick();   // 共享分钟滴答（第 129 轮）
   const [hue, setHue] = useState<number>(() => hexToHue(cfg.warmColor));
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerA11y = useModalA11y(pickerOpen, () => setPickerOpen(false), '护眼滤镜颜色选择');
@@ -97,10 +98,8 @@ const EyeCareTabInner: React.FC<EyeCareTabProps> = ({ userProfile, onUpdateProfi
       eyeCarePermissionGranted().then(setGranted);
     }
     void applyEyeCare(cfg);
-    const t = setInterval(() => {
-      setNow(new Date());
-      void applyEyeCare(cfg);
-    }, 30_000);
+    // 第 129 轮：30s → 60s（滤镜重应用幂等，时钟走共享分钟滴答）
+    const t = setInterval(() => { void applyEyeCare(cfg); }, 60_000);
     // 回前台复查悬浮窗权限（第 81 轮审计）：用户可能刚在系统设置里
     // 收回了"显示在其他应用上层"，卡面不该继续宣称"滤镜生效中"
     const unsubscribeResume = subscribeAppResume(() => {

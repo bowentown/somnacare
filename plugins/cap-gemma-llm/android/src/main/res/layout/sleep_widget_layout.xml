@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 睡眠小组件布局（第 126–127 轮）：RemoteViews 子集（Frame/Linear/TextView），
+     深色底 + 主题默认靛蓝，与 App 夜间视觉同语言 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B1220"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_score"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="--"
+            android:textColor="#7C86FF"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_score_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="昨晚评分"
+            android:textColor="#94A3B8"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/widget_sub"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="今晚 23:30 入睡"
+            android:textColor="#64748B"
+            android:textSize="11sp" />
+    </LinearLayout>
+</FrameLayout>

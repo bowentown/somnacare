@@ -1552,6 +1552,112 @@ test('旅程35b 睡债睡前建议：零记录基线未个人化 → 诚实缺�
   expect(errors).toEqual([]);
 });
 
+// 旅程36 记录编辑（第 122 轮）：历史行编辑 → 全字段预填 → 幂等保存
+//（条数不变、列表/详情同步）；编辑说明在场（分期评分将重算）
+test('旅程36 记录编辑：预填全字段 + 幂等保存不产生第二条', async ({ page }) => {
+  const errors = watchErrors(page);
+  await seed(page, [mkRecord(dstr(-1), '23:10', '07:10', 92)], NIGHT_SCHEMA);
+  await openAt(page, 21, 0);
+  await navTo(page, '趋势');
+
+  // 展开历史记录 → 点编辑
+  await page.getByRole('button', { name: /历史记录/ }).click();
+  await page.getByRole('button', { name: /编辑 2026|编辑 \d{4}-\d{2}-\d{2}/ }).first().click();
+
+  // 编辑模式文案 + 预填（就寝 = 旧值 23:10 而非默认 23:30）
+  await expect(page.getByText('编辑记录')).toBeVisible();
+  await expect(page.getByText(/编辑将按新时刻重算分期与评分/)).toBeVisible();
+  const bedInput = page.locator('input[type="time"]').first();
+  await expect(bedInput).toHaveValue('23:10');
+
+  // 改就寝为 22:30 → 保存
+  await bedInput.fill('22:30');
+  await page.getByRole('button', { name: '保存修改' }).click();
+
+  // 幂等：新时刻在列、旧时刻消失；历史计数徽章仍 1 夜（无第二条）
+  await expect(page.getByText('22:30 - 07:10')).toBeVisible();
+  await expect(page.getByText('23:10 - 07:10')).toHaveCount(0);
+  await expect(page.getByText(/1\s*夜/).first()).toBeVisible();
+
+  // 再次打开补录（非编辑）：标题回"补录睡眠"、默认值回落（editTarget 已清）
+  await navTo(page, '睡眠');
+  await page.getByRole('button', { name: '手动补录' }).click();
+  await expect(page.getByText('补录睡眠')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  expect(errors).toEqual([]);
+});
+
+// 旅程37 关怀通知（第 124 轮）：断记召回（missedDays ≥2 → 本周一条）+
+// 晨间确认（开监测即排次日 09:00）。LocalNotifications 用注入 stub 捕获
+// schedule/cancel 参数——真实调度在真机，这里锁的是【调度语义】。
+test('旅程37 关怀通知：断记召回排本周一条 + 晨间确认随开监测落位', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(22, 0, 0, 0);
+  // 先建 Capacitor 框架 mock，再覆盖 LocalNotifications 为捕获 stub
+  await mockNativeUsage(page, { events: [], usageDays: [] });
+  // 注入 LocalNotifications stub：记录 schedule/cancel 调用（在 mockNativeUsage 之后覆盖）
+  await page.addInitScript(() => {
+    const w = window as any;
+    const install = () => {
+      if (!w.Capacitor?.Plugins) return;
+      w.__notif = [];
+      w.__notifCancel = [];
+      const impl = {
+        checkPermissions: async () => ({ display: 'granted' }),
+        getPending: async () => ({ notifications: [] }),
+        createChannel: async () => ({}),
+        registerActionTypes: async () => ({}),
+        schedule: async (args: any) => { w.__notif.push(args); },
+        cancel: async (args: any) => { w.__notifCancel.push(args); },
+      };
+      w.Capacitor.Plugins.LocalNotifications = new Proxy(impl, {
+        get: (t, p) => (t as Record<string | symbol, unknown>)[p as string],
+      });
+    };
+    install();
+    document.addEventListener('DOMContentLoaded', install);
+  });
+  // 断记场景：最后一条记录在 5 天前（missedDays=5，hasNights=true）
+  await seed(page, [mkRecord(dstr(-5, fixed), '23:00', '07:00', 80)], NIGHT_SCHEMA);
+  // 假时钟定在 22:00（晚间相位 → 「开始夜间监测」在位）。此前怀疑 clock
+  // 冻结 passive effects 系误判——根因是复用了旧 dev server（reuseExisting
+  // Server 遇遗留进程），杀掉后 effects 正常。
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 召回已排：本周一条，21:00（10:00 打开 → 今天 21:00），渠道 somnacare-care
+  const diag = await page.evaluate(() => ({
+    hasCap: !!(window as any).Capacitor,
+    hasStub: !!(window as any).Capacitor?.Plugins?.LocalNotifications,
+    notifLen: ((window as any).__notif ?? []).length,
+    notifs: (window as any).__notif ?? [],
+  }));
+  const notifs = diag.notifs;
+  console.log('[sched]', JSON.stringify(notifs.flatMap((n: any) => n.notifications).map((x: any) => ({ k: x.extra?.kind, id: x.id }))));
+  const cancels = await page.evaluate(() => (window as any).__notifCancel ?? []);
+  console.log('[cancel]', JSON.stringify(cancels));
+  const recalls = notifs.flatMap((n: any) => n.notifications).filter((x: any) => x.extra?.kind === 'recall');
+  expect(recalls.length).toBe(1);   // 周键先占位：StrictMode 双调也只排一条
+  const recall = recalls[0];
+  expect(recall.channelId).toBe('somnacare-care');
+  expect(new Date(recall.schedule.at).getHours()).toBe(21);
+
+  // 晨间确认：开一次夜间监测（晚 22:00 场景更贴实际，但 10:00 点按也排——次日 09:00）
+  await navTo(page, '睡眠');
+  await page.getByRole('button', { name: /开始夜间监测/ }).click();
+  await page.waitForTimeout(600);
+  const notifs2 = await page.evaluate(() => (window as any).__notif ?? []);
+  const morning = notifs2.flatMap((n: any) => n.notifications).find((x: any) => x.extra?.kind === 'morning-confirm');
+  expect(morning).toBeTruthy();
+  expect(new Date(morning.schedule.at).getHours()).toBe(9);
+
+  expect(errors).toEqual([]);
+});
+
 // 旅程33 睡眠日历交互（第 107 轮重做）：第 106 轮的手绘图零交互，重做后
 // react-activity-calendar 点选出当夜详情。锁三条行为链：默认选中最近一夜
 //（详情即开即见）、点选切夜详情跟着切、无记录日诚实空态（不冒充 0 分）。
@@ -1597,18 +1703,40 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
   await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
   await expect(detail).not.toContainText('就寝 23:10');
 
-  // 月历默认打开在【有数据的那个月】（最近一夜所在月，10月），不是空洞的
-  // 当前月；首条记录月即下界 → ‹ 禁用，› 可去当前月
-  await expect(cal.getByRole('button', { name: '上一月' })).toBeDisabled();
-  await expect(cal.getByRole('button', { name: '下一月' })).toBeEnabled();
+  // 月历默认打开在【有数据的那个月】（最近一夜所在月），不是空洞的当前月；
+  // 首条记录月即下界。导航可用性按实际月份关系断言（日期滚动鲁棒）：
+  // 首夜与最近夜同月 → ‹ 禁用；跨月（如今天 11-03、种子起 10-31）→ ‹ 可用
+  const firstD = new Date(base); firstD.setDate(firstD.getDate() - 3);
+  const latestD = new Date(base); latestD.setDate(latestD.getDate() - 1);
+  const sameMonth = firstD.getMonth() === latestD.getMonth()
+    && firstD.getFullYear() === latestD.getFullYear();
+  if (sameMonth) {
+    await expect(cal.getByRole('button', { name: '上一月' })).toBeDisabled();
+  } else {
+    await expect(cal.getByRole('button', { name: '上一月' })).toBeEnabled();
+  }
+  // 下一月：仅当默认视图月不是当前月时可用（最近夜落在当前月 → 已是右界）
+  const latestInCurrentMonth = latestD.getMonth() === base.getMonth()
+    && latestD.getFullYear() === base.getFullYear();
+  if (latestInCurrentMonth) {
+    await expect(cal.getByRole('button', { name: '下一月' })).toBeDisabled();
+  } else {
+    await expect(cal.getByRole('button', { name: '下一月' })).toBeEnabled();
+  }
 
   // 点选前晚 → 详情切换（旧夜的时刻必须消失，不能只是叠加）
   await cal.locator(`[data-date="${dstr(-2, base)}"]`).click();
   await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
   await expect(detail).not.toContainText('就寝 23:10');
 
-  // 点选无记录日 → 诚实空态
-  await cal.locator(`[data-date="${dstr(-6, base)}"]`).click();
+  // 点选无记录日 → 诚实空态。候选必须落在默认视图月内（月历视图跟随
+  // 最近夜所在月）：同月场景用今天（future 格，今晚未完成）；跨月场景
+  // （今天=1 号）用最早夜前一天
+  const missingD = sameMonth
+    ? new Date(base.getFullYear(), base.getMonth(), base.getDate())
+    : new Date(firstD.getFullYear(), firstD.getMonth(), firstD.getDate() - 1);
+  const missKey = `${missingD.getFullYear()}-${String(missingD.getMonth() + 1).padStart(2, '0')}-${String(missingD.getDate()).padStart(2, '0')}`;
+  await cal.locator(`[data-date="${missKey}"]`).click();
   await expect(detail).toContainText('该日无记录');
 
   expect(errors).toEqual([]);

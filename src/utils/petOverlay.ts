@@ -184,7 +184,7 @@ export async function startPet(
 ): Promise<{ ok: boolean; needPermission?: boolean }> {
   const g = gemma();
   if (!g) return { ok: false };
-  const payload = { say: buildPetSayLines(records, profile).join('\n'), bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()) };
+  const payload = { say: buildPetSayLines(records, profile).join('\n'), bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()), targetBedtime: profile?.targetBedtime ?? '23:30' };
   try {
     if (isPetEnabled()) await g.petSync(payload);
     else await g.petStart(payload);
@@ -220,7 +220,7 @@ export async function syncPet(
     ? [localLines[0], ...cached, ...localLines.slice(1, 3)].filter(Boolean).join('\n')
     : localLines.join('\n');
   try {
-    await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()) });
+    await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()), targetBedtime: profile?.targetBedtime ?? '23:30' });
   } catch { /* 桌宠没开或服务已停，忽略 */ }
 
   let sayInFlight = false;   // 模块级在途标志（防并发重复调用）

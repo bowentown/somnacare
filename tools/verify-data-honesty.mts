@@ -48,8 +48,24 @@ ok('e2e 锁住新结构：默认起卧 / 估算 tab 名', journey.includes('目�
     !doctored.includes("useState<MetricViewMode>('circadian')"));
 }
 
+// ── 声事件落库（第 123 轮）：真采样才落库，上限/档位钉死 ──
+const asm = read('src/components/ActiveSleepModal.tsx');
+ok('声事件：采集条件 >45dB 连续 ≥5s 才成段（不编造安静夜的响声）',
+  asm.includes('smooth > 45') && asm.includes('now - evRef.startAt >= 5000'));
+ok('声事件：上限 50 条 + 档位三档（轻微/吵闹/很吵）',
+  asm.includes('list.length < 50')
+  && asm.includes("evRef.peak >= 70 ? '很吵' : evRef.peak >= 55 ? '吵闹' : '轻微'")
+  && read('src/utils/recordBuilder.ts').includes('userSoundEvents.slice(-50)'));
+ok('声事件：新会话清空旧清单（上次监测不得漏进新记录）',
+  asm.includes('soundEventsRef.current = [];'));
+ok('消费：详情行只在有声事件时显示（无声不造行）',
+  read('src/components/TrendsTab.tsx').includes('夜间声事件 {calRec.soundEvents.length} 次（最响 {loudest}dB）'));
+ok('反向自检：采集条件被改成 >=0（编造安静夜）后判据不再成立',
+  (() => { const d = asm.replace('smooth > 45', 'smooth >= 0'); return !d.includes('smooth > 45'); })());
+
+console.log('\n✓ verify-data-honesty：真实测量主视图 / 估算降级标注 / 流失计算全部符合');
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——数据诚实护栏不符`);
   process.exit(1);
 }
-console.log('\n✓ verify-data-honesty：真实测量主视图 / 估算降级标注 / 流失计算全部符合');

@@ -19,6 +19,9 @@ interface ManualLogModalProps {
   initialDate?: string;
   initialBedtime?: string;
   initialWakeTime?: string;
+  /** 编辑既有记录（第 122 轮）：全字段预填 + 幂等保存（沿用原 id）。
+   *  与 initial* 互补：补录走 initial*，编辑走 editing。 */
+  editing?: SleepRecord;
   chronotype?: 'night' | 'day' | 'irregular';
   /** 既往记录（第 105 轮）：≥5 晚时打分目标改用个人睡眠需求 */
   records?: SleepRecord[];
@@ -51,6 +54,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   initialDate,
   initialBedtime,
   initialWakeTime,
+  editing,
   chronotype = 'night',
 }) => {
   const [date, setDate] = useState(() => {
@@ -74,8 +78,18 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
     }
     setBedtime(initialBedtime ?? '23:30');
     setWakeTime(initialWakeTime ?? '07:30');
+    // 编辑模式（第 122 轮）：全字段按旧记录回填
+    if (editing) {
+      setBedtime(editing.bedtime);
+      setWakeTime(editing.wakeTime);
+      setWakeCount(editing.wakeCount ?? 1);
+      setLatencyMinutes(editing.latencyMinutes ?? 15);
+      setSelectedMood(editing.wakingMood ?? 'refreshed');
+      setSelectedHabits(editing.preSleepHabits ?? []);
+      setDreamNotes(editing.dreamNotes ?? '');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialDate, initialBedtime, initialWakeTime]);
+  }, [isOpen, initialDate, initialBedtime, initialWakeTime, editing]);
   const [wakeCount, setWakeCount] = useState(1);
   const [latencyMinutes, setLatencyMinutes] = useState(15);
   const [selectedMood, setSelectedMood] = useState<WakingMood>('refreshed');
@@ -91,7 +105,8 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   const accentBg = theme?.accentBg || 'bg-indigo-600 hover:bg-indigo-500';
   const accentFg = theme?.accentFg || 'text-white';
 
-  const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, '手动补录睡眠记录');
+  const isEditing = !!editing;
+  const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, isEditing ? '编辑睡眠记录' : '手动补录睡眠记录');
   // 文案随所选日期走（第 54 轮）：补录更早的夜时"昨晚"自相矛盾
   const nightWord = (() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '这一晚';
@@ -144,7 +159,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
       wakeMs,
       targetDurationHours,
       priorRecords: records,
-      id: `manual-${Date.now()}`,
+      id: editing?.id ?? `manual-${Date.now()}`,
       recordSource: 'manual',
       chronotype,
       userLatencyMinutes: latencyMinutes,
@@ -177,7 +192,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
               <Moon className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-black text-white">补录睡眠</h3>
+              <h3 className="text-base font-black text-white">{isEditing ? '编辑记录' : '补录睡眠'}</h3>
             </div>
           </div>
           <button
@@ -335,6 +350,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
             />
           </div>
         </div>
+{isEditing && (             <p className="text-[10px] text-slate-400 leading-relaxed">               编辑将按新时刻重算分期与评分（原记录会被这一晚的新记录替换）。             </p>           )} 
 
         {error && (
           <div role="alert" className="mb-3 px-3.5 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold">
@@ -349,7 +365,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
           className={`w-full py-4 rounded-2xl ${accentBg} ${accentFg} font-black text-sm flex items-center justify-center gap-2 shadow-xl active:scale-[0.98] transition-all cursor-pointer`}
         >
           <Check className="w-5 h-5 stroke-[3]" />
-          <span>保存记录并更新睡眠趋势</span>
+          <span>{isEditing ? '保存修改' : '保存记录并更新睡眠趋势'}</span>
         </button>
       </div>
     </div>

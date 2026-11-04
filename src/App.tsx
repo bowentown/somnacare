@@ -13,6 +13,8 @@ import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
 import { MOTION } from './utils/motionTokens';
+import { cancelMorningConfirmNotify, scheduleMorningConfirmNotify, syncRecallNotify } from './utils/careNotifications';
+import { nightKeyOfBed } from './utils/dateUtils';
 import { unmaskProfileSecrets, maskProfileSecrets } from './utils/secretMask';
 import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes } from './utils/modelShadow';
 import { SettingsTab } from './components/SettingsTab';
@@ -48,7 +50,6 @@ import { getAdSkipStatus } from './utils/adSkip';
 import { BedtimeReminder, BedtimeReminderPhase } from './components/BedtimeReminder';
 import { sanitizeRecord } from './utils/recordSanitize';
 import { mergeRecord, nightsOnly } from './utils/recordFilter';
-import { rescoreRecordsIfNeeded, rescoreRecords } from './utils/scoreMigration';
 import { maybeMigrateRecordDates, migrateRecordDatesToNightKey, markRecordDateMigrationDone, recordDateMigrationDone } from './utils/recordDateMigration';
 import { TripArrivalModal } from './components/travel/TripArrivalModal';
 import { TravelCodexModal } from './components/travel/TravelCodexModal';
@@ -69,6 +70,13 @@ export const App: React.FC = () => {
   const [isManualLogOpen, setIsManualLogOpen] = useState(false);
   // 手动补录预填（提议式记录的"改一下"通路）
   const [manualLogPrefill, setManualLogPrefill] = useState<{ date: string; bedtime: string; wakeTime: string } | null>(null);
+  // 编辑既有记录（第 122 轮）：打开补录弹窗的编辑模式（全字段预填 + 幂等保存）
+  const [editTarget, setEditTarget] = useState<SleepRecord | null>(null);
+  const openEditRecord = useCallback((r: SleepRecord) => {
+    setManualLogPrefill({ date: r.date, bedtime: r.bedtime, wakeTime: r.wakeTime });
+    setEditTarget(r);
+    setIsManualLogOpen(true);
+  }, []);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   // 首页自救助手 → 偏好页链路自检（第 56 轮）：切分区并递增信号
   const [autoCheckSignal, setAutoCheckSignal] = useState(0);
@@ -125,9 +133,7 @@ export const App: React.FC = () => {
     }
     setOnboardingOpen(false);
   };
-  const [pendingPostcardId, setPendingPostcardId] = useState<string | null>(() => {
-    return loadTravelState().pendingArrival || null;
-  });
+    const [pendingPostcardId, setPendingPostcardId] = useState<string | null>(null);
   // ── 闹钟响铃（App 层）：检测与横幅此前挂在【偏好】分区的 AlarmManager 内，
   // 切分区横幅消失、应用内唯一停止入口也随之不可达。提升到根组件：
   // 10s 检测 + 全局横幅，任何分区可见可停；声音 native 走 AlarmRingService
@@ -161,10 +167,17 @@ export const App: React.FC = () => {
   }, [mountPane]);
   useEffect(() => {
     mountPane(activeTab);
-    // 邻居预热推迟到开屏动画之后（1.9s 淡出 + 余量），避免首帧竞争；
-    // 用户提前滑动时，手势开始那一刻也会立即预热（见轨道 onPointerDown）
-    const t = window.setTimeout(() => preheatNeighbors(activeTab), 2600);
-    return () => window.clearTimeout(t);
+    // 邻居预热（第 129 轮）：改为空闲预热——recharts/three 等重 chunk 在
+    // 浏览器空闲时才加载，不与首帧/开屏动画抢主线程；3s 兜底保证最终加载。
+    // 用户提前滑动时手势开始那一刻仍立即预热（见轨道 onPointerDown）
+    const ric = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+    const idleId = ric ? ric(() => preheatNeighbors(activeTab), { timeout: 3000 }) : 0;
+    const t = ric ? 0 : window.setTimeout(() => preheatNeighbors(activeTab), 2600);
+    return () => {
+      if (ric) (window as any).cancelIdleCallback?.(idleId);
+      if (t) window.clearTimeout(t);
+    };
   }, [activeTab, mountPane, preheatNeighbors]);
   const trackRef = useRef<HTMLDivElement>(null);
   // 最近一次划动抬手的时刻：swallowClick 的时间窗判定用。
@@ -183,51 +196,12 @@ export const App: React.FC = () => {
   // 挂载立刻 JSON.stringify 全量写回是纯重复劳动（3.5MB 级），恰好撞上
   // 开屏动画的主线程帧——跳过它，等第一条真实变更再写
   const skipFirstPersistRef = useRef(false);
-  const [records, setRecords] = useState<SleepRecord[]>(() => {
-    const saved = localStorage.getItem('somnacare_sleep_records');
-    if (!saved) return [];
-    if (recordDateMigrationDone()) skipFirstPersistRef.current = true;
-    // 与导入路径共用同一条清洗：畸形记录（缺 bedtime / null 项 / 坏值）
-    // 此前会直接把首页打崩（.split 抛错）或产出 NaN。
-    // 排序与导入路径同契约：records[0] 必须是最近一晚——升序存储
-    // （早期版本/外部播种）会让趋势轴反转、首页指向最老一条
-    let loaded: SleepRecord[] | null = null;
-    try {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        loaded = parsed
-          .map(sanitizeRecord)
-          .filter((r): r is SleepRecord => r !== null)
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      }
-    } catch (e) {
-      console.error('Failed to parse saved records:', e);
-    }
-    if (loaded) {
-      // 数据恢复正常后，上次启动留的"损坏备份"不再有价值（白占同源配额）
-      try { localStorage.removeItem('somnacare_sleep_records_backup_corrupted'); } catch { /* ignore */ }
-      // 第 51 轮一次性口径迁移：醒来日 → 夜归属（标记保证幂等）。作息类型
-      // 决定 day 作息豁免（其自然日口径两侧一致）——profile 此时尚未初始化，
-      // 同步读盘；备份导入路径的迁移见 backup.ts / handleImportRecords
-      let chronotype: 'night' | 'day' | 'irregular' = 'night';
-      try {
-        const p = localStorage.getItem('somnacare_user_profile');
-        const c = p ? (JSON.parse(p) as any)?.chronotype : null;
-        if (c === 'day' || c === 'irregular') chronotype = c;
-      } catch { /* ignore */ }
-      const dateFixed = maybeMigrateRecordDates(loaded, chronotype);
-      const scored = rescoreRecordsIfNeeded(dateFixed, chronotype);
-      // v2 重打分改变了数据：首挂载跳过写回的标记必须撤销，否则 v2 分只在
-      // 内存里、下次启动又算一遍（第 105 轮）
-      if (scored.migrated) skipFirstPersistRef.current = false;
-      return scored.records;
-    }
-    // 仅在 JSON 损坏/结构非法时落备份：挂载写回会覆盖原值，不备份就永远找不回；
-    // 合法数据每次启动都镜像一份会白吃 ~MB 级 localStorage 配额
-    try { localStorage.setItem('somnacare_sleep_records_backup_corrupted', saved); } catch { /* ignore */ }
-    console.warn('[storage] 记录结构异常，已备份后清空');
-    return [];
-  });
+  // 二段式补水（第 128 轮启动链瘦身）：首帧渲染空壳（LaunchSplash 覆盖），
+  // 挂载后 dynamic import recordsHydrate（懒 chunk）做清洗/迁移/重打分——
+  // 3.5MB 级解析不再阻塞首帧。写回 effect 以 hydrated 为闸，补水前绝不
+  // 用空数组覆盖磁盘。
+  const [hydrated, setHydrated] = useState(false);
+  const [records, setRecords] = useState<SleepRecord[]>([]);
 
   // User Profile configuration
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -308,6 +282,28 @@ export const App: React.FC = () => {
     };
   });
 
+  // 二段式补水（第 128 轮）：挂载后动态加载懒 chunk 做清洗/迁移/重打分。
+  // needsPersist=true → 撤销首次写回跳过（迁移结果必须落盘）
+  useEffect(() => {
+    let cancelled = false;
+    import('./utils/recordsHydrate')
+      .then((m) => m.loadAndMigrateRecords())
+      .then((r) => {
+        if (cancelled) return;
+        setRecords(r.records);
+        if (r.needsPersist) skipFirstPersistRef.current = false;
+        if (r.skipFirstPersist) skipFirstPersistRef.current = true;
+        setHydrated(true);
+      });
+    // 旅行到达弹窗（第 128 轮顺带移出首帧）：原同步 readTravelState 只为取
+    // pendingPostcardId，语义不变、时机延后到补水后
+    try {
+      const travel = loadTravelState();
+      if (travel.pendingArrival) setPendingPostcardId(travel.pendingArrival);
+    } catch { /* 无旅行状态 */ }
+    return () => { cancelled = true; };
+  }, []);
+
   // 本地存储写入：配额是按 origin 共享的，越界会抛 QuotaExceededError——
   // 不捕获的话 useEffect 冒泡到 ErrorBoundary，整个应用变错误页，
   // 而用户手里的"记录已保存"提示早就弹过了，实际一条都没存上
@@ -337,6 +333,8 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // 补水前绝不写回（第 128 轮）：空数组覆盖磁盘 = 数据全失
+    if (!hydrated) return;
     // 首次挂载跳过写回：数据刚从磁盘读出且未经迁移，写回是纯重复劳动，
     // 还会在开屏动画的窗口里同步 stringify 几 MB（第 72 轮流畅度）
     if (skipFirstPersistRef.current) {
@@ -344,7 +342,7 @@ export const App: React.FC = () => {
       return;
     }
     persistRecords(records.length > MAX_RECORDS ? records.slice(0, MAX_RECORDS) : records);
-  }, [records]);
+  }, [records, hydrated]);
 
   useEffect(() => {
     try {
@@ -387,6 +385,15 @@ export const App: React.FC = () => {
   useEffect(() => {
     void syncPet(records, userProfile);
   }, [records, userProfile]);
+  // 断记召回（第 124 轮）：missedDays ≥2 → 本周一条 21:00 温和提醒；恢复
+  // 记录自动撤销。App 打开时同步一次即可（排进系统后离线仍会响）
+  useEffect(() => {
+    void syncRecallNotify(records);
+  }, [records]);
+  // 断记召回（第 124 轮）：missedDays ≥2 → 本周一条 21:00 温和提醒；
+  // 恢复记录自动撤销。App 打开时同步一次即可（通知排进系统后离线仍会响）
+  useEffect(() => {
+  }, [records]);
 
   // Android 返回键治理（第 52 轮）——详见 hooks/appWatchers.ts
   useAndroidBackButton();
@@ -600,6 +607,11 @@ export const App: React.FC = () => {
   // TodayTab/AIAdvicePanel 已 memo（第 84 轮性能）：传给它们的所有回调
   // 必须稳定引用，否则 App 任意状态变化（toast/横幅/键盘）仍会击穿 memo
   const openActiveSleep = useCallback(() => setIsActiveSleepOpen(true), []);
+  // 晨间确认提醒（第 124 轮）：监测【开始】时排定（面板打开≠开始）；nightKey
+  // 与取消侧同用夜归属规则，构造上对齐
+  const handleMonitoringStart = useCallback(() => {
+    void scheduleMorningConfirmNotify(nightKeyOfBed(Date.now(), userProfile.chronotype === 'day' ? 'day' : 'night'));
+  }, [userProfile.chronotype]);
   const openManualLog = useCallback(() => setIsManualLogOpen(true), []);
   const openManualLogPrefilled = useCallback((p: { date: string; bedtime: string; wakeTime: string }) => {
     setManualLogPrefill(p);
@@ -621,7 +633,7 @@ export const App: React.FC = () => {
 
 
   // 导入回调（第 86 轮收口为稳定引用；SettingsTab 已 memo）
-  const handleImportRecords = useCallback((imported: SleepRecord[]) => {
+  const handleImportRecords = useCallback(async (imported: SleepRecord[]) => {
     // 与"最近一晚 = records[0]"的契约对齐：导入升序备份此前会让首页/
     // AI/趋势全部指向最老一条，且按下标裁剪时丢的恰好是最近的记录
     // records-only 备份只可能出自旧版导出（醒来日口径）→ 就地夜归属
@@ -660,6 +672,8 @@ export const App: React.FC = () => {
     markRecordDateMigrationDone();
     // 导入的记录按 v2 重算（第 105 轮）：备份可能出自 v1 设备——分数口径
     // 必须与本机一致，趋势/连胜才可比
+    // 动态引重打分（第 128 轮）：scoreMigration 不随入口静态打包
+    const { rescoreRecords } = await import('./utils/scoreMigration');
     const rescored = rescoreRecords(sorted, userProfile.chronotype ?? 'night');
     setUndoDeleted(null);
     setRecords(rescored);
@@ -794,6 +808,7 @@ export const App: React.FC = () => {
 
   // useCallback：作为 memo 分区（TodayTab）props 的依赖须稳定
   const handleSaveActiveSleep = useCallback((newRecord: SleepRecord) => {
+    cancelMorningConfirmNotify(newRecord.date);   // 晨间确认提醒随记录落库撤销（第 124 轮）
     setRecords((prev) => {
       const merged = mergeRecord(prev, newRecord);   // 夜睡按日一条、小睡可多次（D1 根治）
       return merged.sort(
@@ -815,6 +830,7 @@ export const App: React.FC = () => {
   }, [showToast]);
 
   const handleSaveManualRecord = useCallback((newRecord: SleepRecord) => {
+    cancelMorningConfirmNotify(newRecord.date);   // 补录当晚亦撤销已排的晨间提醒（第 124 轮）
     // 影子诊断：最终记录=真值。★ 语义按 recordSource 分流（第 42 轮 e2e 实证的
     // 覆盖 bug）：一键采纳提议（'usage'）的真值就是提议自己——只算【采纳率】；
     // 手动补录/修改（'manual'/'onetap'）才是独立真值，算命中率/误差。
@@ -1070,6 +1086,10 @@ export const App: React.FC = () => {
         </header>
 
         {/* 分区滑动轨道：五分区常驻，跟手拖拽 + 吸附过渡（滑动丝滑的关键） */}
+        {/* 补水闸（第 128 轮）：分区在 records 就位前不挂载——所有"首次挂载
+            基于 records 一次性判定"的逻辑（提议闸门 gate4、周报、图鉴等）
+            必须看到真数据。开屏覆盖这段空窗，视觉无差；补水是毫秒级。 */}
+        {hydrated && (
         <main className="flex-1 min-h-0 overflow-hidden">
           <div
             ref={trackRef}
@@ -1100,6 +1120,7 @@ export const App: React.FC = () => {
                       onOpenManualLogPrefilled={openManualLogPrefilled}
                       onUpdateProfile={handleUpdateProfile}
                       startSignal={sleepStartSignal}
+                      onMonitoringStart={handleMonitoringStart}
                       onNavigateToTrends={navigateToTrends}
                       onSaveRecord={handleSaveManualRecord}
                       theme={currentTheme}
@@ -1119,6 +1140,7 @@ export const App: React.FC = () => {
                       targetWakeTime={userProfile.targetWakeTime}
                       targetDurationHours={userProfile.targetDurationHours}
                       onUpdateProfile={handleUpdateProfile}
+                      onEditRecord={openEditRecord}
                     />
                   )}
 
@@ -1155,6 +1177,7 @@ export const App: React.FC = () => {
             ))}
           </div>
         </main>
+        )}
       </div>
 
       {/* Bottom Navigation: 打字时隐藏（键盘上方不再悬着导航条） */}
@@ -1180,7 +1203,8 @@ export const App: React.FC = () => {
       {/* Manual Sleep Log Modal */}
       <ManualLogModal
         isOpen={isManualLogOpen}
-        onClose={() => { setIsManualLogOpen(false); setManualLogPrefill(null); }}
+        onClose={() => { setIsManualLogOpen(false); setManualLogPrefill(null); setEditTarget(null); }}
+        editing={editTarget ?? undefined}
         onSaveRecord={handleSaveManualRecord}
         theme={currentTheme}
         targetDurationHours={userProfile.targetDurationHours}

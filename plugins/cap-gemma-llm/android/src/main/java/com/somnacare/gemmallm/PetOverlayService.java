@@ -1096,7 +1096,7 @@ public class PetOverlayService extends Service {
         int missed = sp.getInt(K_CTX_MISSED, 0);
         boolean lastNightRecorded = sp.getBoolean(K_CTX_LAST_NIGHT, false);
         int streak = sp.getInt(K_CTX_STREAK, 0);
-        whale.setContext(score, missed, lastNightRecorded);
+        whale.setContext(score, missed, lastNightRecorded, streak);
         // 连续达标里程碑（第 119 轮）：3/7/14 晚各播报一次（每日去重）；
         // 不发系统通知——应用内气泡是激励，通知栏是打扰（第 113 轮产品裁决）
         if (streak >= 3 && (streak == 3 || streak == 7 || streak == 14)

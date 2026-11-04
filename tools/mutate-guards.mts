@@ -333,6 +333,55 @@ const MUTATIONS: Mutation[] = [
     replace: 'const SNAP_MS = 300;',
     note: '吸附时长裸数字回潮 → 动效 token 断线（第 121 轮）',
   },
+  {
+    file: 'src/components/ManualLogModal.tsx',
+    guard: 'verify-record-edit.mts',
+    find: 'id: editing?.id ?? `manual-${Date.now()}`',
+    replace: 'id: `manual-${Date.now()}`',
+    note: '编辑保存丢幂等 id → 同夜出现两条记录（第 122 轮编辑功能倒退）',
+  },
+  {
+    file: 'src/components/ManualLogModal.tsx',
+    guard: 'verify-record-edit.mts',
+    find: "setSelectedHabits(editing.preSleepHabits ?? [])",
+    replace: 'setSelectedHabits([\'reading\', \'hot_bath\'])',
+    note: '编辑预填丢习惯字段 →「改一下」通路丢字段缺陷复发（第 122 轮）',
+  },
+  {
+    file: 'src/components/ActiveSleepModal.tsx',
+    guard: 'verify-data-honesty.mts',
+    find: 'smooth > 45',
+    replace: 'smooth >= 0',
+    note: '声事件采集条件归零 → 安静夜也编造响声事件（第 123 轮数据诚实）',
+  },
+  {
+    file: 'src/utils/careNotifications.ts',
+    guard: 'verify-notification-matrix.mts',
+    find: 'if (missed < 2) {',
+    replace: 'if (missed < 999) {',
+    note: '召回门槛失效 → 断更 1 景也发召回（第 124 轮通知疲劳）',
+  },
+  {
+    file: 'src/utils/careNotifications.ts',
+    guard: 'verify-notification-matrix.mts',
+    find: "localStorage.getItem(MORNING_KEY) === nightKey",
+    replace: 'false',
+    note: '晨间提醒每夜去重失效 → 同一晚重复轰炸（第 124 轮）',
+  },
+  {
+    file: '.github/workflows/build-apk.yml',
+    guard: 'verify-widget.mts',
+    find: 'android.appwidget.action.APPWIDGET_UPDATE',
+    replace: 'android.appwidget.action.XXX',
+    note: 'widget intent-filter 被改坏 → CI 构建的 APK 桌面组件无法放置（第 126–127 轮）',
+  },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/SleepWidgetProvider.java',
+    guard: 'verify-widget.mts',
+    find: 'String.valueOf(score) : "--"',
+    replace: 'String.valueOf(score) : "0"',
+    note: '无记录冒充 0 分 → 桌面小组件数据诚实破坏（第 126–127 轮）',
+  },
 ];
 
 const originals = new Map<string, string>();

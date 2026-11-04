@@ -12,6 +12,7 @@ import {
   Upload,
   Fish,
   MousePointerClick,
+  BellRing,
 } from 'lucide-react';
 import { ProfileUpdater, UserProfile, CustomAlarmSetting, CustomAIConfig, SleepRecord, SleepStageSegment } from '../types/sleep';
 import { AlarmManager } from './AlarmManager';
@@ -1030,6 +1031,30 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
         })()}
       </div>
 
+      {/* 3.5 关怀提醒（第 124 轮）：通知矩阵最后两块的开关（默认开，'0'=关） */}
+      <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl p-5 space-y-3`}>
+        <div className="flex items-center gap-2.5">
+          <div className={`w-9 h-9 rounded-2xl ${theme.accentText} flex items-center justify-center border ${theme.accentBorder} shrink-0`} style={{ background: `${theme.accentHex}1f` }}>
+            <BellRing className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-black text-white">关怀提醒</h3>
+            <p className="text-[10px] text-slate-400">只在原生应用生效；权限沿用首次询问纪律</p>
+          </div>
+        </div>
+        {([[
+          'somnacare_notify_morning',
+          '晨间确认提醒',
+          '夜间监测过夜后，次日 09:00 提醒你确认记录',
+        ], [
+          'somnacare_notify_recall',
+          '断记召回',
+          '连续 2 晚没记录时，本周一条 21:00 的温和提醒',
+        ]] as const).map(([key, label, desc]) => (
+          <NotifyToggle key={key} storageKey={key} label={label} desc={desc} theme={theme} />
+        ))}
+      </div>
+
       {/* 4. 大肥鱼桌宠悬浮窗（第 63 轮折叠化） */}
       <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
         <div className="flex items-center justify-between gap-3 p-5">
@@ -1280,4 +1305,29 @@ const SettingsTabInner: React.FC<SettingsTabProps> = ({
 
 // memo（第 86 轮性能）：1268 行的设置页此前随 App 任意状态变化全量重渲染；
 // props 已在 App 侧稳定（回调全部 useCallback）
+/** 关怀提醒开关（第 124 轮）：localStorage 直读直写（'0'=关，缺省=开）。
+ *  独立小组件避免两份 useState 样板；读侧在 careNotifications 里对齐。 */
+function NotifyToggle({ storageKey, label, desc, theme }: { storageKey: string; label: string; desc: string; theme: ThemeConfig }) {
+  const [on, setOn] = useState(() => {
+    try { return localStorage.getItem(storageKey) !== '0'; } catch { return true; }
+  });
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-[11px] font-bold text-white">{label}</p>
+        <p className="text-[10px] text-slate-400 leading-relaxed">{desc}</p>
+      </div>
+      <Switch
+        checked={on}
+        onChange={(next) => {
+          setOn(next);
+          try { localStorage.setItem(storageKey, next ? '1' : '0'); } catch { /* ignore */ }
+        }}
+        ariaLabel={`${label}开关`}
+        onClass={theme.accentBg}
+      />
+    </div>
+  );
+}
+
 export const SettingsTab = React.memo(SettingsTabInner);

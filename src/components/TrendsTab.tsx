@@ -20,6 +20,7 @@ import {
   Share2,
   Smartphone,
   Stethoscope,
+  Pencil,
 } from 'lucide-react';
 import {
   Area,
@@ -65,6 +66,8 @@ import { EmptyState, DurationValue } from './ui';
 interface TrendsTabProps {
   records: SleepRecord[];
   onDeleteRecord?: (id: string) => void;
+  /** 编辑既有记录（第 122 轮）：打开补录弹窗并全字段预填 */
+  onEditRecord?: (r: SleepRecord) => void;
   theme: ThemeConfig;
   /** 作息类型：使用信号按作息窗口采样，查询必须带上（否则拿夜窗数据当白窗用） */
   chronotype?: 'night' | 'day' | 'irregular';
@@ -107,6 +110,7 @@ const HISTORY_OVERSCAN = 4;
 const HistoryList = React.memo(function HistoryList({
   records,
   onDeleteRecord,
+  onEditRecord,
   textMuted,
   accentText,
   focusDate,
@@ -114,6 +118,7 @@ const HistoryList = React.memo(function HistoryList({
 }: {
   records: SleepRecord[];
   onDeleteRecord?: (id: string) => void;
+  onEditRecord?: (r: SleepRecord) => void;
   textMuted: string;
   accentText: string;
   focusDate?: string | null;
@@ -167,6 +172,21 @@ const HistoryList = React.memo(function HistoryList({
                     </div>
                   </div>
 
+                  {/* Edit Button（第 122 轮）：整条重录的唯一替代——预填全字段 */}
+                  {onEditRecord && (
+                    <button
+                      type="button"
+                      aria-label={`编辑 ${r.date} ${r.bedtime} 的睡眠记录`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditRecord(r);
+                      }}
+                      title="编辑此条记录"
+                      className={`p-2 ${textMuted} hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
                   {/* Delete Button */}
                   {onDeleteRecord && (
                     <button
@@ -201,6 +221,7 @@ const HistoryList = React.memo(function HistoryList({
 const TrendsTabInner: React.FC<TrendsTabProps> = ({
   records,
   onDeleteRecord,
+  onEditRecord,
   theme,
   chronotype = 'night',
   targetBedtime,
@@ -914,6 +935,7 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
               <HistoryList
                 records={records}
                 onDeleteRecord={onDeleteRecord}
+                onEditRecord={onEditRecord}
                 textMuted={textMuted}
                 accentText={accentText}
                 focusDate={focusDate}
@@ -1113,6 +1135,14 @@ const TrendsTabInner: React.FC<TrendsTabProps> = ({
                     {typeof calRec.latencyMinutes === 'number' && <> · 潜伏 {calRec.latencyMinutes} 分</>}
                     {typeof calRec.wakeCount === 'number' && <> · 夜醒 {calRec.wakeCount} 次</>}
                   </p>
+                  {calRec.soundEvents && calRec.soundEvents.length > 0 && (() => {
+                    const loudest = Math.max(...calRec.soundEvents.map((s) => s.decibel));
+                    return (
+                      <p className="text-[10px] font-mono text-slate-400" data-testid="sound-events-line">
+                        夜间声事件 {calRec.soundEvents.length} 次（最响 {loudest}dB）
+                      </p>
+                    );
+                  })()}
                 </div>
               ) : (
                 <p className="text-[10px] text-slate-400 leading-relaxed" data-testid="calendar-detail">

@@ -37,6 +37,9 @@ export interface BuildInput {
   userWakingMood?: SleepRecord['wakingMood'];
   userPreSleepHabits?: string[];
   userDreamNotes?: string;
+  /** 床头声事件（第 123 轮，Sleep Secret 灵感）：监测期 dB 超标连续段，
+   *  上限 50 条，由采集方负责去抖与封顶——构建器只透传。 */
+  userSoundEvents?: SleepRecord['soundEvents'];
   /** 既往记录（第 105 轮）：≥5 晚时打分目标改用【个人睡眠需求】（近 14 晚
    *  中位，v2 口径）；缺省回退 targetDurationHours。deep/REM 自 v2 起不参与计分。 */
   priorRecords?: SleepRecord[];
@@ -139,6 +142,9 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
     wakingMood: input.userWakingMood ?? (exactDurationMinutes < 30 ? 'tired' : 'refreshed'),
     preSleepHabits: input.userPreSleepHabits ?? [],
     ...(input.userDreamNotes ? { dreamNotes: input.userDreamNotes } : {}),
+    ...(input.userSoundEvents && input.userSoundEvents.length > 0
+      ? { soundEvents: input.userSoundEvents.slice(-50) }
+      : {}),
     stages: stagesForRecord,
     kind: deriveKind(effectiveStart.getHours(), input.chronotype) === 'nap' ? 'nap' : undefined,
     ...(input.recordSource ? { recordSource: input.recordSource } : {}),

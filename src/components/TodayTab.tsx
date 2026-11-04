@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useMinuteTick } from '../hooks/useMinuteTick';
 import {
   ChevronDown,
   ChevronRight,
@@ -36,6 +37,8 @@ interface TodayTabProps {
   onOpenActiveSleep: () => void;
   onOpenManualLog: () => void;
   onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
+  /** 监测开始回调（第 124 轮）：透传 OneTap，App 排晨间确认通知 */
+  onMonitoringStart?: () => void;
   onNavigateToTrends?: () => void;
   onSaveRecord?: (record: SleepRecord) => void;
   onUpdateProfile: (updated: ProfileUpdater) => void;
@@ -66,6 +69,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
   onOpenActiveSleep,
   onOpenManualLog,
     onOpenManualLogPrefilled,
+    onMonitoringStart,
   onNavigateToTrends,
   onSaveRecord,
   onUpdateProfile,
@@ -83,11 +87,8 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
     [records]
   );
   // 昼夜双布局（第 57 轮）：晚上把"开始/音景/目标"放前面，昨晚评分折叠到最后
-  const [phaseNow, setPhaseNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = window.setInterval(() => setPhaseNow(new Date()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
+  // 分钟滴答（第 129 轮）：共享单一定时器，不再自挂 interval
+  const phaseNow = useMinuteTick();
   const dayPhase = getDayPhase(phaseNow);
   const isEvening = dayPhase === 'evening' || dayPhase === 'late';
   const [sleepExpanded, setSleepExpanded] = useState(() => !isEvening);
@@ -132,11 +133,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
   // 早上自救助手（第 56 轮）：自动档 + 8:00–13:00 + 昨晚没记录 + 提议卡也没出
   // → 给一个直达链路自检的入口，而不是让用户自己去偏好页深处找
   const [proposalPresence, setProposalPresence] = useState(false);
-  const [nowHour, setNowHour] = useState(() => new Date().getHours());
-  useEffect(() => {
-    const t = window.setInterval(() => setNowHour(new Date().getHours()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
+  const nowHour = phaseNow.getHours();
   const autoRescue = (() => {
     if (!onOpenAutoCheck || !isNativePlatform()) return false;
     if ((userProfile.sleepRecordMode ?? 'manual') !== 'auto') return false;
@@ -192,7 +189,7 @@ const TodayTabInner: React.FC<TodayTabProps> = ({
     <div className={`flex flex-col gap-4 pb-28 ${theme.textPrimary}`}>
       {/* 1. Primary One-Tap Sleep Tracker */}
       <div style={{ order: sectionOrder.tracker }} className="space-y-4">
-      {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} onProposalPresenceChange={setProposalPresence} />}
+      {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} onMonitoringStart={onMonitoringStart} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} onProposalPresenceChange={setProposalPresence} />}
 
       {autoRescue && (
         <button

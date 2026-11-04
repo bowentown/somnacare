@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useMinuteTick } from '../hooks/useMinuteTick';
 import { SleepRecord, UserProfile } from '../types/sleep';
 import { nightsOnly } from '../utils/recordFilter';
 import { computeSleepDebtRatio } from '../utils/sleepScore';
@@ -49,11 +50,7 @@ export const PondCard: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // 深夜（22:00–06:00）只留月光：不管主题是晴日还是黄昏，入夜后统一到月夜；
   // 这是氛围，不是数据。每分钟走一次，跨过 22 点自动渐变
-  const [nowHour, setNowHour] = useState(() => new Date().getHours());
-  useEffect(() => {
-    const t = window.setInterval(() => setNowHour(new Date().getHours()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
+  const nowHour = useMinuteTick().getHours();   // 共享分钟滴答（第 129 轮）
   const isLateNight = nowHour >= 22 || nowHour < 6;
 
   // 数据联动：欠觉（近 7 夜平均时长不足目标 55%）→ 池塘转阴天；

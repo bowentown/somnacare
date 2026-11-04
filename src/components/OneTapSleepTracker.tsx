@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useMinuteTick } from '../hooks/useMinuteTick';
 import { createPortal } from 'react-dom';
 import { Moon, Sun, AlertTriangle, Zap, Coffee } from 'lucide-react';
 import { toLocalDateString, localDateOffset } from '../utils/dateUtils';
@@ -37,13 +38,15 @@ interface OneTapSleepTrackerProps {
   userProfile?: UserProfile;
   /** "改一下"通路：请求打开预填好的手动补录弹窗 */
   onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
+  /** 监测开始回调（第 124 轮）：App 用来排晨间确认通知 */
+  onMonitoringStart?: () => void;
   /** 记录方式（手动/自动）等卡片内偏好持久化 */
   onUpdateProfile?: (updated: Partial<UserProfile>) => void;
   /** 提议卡是否在场（首页自救助手据此避让） */
   onProposalPresenceChange?: (visible: boolean) => void;
 }
 
-export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, userProfile, onUpdateProfile, onProposalPresenceChange }) => {
+export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, onMonitoringStart, userProfile, onUpdateProfile, onProposalPresenceChange }) => {
   const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
     const saved = localStorage.getItem('somnacare_bedtime_start');
     if (!saved) return null;
@@ -77,11 +80,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
   const recordMode = userProfile?.sleepRecordMode ?? 'manual';
   const setRecordMode = (m: 'manual' | 'auto') => onUpdateProfile?.({ sleepRecordMode: m });
   // 时段自适应（第 56 轮）：早上主按钮是补昨晚，午后是小睡，晚上才是开始监测
-  const [phaseNow, setPhaseNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = window.setInterval(() => setPhaseNow(new Date()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
+  const phaseNow = useMinuteTick();   // 共享分钟滴答（第 129 轮）
   const dayPhase = getDayPhase(phaseNow);
   // 时段自适应只对夜间作息成立：白天主睡者的"午后"是主睡不是小睡，
   // 维持原按钮语义（开始监测），避免用错的时段标签误导
@@ -425,6 +424,7 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
     const now = Date.now();
     setSleepStartTime(now);
     try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
+    onMonitoringStart?.();   // 晨间确认提醒随监测开始排定（第 124 轮）
   };
 
   // 早/午后主按钮：直接打开预填好的补录（没有预填通路时退回开始监测）

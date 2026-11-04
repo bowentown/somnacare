@@ -7,6 +7,11 @@
  * 醒日偏移 2 档）断言：旧口径记录（date=醒日）经迁移得到的夜归属键，
  * 与按床时刻直接计算 nightKeyOfBed（床日锚定）完全一致。
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
@@ -81,6 +86,20 @@ check(`迁移与 nightKeyOfBed 全组合一致（${scanned} 组，含床≥12 �
   check('反向自检：旧规则（床≥12 恒减一天）在当天醒组合上被检出', legacyMismatch > 0,
     `${legacyMismatch} 组不一致`);
 }
+
+// ── 启动链补水（第 128 轮）：迁移/重打分逻辑整体在 recordsHydrate，写回有 hydrated 闸 ──
+const appSrc = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf-8');
+const hydr = readFileSync(join(ROOT, 'src', 'utils', 'recordsHydrate.ts'), 'utf-8');
+check('补水：App records 初始为空数组（首帧零解析）且 dynamic import hydrate 模块',
+  appSrc.includes('useState<SleepRecord[]>([])')
+  && appSrc.includes("import('./utils/recordsHydrate')"));
+check('补水：写回 effect 有 hydrated 闸（空数组绝不覆盖磁盘）',
+  appSrc.includes('if (!hydrated) return;') && appSrc.includes('[records, hydrated]);'));
+check('补水：迁移语义完整（夜归属迁移 + 跳过标记 + rescore 全在 hydrate 模块）',
+  hydr.includes('maybeMigrateRecordDates') && hydr.includes('recordDateMigrationDone')
+  && hydr.includes('rescoreRecordsIfNeeded'));
+check('反向自检：写回闸被剥后判据不再成立',
+  (() => { const d = appSrc.replace('if (!hydrated) return;', ''); return !d.includes('if (!hydrated) return;'); })());
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——迁移/夜归属键不一致`);
