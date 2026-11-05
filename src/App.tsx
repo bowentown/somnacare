@@ -442,6 +442,9 @@ export const App: React.FC = () => {
   // ===== 分区滑动轨道：跟手拖拽（Pointer Events 统一鼠标/触摸）=====
   // 关键决策：不用 touch-action 限制浏览器滚动——那会连带禁掉子元素（AI 提示词行）
   // 的原生横滑。改为在"锁定横向"的瞬间 preventDefault 夺权，纵向手势原样交还浏览器。
+  // ★ 依赖 [hydrated]（第 130 轮修正）：轨道整体在补水闸 {hydrated && ...} 之内，
+  //   首帧挂载时 trackRef.current 还是 null——本 effect 若只跑一次（[]）会早退且
+  //   永不重跑，指针监听器全部落空（v1.40.0 五分区滑动手势全死的根因）。
   const paneWRef = useRef(0);
   const trackPosRef = useRef(0);
   const SNAP_MS = MOTION.snapMs;   // 动效 token（第 121 轮）
@@ -582,16 +585,20 @@ export const App: React.FC = () => {
       window.removeEventListener('resize', measure);
       ro.disconnect();
     };
-  }, []);
+    // hydrated 翻转 → 轨道真挂载 → 此刻才接线（首挂载时为 null 只能早退，见上）
+  }, [hydrated]);
 
   // activeTab 变化（含底栏点击与滑动吸附）→ 轨道带缓动滑到目标页
   // 用 useLayoutEffect：随同浏览器绘制执行，消除"切页先停一帧再动"的顿挫
+  // ★ hydrated 也在依赖里（第 130 轮）：底栏在闸外首帧可点——若用户在补水
+  //   完成前切页，本 effect 跑时轨道还不存在（applyTrack 空转）；轨道挂载后
+  //   必须按当前 activeTab 补一次落位，否则"底栏亮着趋势、视口停在今天"。
   useLayoutEffect(() => {
     const idx = TAB_ORDER.indexOf(activeTab);
     idxRef.current = idx;
     if (dragRef.current) return; // 拖拽中由手势层自行控制轨道，勿争抢
     applyTrack(-idx * (paneWRef.current || window.innerWidth), true, snapMsRef.current);
-  }, [activeTab]);
+  }, [activeTab, hydrated]);
 
   // toast 计时器收口：先清旧定时器再设新的——并存的两条定时器互不知情，
   // 后弹的短提示会被先前长提示的回调提前收掉

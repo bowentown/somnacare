@@ -1741,3 +1741,66 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
 
   expect(errors).toEqual([]);
 });
+
+// 旅程38 分区跟手滑动（第 130 轮）：v1.40.0 的补水闸 {hydrated && ...} 把轨道
+// 从首帧挂载里拿走，而手势层 effect 是 [] 依赖只跑一次——首帧 trackRef 为 null
+// 早退且永不重跑，指针监听器全部落空，五分区滑动全死。本旅程是它的行为级回归锁：
+// ① 纵向滚轮照常滚（方向锁定不劫持垂直手势）；② 横向拖拽 1:1 跟手（transform
+// 实时位移）+ 松手吸附翻页；③ 反向拖回。起点坐标在运行时探测安全点——
+// data-no-swipe 控件（滑杆/开关/图表拖拽区）本来就该绕开，这正是手势层的契约。
+test('旅程38 分区跟手滑动：横向拖拽翻页，纵向滚动不劫持', async ({ page }) => {
+  const errors = watchErrors(page);
+  await seed(page, [mkRecord(dstr(-1), '23:10', '07:10', 86)], NIGHT_SCHEMA);
+  await openAt(page, 21, 0);
+
+  const nav = page.getByRole('navigation', { name: '主标签栏' });
+  const navBtn = (name: string) => nav.getByRole('button', { name });
+  await expect(navBtn('睡眠')).toHaveAttribute('aria-current', 'page');
+
+  // 在当前分区找一个"手势层会接管"的安全起点：不落在免滑控件/可点击元素上。
+  // dir='left' 表示要向左翻下一页（起点需靠右侧留出拖拽行程）
+  const safePoint = (dir: 'left' | 'right') => page.evaluate((d) => {
+    const SKIP = 'input, textarea, select, [data-no-swipe], [data-native-hscroll], button, a, [role="button"]';
+    const xs = d === 'left' ? [345, 300, 250, 200, 150] : [35, 60, 100, 150, 200];
+    for (const y of [200, 300, 400, 500, 600, 700, 160, 760]) {
+      for (const x of xs) {
+        const el = document.elementFromPoint(x, y);
+        if (el && !el.closest(SKIP)) return { x, y };
+      }
+    }
+    return null;
+  }, dir);
+
+  // ① 纵向滚轮：分区自己的滚动条照常走（方向锁定只夺横向手势）
+  await page.mouse.move(195, 400);
+  await page.mouse.wheel(0, 320);
+  await page.waitForTimeout(200);
+  const scrolled = await page.evaluate(() => document.querySelector('.swipe-pane')?.scrollTop ?? -1);
+  expect(scrolled).toBeGreaterThan(10);
+
+  // ② 横向拖拽：today → trends。先跟手（transform 实时位移），松手后吸附翻页
+  const p1 = await safePoint('left');
+  expect(p1).not.toBeNull();
+  await page.mouse.move(p1!.x, p1!.y);
+  await page.mouse.down();
+  await page.mouse.move(p1!.x - 130, p1!.y, { steps: 6 });
+  const tf = await page.evaluate(() => document.querySelector('.swipe-track')?.getAttribute('style') ?? '');
+  expect(tf).toMatch(/translate3d\(-\d+px/);   // 跟手中：轨道已经拖出实时位移
+  await page.mouse.move(p1!.x - 280, p1!.y, { steps: 8 });
+  await page.mouse.up();
+  await expect(navBtn('趋势')).toHaveAttribute('aria-current', 'page', { timeout: 5000 });
+  // 趋势分区内容真挂载（懒 chunk 加载窗口给足）
+  await expect(page.getByTestId('sleep-calendar')).toBeVisible({ timeout: 8000 });
+
+  // ③ 反向拖拽：trends → today，翻页可逆
+  const p2 = await safePoint('right');
+  expect(p2).not.toBeNull();
+  await page.mouse.move(p2!.x, p2!.y);
+  await page.mouse.down();
+  await page.mouse.move(p2!.x + 280, p2!.y, { steps: 12 });
+  await page.mouse.up();
+  await expect(navBtn('睡眠')).toHaveAttribute('aria-current', 'page', { timeout: 5000 });
+  await expect(page.getByText('梦境漫游').first()).toBeVisible({ timeout: 8000 });
+
+  expect(errors).toEqual([]);
+});

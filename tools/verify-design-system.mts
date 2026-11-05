@@ -141,6 +141,28 @@ ok('时钟：四个分钟级组件全部改用共享滴答（不再各自 setInt
     !doctored.includes('useMinuteTick().getHours()'));
 }
 
+// ── 分区滑动手势层（第 130 轮）：接线/落位必须随补水闸重跑 ──
+// v1.40.0 恶性回归的根因：轨道整体在 {hydrated && ...} 之内，而手势 effect
+// 是 [] 依赖只跑一次——首帧 trackRef 为 null 早退且永不重跑，指针监听器
+// 全部落空，五分区滑动全死。同源的落位竞态：底栏在闸外可点，切页发生在
+// 补水前则轨道挂载后位置错乱。行为级锁在 e2e 旅程38；这里锁结构前提。
+const appSwipeSrc = read('src/App.tsx');
+ok('滑动：轨道在补水闸之内，且手势层接线依赖 [hydrated]',
+  appSwipeSrc.includes('{hydrated && (')
+  && appSwipeSrc.includes("el.addEventListener('pointerdown', onDown)")
+  && appSwipeSrc.includes('}, [hydrated]);'));
+ok('滑动：轨道落位 layout effect 也随补水闸重跑（闸前切页后补落位）',
+  appSwipeSrc.includes('applyTrack(-idx * (paneWRef.current || window.innerWidth), true, snapMsRef.current);')
+  && appSwipeSrc.includes('}, [activeTab, hydrated]);'));
+{
+  const doctoredSwipe = appSwipeSrc.replace('}, [hydrated]);', '}, []);');
+  ok('反向自检：手势层退回 [] 依赖（v1.40.0 缺陷形态）后判据不再成立',
+    !doctoredSwipe.includes('}, [hydrated]);'));
+  const doctoredSnap = appSwipeSrc.replace('}, [activeTab, hydrated]);', '}, [activeTab]);');
+  ok('反向自检：落位 effect 剥掉 hydrated 依赖后判据不再成立',
+    !doctoredSnap.includes('}, [activeTab, hydrated]);'));
+}
+
 // ── 对外形象：分享卡 canvas 接品牌字体（第 118 轮）──
 const shareCard = read('src/utils/sleepShareCard.ts');
 ok('对外形象：分享卡大数字走 Space Grotesk（canvas 不吃 CSS，显式 fonts.load 预热）',

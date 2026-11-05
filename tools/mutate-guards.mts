@@ -382,6 +382,20 @@ const MUTATIONS: Mutation[] = [
     replace: 'String.valueOf(score) : "0"',
     note: '无记录冒充 0 分 → 桌面小组件数据诚实破坏（第 126–127 轮）',
   },
+  {
+    file: 'src/App.tsx',
+    guard: 'verify-design-system.mts',
+    find: '}, [hydrated]);',
+    replace: '}, []);',
+    note: '滑动手势层退回 [] 依赖 → 补水闸后轨道挂载但监听器永不接线，五分区滑动全死（v1.40.0 原始回归，第 130 轮）',
+  },
+  {
+    file: 'src/App.tsx',
+    guard: 'verify-design-system.mts',
+    find: '}, [activeTab, hydrated]);',
+    replace: '}, [activeTab]);',
+    note: '轨道落位不随补水闸重跑 → 闸前底栏切页后视口与底栏错位（第 130 轮）',
+  },
 ];
 
 const originals = new Map<string, string>();
