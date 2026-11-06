@@ -1453,13 +1453,16 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
 // 旅程34 科学建议作息（第 114 轮）：需求+MSFsc → 一键采用，目标/提醒/月历入口同源
 test('旅程34 科学建议作息：需求卡一键采用 → 目标落库双入口同源', async ({ page }) => {
   const errors = watchErrors(page);
-  // 近 12 晚：睡到自然醒的夜（醒来日=周末）给 02:30→10:30，工作日 22:50→06:50
-  //（全 8h）→ 需求个人化 480、MSFsc = 自由日睡眠中点 06:30 → 建议 = 01:00–09:00
-  // ≠ 当前 23:30/07:30。注意夜归属：记录 D 的醒来日是 D+1，自由日按 D+1 判。
+  // 近 21 晚（恰好 3 个完整周）：睡到自然醒的夜（醒来日=周末）给 02:30→10:30，
+  // 工作日 22:50→06:50（全 8h）→ 需求个人化 480（取最近 14 晚中位数）、
+  // MSFsc = 自由日睡眠中点 06:30 → 建议 = 01:00–09:00 ≠ 当前 23:30/07:30。
+  // ★ 21 而非 12：MSFsc 要求自由日 ≥3——任意 12 晚窗口在周末前后只有 2 个
+  //   周末醒来日（2026-11-06 实测挂）；21 个连续醒来日=每个星期几恰好 3 个，
+  //   日期鲁棒。注意夜归属：记录 D 的醒来日是 D+1，自由日按 D+1 判。
   const base = new Date();
   base.setHours(21, 0, 0, 0);
   const recs: unknown[] = [];
-  for (let i = 1; i <= 12; i++) {
+  for (let i = 1; i <= 21; i++) {
     const wake = new Date(base);
     wake.setDate(wake.getDate() - i + 1);
     const free = wake.getDay() === 0 || wake.getDay() === 6;
@@ -1786,8 +1789,25 @@ test('旅程38 分区跟手滑动：横向拖拽翻页，纵向滚动不劫持',
   await page.mouse.move(p1!.x - 130, p1!.y, { steps: 6 });
   const tf = await page.evaluate(() => document.querySelector('.swipe-track')?.getAttribute('style') ?? '');
   expect(tf).toMatch(/translate3d\(-\d+px/);   // 跟手中：轨道已经拖出实时位移
+  // 手势闸门（第 131 轮）：拖拽中 <html> 挂 gesture-live——分钟滴答/池塘/
+  // 极光+氛围光全部让路；松手后复位。闸门打在 html 上，React 重渲染冲不掉
+  const gate = await page.evaluate(() => {
+    const cs = (sel: string, prop: string) => {
+      const el = document.querySelector(sel);
+      return el ? getComputedStyle(el).getPropertyValue(prop) : 'absent';
+    };
+    return {
+      live: document.documentElement.classList.contains('gesture-live'),
+      tintHidden: cs('.ambient-tint', 'visibility'),
+      auroraPaused: cs('.animate-aurora-drift', 'animation-play-state'),
+    };
+  });
+  expect(gate.live).toBe(true);
+  expect(gate.tintHidden).toBe('hidden');
+  expect(gate.auroraPaused).toBe('paused');
   await page.mouse.move(p1!.x - 280, p1!.y, { steps: 8 });
   await page.mouse.up();
+  expect(await page.evaluate(() => document.documentElement.classList.contains('gesture-live'))).toBe(false);
   await expect(navBtn('趋势')).toHaveAttribute('aria-current', 'page', { timeout: 5000 });
   // 趋势分区内容真挂载（懒 chunk 加载窗口给足）
   await expect(page.getByTestId('sleep-calendar')).toBeVisible({ timeout: 8000 });

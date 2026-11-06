@@ -190,11 +190,12 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
   const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
   // 判据 = 阈值由 density 换算而来（写成绝对 px 即失去密度无关性）
   const thresholdDensityAware =
-    /float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(view)
+    (/float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(view)
+      || /float threshold = 0\.5f \* density;/.test(view))   // 第 133 轮：density 构造时缓存（渲染线程不碰 Resources）
     && /Math\.abs\(shift - lastDrawnMotion\) >= threshold/.test(view);
   const checks: Array<[string, boolean]> = [
-    ['桌宠：内容驱动重绘（tick 先判 shouldRedraw 再 invalidate）',
-      /if \(shouldRedraw\(\)\) invalidate\(\);/.test(view)],
+    ['桌宠：内容驱动重绘（渲染循环先判 shouldRedraw 再出帧，第 133 轮起为 drawFrame）',
+      /if \(shouldRedraw\(\)\) drawFrame\(\);/.test(view)],
     ['桌宠：不可见位移阈值密度无关（0.5dp × density，绝对 px 会让 3×/4× 屏重绘率回升）',
       thresholdDensityAware],
     ['桌宠：拖拽/说话保持满节拍（跟手优先）',
@@ -235,7 +236,8 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
   const svc = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
   const hwGate =
     /opts\.inPreferredConfig = Bitmap\.Config\.HARDWARE;/.test(view)
-    && /SDK_INT >= 26/.test(view)
+    // 闸门行必须在场（第 133 轮收紧）：只查指纹挡不住"整行换成 if(true)"
+    && /if \(android\.os\.Build\.VERSION\.SDK_INT >= 26 && hwApp\) \{/.test(view)
     && /FLAG_HARDWARE_ACCELERATED\) != 0/.test(view);
   const hiddenStop =
     /if \(visible\) svc\.whale\.start\(\); else svc\.whale\.stop\(\);/.test(svc)
@@ -253,15 +255,64 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
   }
   // 反向自检：把双重闸门改成无条件 HARDWARE 必须被同一判据抓住
   {
-    const doctored = view.replace(
-      'if (android.os.Build.VERSION.SDK_INT >= 26 && hwApp) {',
-      'if (true) {',
-    );
+    // 第 133 轮起 SDK_INT>=26 出现两处（load 闸 + drawFrame 硬件画布）——
+    // 反向自检必须全局抹掉，否则 drawFrame 残留会让判据假绿
+    const doctored = view.split('android.os.Build.VERSION.SDK_INT >= 26').join('true');
     const stillCaught =
       !(/opts\.inPreferredConfig = Bitmap\.Config\.HARDWARE;/.test(doctored)
         && /SDK_INT >= 26/.test(doctored)
         && /FLAG_HARDWARE_ACCELERATED\) != 0/.test(doctored));
     console.log(`${stillCaught ? '✓' : '✗'} 反向自检：无条件的 HARDWARE 解码可被检出`);
+    if (!stillCaught) process.exitCode = 1;
+  }
+}
+
+// ── 渲染架构治本（第 133 轮）：桌宠独立渲染线程 + 广告扫描后台化 + 换肤异步解码 ──
+//    用户实测"桌宠有时候卡顿、切动作闪帧"的根因：View+invalidate 主线程管线
+//    与 AdSkip 400ms 整树扫描、WebView 回调同 Looper 串行，丢拍=跳帧，溶解
+//    180ms 里丢拍=渐变跳没（闪）。三处一起治：动画不再受主线程忙闲影响。
+{
+  const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  const svc = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
+  const adskip = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java', import.meta.url), 'utf8');
+
+  const checks: Array<[string, boolean]> = [
+    ['桌宠：SurfaceView + SurfaceHolder.Callback（脱离主线程 invalidate 管线）',
+      view.includes('extends SurfaceView implements SurfaceHolder.Callback')
+      && view.includes('surfaceCreated') && view.includes('surfaceDestroyed')],
+    ['桌宠：专用渲染线程（whale-render HandlerThread，loopAlive 防双排）',
+      view.includes('new HandlerThread("whale-render")') && view.includes('loopAlive')],
+    ['桌宠：硬件画布出帧（HARDWARE 位图只能进 lockHardwareCanvas）+ 释放配对',
+      view.includes('lockHardwareCanvas') && view.includes('unlockCanvasAndPost')],
+    ['桌宠：每帧清透明（Surface 画布内容未定义，清与画同 buffer 无可见空窗）',
+      view.includes('PorterDuff.Mode.CLEAR')],
+    ['桌宠：状态推进留在主线程（渲染线程只读，ambientTick 归位块在场）',
+      view.includes('小动作被外部打断后落到未知状态 → 归位')
+      && !/invalidate\(\)/.test(view)],
+    ['桌宠：换肤异步解码（predecodeAsync 后台解 → showPet 消费，主线程零解码）',
+      view.includes('predecodeAsync') && view.includes('decodeSheet')
+      && svc.includes('WhaleGirlView.predecodeAsync')
+      && svc.includes('pendingSkinBitmaps')],
+    ['广告跳过：整树扫描后台化（adskip-scan 线程 + 单飞闸 + 点击记账回主线程）',
+      adskip.includes('new HandlerThread("adskip-scan")')
+      && adskip.includes('scanInFlight')
+      && adskip.includes('if (scan == null || scanInFlight) return;')
+      && adskip.includes('private void executeHit(Candidate best')],
+  ];
+  for (const [name, okFlag] of checks) {
+    console.log(`${okFlag ? '✓' : '✗'} ${name}`);
+    if (!okFlag) process.exitCode = 1;
+  }
+  // 反向自检
+  {
+    const noThread = view.replace('new HandlerThread("whale-render")', 'new Handler(getMainLooper())');
+    console.log(`${!noThread.includes('new HandlerThread("whale-render")') && !/whale-render/.test(noThread) ? '✓' : '✗'} 反向自检：渲染线程退回主 Handler 后判据不再成立`);
+    if (/whale-render/.test(noThread)) process.exitCode = 1;
+    const GATE = 'if (scan == null || scanInFlight) return;   // 单飞：同步路径天然串行，异步后由闸门等价';
+    const noGate = adsplit(adskip);
+    function adsplit(x: string): string { return x.replace(GATE, 'if (scan == null) return;'); }
+    const stillCaught = !noGate.includes('if (scan == null || scanInFlight) return;');
+    console.log(`${stillCaught ? '✓' : '✗'} 反向自检：单飞闸接线被剥后判据不再成立`);
     if (!stillCaught) process.exitCode = 1;
   }
 }

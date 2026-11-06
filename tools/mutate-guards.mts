@@ -396,6 +396,55 @@ const MUTATIONS: Mutation[] = [
     replace: '}, [activeTab]);',
     note: '轨道落位不随补水闸重跑 → 闸前底栏切页后视口与底栏错位（第 130 轮）',
   },
+  {
+    file: 'src/App.tsx',
+    guard: 'verify-design-system.mts',
+    find: "document.documentElement.classList.add('gesture-live');",
+    replace: '',
+    note: '手势闸门开闸接线被剥 → 拖拽期间分钟滴答/池塘/常驻动效不再让路，跟手帧被抢（第 131 轮）',
+  },
+  {
+    file: 'src/hooks/useMinuteTick.ts',
+    guard: 'verify-design-system.mts',
+    find: 'if (isGestureLive()) return; // 拖拽帧让路，下一拍按真实分钟补上',
+    replace: '',
+    note: '分钟滴答不再给拖拽让路 → 60s 整分区重渲染脉冲撞进跟手帧（第 131 轮）',
+  },
+  {
+    file: 'src/pond/bootstrap.ts',
+    guard: 'verify-design-system.mts',
+    find: 'if (paused || isGestureLive()) {',
+    replace: 'if (paused) {',
+    note: '池塘不给拖拽让路 → 拖拽头半程 WebGL 30fps 与跟手帧竞争（第 131 轮）',
+  },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java',
+    guard: 'verify-pet-behavior.mts',
+    find: 'new HandlerThread("whale-render")',
+    replace: 'new Handler(Looper.getMainLooper())',
+    note: '桌宠渲染退回主线程 → 与广告扫描/WebView 回调同 Looper 串行，丢拍=跳帧（v1.40 缺陷形态，第 133 轮治本对象）',
+  },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java',
+    guard: 'verify-pet-behavior.mts',
+    find: 'if (scan == null || scanInFlight) return;   // 单飞：同步路径天然串行，异步后由闸门等价',
+    replace: 'if (scan == null) return;',
+    note: '扫描单飞闸被剥 → 事件风暴下后台扫描任务堆积（第 133 轮）',
+  },
+  {
+    file: 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java',
+    guard: 'verify-pet-behavior.mts',
+    find: 'WhaleGirlView.predecodeAsync(this, want, (map) -> {',
+    replace: '// predecode removed',
+    note: '换肤退回主线程同步解码 → 重建瞬间 10MB 解码长帧（v1.40 缺陷形态，第 133 轮）',
+  },
+  {
+    file: 'src/utils/sleepScore.ts',
+    guard: 'verify-regularity.mts',
+    find: 'const mid = (midDate.getTime() - localMid) / 60000;',
+    replace: 'const mid = (midDate.getTime() - localMid) / 60000 + (free.length % 2 === 0 ? 720 : 0);',
+    note: 'MSFsc 偶数对自由日 +12h 偏移回归（历元均值混入窗口中心日期的半天偏移，第 134 轮修正对象）',
+  },
 ];
 
 const originals = new Map<string, string>();

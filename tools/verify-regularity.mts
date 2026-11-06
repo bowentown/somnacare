@@ -230,6 +230,17 @@ const check = (name: string, ok: boolean, detail = '') => {
       .concat(recs.filter((r) => r.bedtime !== '00:00'));
     check('MSFsc 门槛：自由日样本 < 3 → null',
       computeMSFsc(short as any, 'night', NOW, 28) === null);
+
+    // 偶数对自由日不得偏移 MSFsc（第 134 轮修正的回归锁）：6 个自由日（3 对
+    // 周六+周日）时历元均值日期落【正午】→ 整体 +12h（实测 MSFsc 18:30 而非
+    // 06:30）。钟点空间均值必须与自由日数量/日期分布完全解耦。
+    const sixFree = [4, 5, 11, 12, 18, 19].map((i) => mkNeedNight(i, 540))
+      .concat([-1, 0, 1, 2, 3].map((i) => mkNeedNight(i, 420)))
+      .map((r, i) => ({ ...r, id: 's' + i, bedtime: r.durationMinutes === 540 ? '00:00' : '23:00', wakeTime: r.durationMinutes === 540 ? '09:00' : '07:00' }));
+    const s6 = computeMSFsc(sixFree as any, 'night', NOW, 28);
+    check('MSFsc：偶数对自由日（6 个）钟点均值不偏移（04:30 校正后 05:00）',
+      s6 !== null && s6.label === '05:00' && s6.freeSamples === 6,
+      `label=${s6?.label} free=${s6?.freeSamples}`);
   }
 }
 

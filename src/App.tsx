@@ -13,6 +13,7 @@ import { OnboardingCard } from './components/OnboardingCard';
 import { useModalA11y } from './utils/modalA11y';
 import { hapticConfirm, hapticPage, tapTick } from './utils/haptics';
 import { MOTION } from './utils/motionTokens';
+import { setGestureLive } from './utils/gestureGate';
 import { cancelMorningConfirmNotify, scheduleMorningConfirmNotify, syncRecallNotify } from './utils/careNotifications';
 import { nightKeyOfBed } from './utils/dateUtils';
 import { unmaskProfileSecrets, maskProfileSecrets } from './utils/secretMask';
@@ -165,20 +166,39 @@ export const App: React.FC = () => {
     if (i > 0) mountPane(TAB_ORDER[i - 1]);
     if (i >= 0 && i < TAB_ORDER.length - 1) mountPane(TAB_ORDER[i + 1]);
   }, [mountPane]);
+  // 补水闸状态（第 128 轮；第 132 轮起预热排队也以它为闸，故声明在其前）
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    if (!hydrated) return; // 补水前分区内容根本不渲染（见轨道闸），预热无意义
     mountPane(activeTab);
-    // 邻居预热（第 129 轮）：改为空闲预热——recharts/three 等重 chunk 在
-    // 浏览器空闲时才加载，不与首帧/开屏动画抢主线程；3s 兜底保证最终加载。
-    // 用户提前滑动时手势开始那一刻仍立即预热（见轨道 onPointerDown）
+    // 邻居预热（第 129 轮空闲预热；第 132 轮顺滑化）：recharts/three 等重
+    // chunk 在浏览器空闲时才加载。★ 开屏预算：初始这一次要等开屏撤除
+    // （splashMinMs + splashFadeMs）后再排队——开屏头几秒的主线程让给
+    // splash 动画与补水，不再出现"一进 App 就卡"；此后每次切页立即排队。
+    // 用户提前滑动时落位/松手那一刻仍会预热（见 finish 与轨道落位）。
     const ric = (window as any).requestIdleCallback as
       | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
-    const idleId = ric ? ric(() => preheatNeighbors(activeTab), { timeout: 3000 }) : 0;
-    const t = ric ? 0 : window.setTimeout(() => preheatNeighbors(activeTab), 2600);
-    return () => {
-      if (ric) (window as any).cancelIdleCallback?.(idleId);
-      if (t) window.clearTimeout(t);
+    const kickoff = (): (() => void) => {
+      const idleId = ric ? ric(() => preheatNeighbors(activeTab), { timeout: 3000 }) : 0;
+      const t = ric ? 0 : window.setTimeout(() => preheatNeighbors(activeTab), 300);
+      return () => {
+        if (ric) (window as any).cancelIdleCallback?.(idleId);
+        if (t) window.clearTimeout(t);
+      };
     };
-  }, [activeTab, mountPane, preheatNeighbors]);
+    const waitMs = Math.max(0, MOTION.splashMinMs + MOTION.splashFadeMs - performance.now());
+    let cancelInner: (() => void) | null = null;
+    let outer = 0;
+    if (waitMs > 0) {
+      outer = window.setTimeout(() => { cancelInner = kickoff(); }, waitMs);
+    } else {
+      cancelInner = kickoff();
+    }
+    return () => {
+      if (outer) window.clearTimeout(outer);
+      cancelInner?.();
+    };
+  }, [activeTab, hydrated, mountPane, preheatNeighbors]);
   const trackRef = useRef<HTMLDivElement>(null);
   // 最近一次划动抬手的时刻：swallowClick 的时间窗判定用。
   // 初值必须取 -Infinity——0 会与 performance.now() 的加载后前 350ms 撞车，
@@ -200,7 +220,6 @@ export const App: React.FC = () => {
   // 挂载后 dynamic import recordsHydrate（懒 chunk）做清洗/迁移/重打分——
   // 3.5MB 级解析不再阻塞首帧。写回 effect 以 hydrated 为闸，补水前绝不
   // 用空数组覆盖磁盘。
-  const [hydrated, setHydrated] = useState(false);
   const [records, setRecords] = useState<SleepRecord[]>([]);
 
   // User Profile configuration
@@ -448,10 +467,10 @@ export const App: React.FC = () => {
   const paneWRef = useRef(0);
   const trackPosRef = useRef(0);
   const SNAP_MS = MOTION.snapMs;   // 动效 token（第 121 轮）
-  const SWIPE_START = 8;      // 起拖阈值：够跟手，又不至于把点按误判成滑动
+  const SWIPE_START = 6;      // 起拖阈值（第 131 轮 8→6）：起手更跟手，仍能排除点按
   const DIR_BIAS = 1.1;      // 横向需比纵向大 10% 才锁定，抵消拇指自然斜度
-  const COMMIT_RATIO = 0.18; // 翻页所需位移（占屏宽）
-  const FLICK_V = 0.32;      // 甩动判定速度 px/ms
+  const COMMIT_RATIO = 0.15; // 翻页所需位移（第 131 轮 0.18→0.15）：轻拖也翻页
+  const FLICK_V = 0.26;      // 甩动判定速度（第 131 轮 0.32→0.26）：更轻的甩动即可翻页
   const VEL_WINDOW = 90;     // 速度采样窗口：只取最近 90ms，避免停顿后抬手误判
   const EDGE_DAMP = 0.3;     // 首/末页橡皮筋阻尼
 
@@ -501,6 +520,10 @@ export const App: React.FC = () => {
         if (Math.abs(dx) < SWIPE_START && Math.abs(dy) < SWIPE_START) return;
         if (Math.abs(dx) < Math.abs(dy) * DIR_BIAS) { d.locked = 'y'; return; }
         d.locked = 'h';
+        // 手势闸门开（第 131 轮）：分钟滴答/池塘/常驻动效全部让路。
+        // class 打在 <html> 上——React 永不管理它，拖拽期间的任何重渲染不会冲掉
+        setGestureLive(true);
+        document.documentElement.classList.add('gesture-live');
       }
       if (d.locked === 'y') return; // 纵向：交还浏览器原生滚动，全程不 preventDefault
 
@@ -529,6 +552,9 @@ export const App: React.FC = () => {
       const d = dragRef.current;
       if (!d) return;
       dragRef.current = null;
+      // 手势闸门关：无论哪种出场均先清标志（吸附/回弹动画不属于拖拽帧）
+      setGestureLive(false);
+      document.documentElement.classList.remove('gesture-live');
       if (d.skip || d.id !== e.pointerId || d.locked !== 'h') return;
 
       const now = performance.now();
@@ -547,8 +573,8 @@ export const App: React.FC = () => {
         idx = d.idx + (moved < 0 ? 1 : -1);
       }
       idx = Math.max(0, Math.min(TAB_ORDER.length - 1, idx));
-      // 快甩用更短的动画，避免"已经松手了还在慢慢飘"
-      const ms = Math.max(150, Math.min(SNAP_MS, SNAP_MS - Math.abs(v) * 120));
+      // 快甩用更短的动画，避免"已经松手了还在慢慢飘"（下限第 131 轮 150→130）
+      const ms = Math.max(130, Math.min(SNAP_MS, SNAP_MS - Math.abs(v) * 120));
       snapMsRef.current = ms;
 
       // 记下划动时刻，由常驻的 swallowClick 按时间窗判定（见上）
@@ -562,6 +588,10 @@ export const App: React.FC = () => {
       } else {
         applyTrack(-d.idx * d.w, true, ms);
       }
+      // 落位预热（第 132 轮）：挂载成本从拖拽窗口挪到这里——吸附动画的头几帧
+      // 本来就在动，首渲染藏在动画后面；拖拽帧全程干净（取代原 onPointerDown
+      // 的起手预热，那个会让 lazy chunk 加载/重分区首渲染撞进跟手帧）
+      setTimeout(() => preheatNeighbors(TAB_ORDER[idx]), 0);
     };
 
     window.addEventListener('click', swallowClick, { capture: true });
@@ -584,6 +614,9 @@ export const App: React.FC = () => {
       window.removeEventListener('pointercancel', finish);
       window.removeEventListener('resize', measure);
       ro.disconnect();
+      // 卸载兜底：拖拽中轨道被拆（理论不发生）也不把闸门/class 留在 <html> 上
+      setGestureLive(false);
+      document.documentElement.classList.remove('gesture-live');
     };
     // hydrated 翻转 → 轨道真挂载 → 此刻才接线（首挂载时为 null 只能早退，见上）
   }, [hydrated]);
@@ -960,11 +993,13 @@ export const App: React.FC = () => {
           style={{ background: `linear-gradient(100deg, transparent 12%, ${currentTheme.accentHex} 38%, transparent 52%, #8b5cf6 66%, transparent 84%)` }}
         />
       </div>
-      {/* 环境光色温层：在内容之下、背景之上，不干扰任何对比度 */}
+      {/* 环境光色温层：在内容之下、背景之上，不干扰任何对比度。
+          ambient-tint（第 131 轮）：拖拽期间由 html.gesture-live 整层隐掉——
+          全屏 soft-light 混合与 26s 极光循环常驻合成，拖拽帧不让路就顿挫 */}
       {ambientTint && (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed inset-0 z-[1]"
+          className="ambient-tint pointer-events-none fixed inset-0 z-[1]"
           style={{ background: ambientTint, mixBlendMode: 'soft-light' }}
         />
       )}
@@ -1102,11 +1137,10 @@ export const App: React.FC = () => {
             ref={trackRef}
             className="flex h-full swipe-track"
             style={{ width: `${TAB_ORDER.length * 100}%` }}
-            // 不能在 pointerdown 里同步预热：React 会在手势派发中重渲染整树，
-            // Recharts 的 SVG 随即重建、事件目标脱离文档，轨道的
-            // closest('[data-no-swipe]') 判定翻转会把图表拖拽误判成翻页
-            // （与图表自身的 pointerdown 注释同一坑，第 74 轮实测）。推迟一拍。
-            onPointerDown={() => setTimeout(() => preheatNeighbors(activeTab), 0)}
+            // 起手预热已取消（第 132 轮）：挂在拖拽窗口里的挂载/加载就是"起手
+            // 卡一下"的来源（React 重渲染整树还会让 Recharts SVG 重建、
+            // closest('[data-no-swipe]') 判定翻转——第 74 轮实测）。预热改在
+            // 松手落位时进行（见 finish），冷启动走开屏撤除后的空闲预热。
           >
             {TAB_ORDER.map((id) => (
               <div

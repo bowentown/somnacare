@@ -46,7 +46,7 @@ interface OneTapSleepTrackerProps {
   onProposalPresenceChange?: (visible: boolean) => void;
 }
 
-export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, onMonitoringStart, userProfile, onUpdateProfile, onProposalPresenceChange }) => {
+export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(function OneTapSleepTracker({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, onMonitoringStart, userProfile, onUpdateProfile, onProposalPresenceChange }) {
   const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
     const saved = localStorage.getItem('somnacare_bedtime_start');
     if (!saved) return null;
@@ -792,4 +792,4 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = ({ onSaveRe
       )}
     </>
   );
-};
+});

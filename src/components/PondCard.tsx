@@ -46,7 +46,7 @@ export const PondCard: React.FC<{
   celebrateSignal?: number;
   /** 连续达标夜数：≥3 时锦鲤聚向水面中央（第 57 轮） */
   streak?: number;
-}> = ({ theme, records, userProfile, celebrateSignal, streak = 0 }) => {
+}> = React.memo(function PondCard({ theme, records, userProfile, celebrateSignal, streak = 0 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // 深夜（22:00–06:00）只留月光：不管主题是晴日还是黄昏，入夜后统一到月夜；
   // 这是氛围，不是数据。每分钟走一次，跨过 22 点自动渐变
@@ -156,4 +156,4 @@ export const PondCard: React.FC<{
       />
     </div>
   );
-};
+});

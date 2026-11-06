@@ -20,14 +20,14 @@ interface Props {
   darkColor?: string;
 }
 
-export const MoonEnergy: React.FC<Props> = ({
+export const MoonEnergy: React.FC<Props> = React.memo(function MoonEnergy({
   value,
   target,
   size = 48,
   className = '',
   litColor = '#fcd34d',
   darkColor = '#0b1222',
-}) => {
+}) {
   const progress = target > 0 ? Math.max(0, Math.min(1, value / target)) : 0;
   const gid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const r = 43;
@@ -81,4 +81,4 @@ export const MoonEnergy: React.FC<Props> = ({
       </svg>
     </div>
   );
-};
+});

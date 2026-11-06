@@ -301,6 +301,19 @@ html {
   animation: aurora-drift 26s ease-in-out infinite;
 }
 
+/* ===== 手势闸门（第 131 轮流畅度） =====
+   五分区拖拽进行中 App 给 <html> 加 .gesture-live（finish 时移除）。打在
+   html 上而非 React 树里：拖拽期间的任何重渲染都不会冲掉它，也零重渲染成本。
+   常驻动效在拖拽帧里全部让路——全屏 soft-light 氛围光是最大的常驻合成税，
+   极光/CTA 呼吸是永久动画层；拖拽只有几百毫秒，视觉上无从察觉。 */
+html.gesture-live .ambient-tint {
+  visibility: hidden;
+}
+html.gesture-live .animate-aurora-drift,
+html.gesture-live .animate-cta-breathe::after {
+  animation-play-state: paused;
+}
+
 /* ===== 分区滑动轨道 =====
    轨道上刻意不设 touch-action。设 pan-y 会沿祖先链禁掉子元素的横向滚动
    （AI 顾问的提示词行就滑不动了），设 pan-x 则页面无法纵向滚动。

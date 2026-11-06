@@ -5,12 +5,15 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.view.View;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 
 import java.util.Random;
 
@@ -24,8 +27,20 @@ import java.util.Random;
  * 状态分四类，优先级从高到低：拖拽 drag > 播报 talking > 庆祝 cheer > 困倦 sleep
  * > 待机 idle。待机时由 {@link ambientTick} 随机插入小动作（歪头/喝茶/看书/
  * 抱枕头/吃东西/玩耍/散步/工作…），每段几秒后回到 idle，避免"只会眨眼"。
+ *
+ * 渲染架构（第 133 轮治本）：View + invalidate 是主线程管线——与 AdSkip 的
+ * 无障碍树扫描、WebView 的输入/合成回调同一 Looper 串行，主线程一被压，
+ * 33ms 节拍就丢拍（丢拍 = 动画整体跳帧 = 用户实测的"有时候卡"；溶解 180ms
+ * 里丢拍还会把渐变跳没，即"切动作闪一下"）。改为 SurfaceView + 专用渲染
+ * 线程：lockCanvas 循环独立于主线程节拍，主线程无论多忙动画都不掉帧；
+ * 状态推进（环境动作调度/庆祝回落）留在主线程，渲染线程只做无副作用的
+ * 取帧与绘制，跨线程只读 volatile 字段。
+ *
+ * Surface 语义变化：SurfaceView 的画布初始内容未定义（双缓冲），每帧必须
+ * 先清成透明再画精灵——清与画在同一个 buffer 内完成后才 post，不存在
+ * "清完露底"的可见空窗。
  */
-public class WhaleGirlView extends View {
+public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String DIR_DEFAULT = "pet/";
     private static final String DIR_SPORT = "pet-sport/";
     private static final long TICK_MS = 33; // ~30fps 重绘节拍
@@ -63,63 +78,73 @@ public class WhaleGirlView extends View {
     }
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    /** 主线程 handler：只跑环境动作调度（500ms）这类状态推进，永不绘制 */
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Random rng = new Random();
     private final Rect src = new Rect();
     private final Rect srcPrev = new Rect();   // 交叉溶解的旧帧源矩形
     private final RectF dst = new RectF();
+    /** 密度构造时缓存（第 133 轮）：shouldRedraw 迁到渲染线程后不再跨线程取 Resources */
+    private final float density;
 
     private final Anim idle, joy, celebrate, sleep, drag, welcome;
     private final Anim headtilt, wait, think, reading, tea, pillow, eat, play, walk, party, working, nap;
     private final Anim[] ambient;   // 待机小动作池
     private final Anim[] cheers;    // 庆祝池
 
-    private Anim current;
-    private Anim prevAnim;          // 交叉溶解的旧状态（pick 换位时登记）
-    private long swappedAt;         // 本次换位时刻（淡入进度基准）
-    private long stateSince;
-    private long prevStateSince;    // 旧状态的起始时刻（溶解期间旧动画继续按自己的时间线播）
-    private long cheerUntil;        // 庆祝播到这个时刻
-    private long ambientUntil;      // 小动作播到这个时刻
-    private boolean talking;
-    private float drowsy;
+    // ── 跨线程状态：主线程写（pick/cheer/触摸/…），渲染线程读 ──
+    private volatile Anim current;
+    private volatile Anim prevAnim;          // 交叉溶解的旧状态（pick 换位时登记）
+    private volatile long swappedAt;         // 本次换位时刻（淡入进度基准）
+    private volatile long stateSince;
+    private volatile long prevStateSince;    // 旧状态的起始时刻（溶解期间旧动画继续按自己的时间线播）
+    private volatile long cheerUntil;        // 庆祝播到这个时刻
+    private volatile long ambientUntil;      // 小动作播到这个时刻
+    private volatile boolean talking;
+    private volatile float drowsy;
     // 记录感知上下文（第二批，petSync 结构化通道推入；方案 §二后半）
-    private int lastScore = -1;          // 昨晚评分（-1=无记录）
-    private int missedDays = 0;          // 连续未记录夜数（含最近一夜，醒来日口径）
-    private boolean lastNightRecorded = false; // 昨晚是否已入账（复审 N3 改名）
-    private int streak = 0;   // 连续达标夜数（第 125 轮）
-    private boolean dragging;
-    private boolean running;
-    private boolean resumed;        // 小动作调度是否在跑
-    private long tickAnchor;        // tick 的绝对节拍锚点（uptimeMillis）
+    private volatile int lastScore = -1;          // 昨晚评分（-1=无记录）
+    private volatile int missedDays = 0;          // 连续未记录夜数（含最近一夜，醒来日口径）
+    private volatile boolean lastNightRecorded = false; // 昨晚是否已入账（复审 N3 改名）
+    private volatile int streak = 0;   // 连续达标夜数（第 125 轮）
+    private volatile boolean dragging;
+
+    // ── 渲染线程与 surface 生命周期 ──
+    private volatile boolean running;         // 公开启停（屏灭/被遮挡：start/stop）
+    private volatile boolean surfaceReady;    // surface 是否可用（Created/Destroyed）
+    private volatile boolean loopAlive;       // frameLoop 是否已在渲染线程上排队（防双排）
+    private volatile int surfaceW, surfaceH;  // surface 尺寸（渲染线程读，避开 getWidth 跨线程）
+    private HandlerThread renderThread;
+    private volatile Handler renderHandler;   // 渲染循环的宿主（线程唯一）
+    private long tickAnchor;                  // 渲染线程私有：tick 的绝对节拍锚点
 
     // 内容驱动重绘（第 89 轮，用户实测"刷抖音时桌宠特别卡"的根修）：
     // 此前恒定 30fps 全窗口重绘，而帧内容实际只有 2–8fps、呼吸位移每帧
-    // 亚像素——在视频应用（抖音等）上方，每次 invalidate 都要让系统重新
-    // 合成悬浮窗图层，与视频解码/合成争 GPU 与带宽。现在只有"画面真的变了"
-    // 才重绘：帧号变化、呼吸/摆动位移 ≥0.5px（不可见阈值）、交叉溶解中、
-    // 拖拽/说话（跟手优先）。轮询本身只是几个算术运算，CPU 可忽略。
+    // 亚像素。现在只有"画面真的变了"才出帧：帧号变化、呼吸/摆动位移 ≥0.5dp
+    //（不可见阈值）、交叉溶解中、拖拽/说话（跟手优先）。SurfaceView 后该
+    // 判定的意义更进一步：跳帧连 SurfaceFlinger 的图层提交都省了。
+    // 仅渲染线程读写，无需 volatile。
     private int lastDrawnIdx = -1;
     private float lastDrawnMotion = Float.NaN;
     private boolean lastDrawnFading = false;
 
-    private final Runnable tick = new Runnable() {
+    /** 渲染循环（第 133 轮）：跑在专用 HandlerThread 上，与主线程竞争解耦。
+     *  固定节拍（第 99 轮）：绝对时刻锚定；落后超过一拍时直接重锚不追帧，
+     *  避免连环补帧。深夜困倦仍降到 ~10fps（A12 功耗）。 */
+    private final Runnable frameLoop = new Runnable() {
         @Override public void run() {
-            if (!running) return;
-            if (shouldRedraw()) invalidate();
-            // 固定节拍（第 99 轮）：此前"跑完再 post 33ms"的周期 = 33ms + 执行
-            // + 主线程排队延迟，逐帧累积漂移；而帧号按墙钟推进，节拍一漂就隔帧
-            // 跳变（卡顿感）。改为绝对时刻锚定；主线程被压、落后超过一拍时
-            // 直接重锚不追帧，避免连环补帧。深夜困倦仍降到 ~10fps（A12 功耗）。
+            Handler h = renderHandler;
+            if (h == null || !running || !surfaceReady) { loopAlive = false; return; }
+            if (shouldRedraw()) drawFrame();
             long period = drowsy > 0.5f ? 100 : TICK_MS;
             tickAnchor += period;
             long due = tickAnchor - SystemClock.uptimeMillis();
             if (due < 0) { tickAnchor = SystemClock.uptimeMillis(); due = period; }
-            main.postDelayed(this, due);
+            h.postDelayed(this, due);
         }
     };
 
-    /** 摆动/呼吸的位移当量（px）；onDraw 与重绘判定共用同一函数保证一致 */
+    /** 摆动/呼吸的位移当量（px）；绘制与重绘判定共用同一函数保证一致 */
     private float motionShiftPx(Anim a, long now, float side) {
         if (a.wiggleMotion) {
             // 旋转 3.5° 绕半径 side*0.35 → 弧长当量
@@ -141,7 +166,7 @@ public class WhaleGirlView extends View {
         boolean fading = prevAnim != null && prevAnim != a && !prevAnim.sheet.isRecycled()
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (idx != lastDrawnIdx || fading != lastDrawnFading) return true;
-        int w = getWidth(), h = getHeight();
+        int w = surfaceW, h = surfaceH;
         if (w == 0 || h == 0) return false;
         // 溶解窗口内 alpha 与旧帧都在持续变化（第 99 轮）：此前只靠帧号/位移
         // 变化触发，呼吸走到正弦极值（速度为零）时淡出会冻住再突跳。窗口只有
@@ -151,14 +176,30 @@ public class WhaleGirlView extends View {
         // 阈值按密度换算（第 90 轮 §2.4）：位移幅度 ∝ 屏幕密度，而 0.5 绝对
         // px 在 3×/4× 屏等效于 0.17/0.13dp——重绘率被密度悄悄拉回 14-19fps。
         // 统一为 0.5dp（≈0.17mm，任何密度下都不可见）
-        float threshold = 0.5f * getResources().getDisplayMetrics().density;
+        float threshold = 0.5f * density;
         return Float.isNaN(lastDrawnMotion) || Math.abs(shift - lastDrawnMotion) >= threshold;
     }
 
     private final Runnable ambientTick = new Runnable() {
         @Override public void run() {
-            if (!resumed || ambient.length == 0) return;
+            // 与旧版同语义：停止/素材池为空时不续排（start 会重新挂）
+            if (!running || ambient.length == 0) return;
+            // 状态推进归位（原 onDraw 内联块，第 133 轮移到主线程调度）：
+            // 渲染线程只读状态做绘制，凡是"改状态"的决策都在主线程
             long now = System.currentTimeMillis();
+            if (!dragging && !talking) {
+                if (cheerUntil != 0 && now > cheerUntil) {
+                    cheerUntil = 0;
+                    // 庆祝后歇一段正常待机节奏——此前置 0 会让庆祝 500ms 内
+                    // 又接一个小动作，点一下串出连场戏
+                    ambientUntil = now + IDLE_PAUSE_MIN + rng.nextInt(IDLE_PAUSE_VAR);
+                    pick(drowsy > 0.5f && sleep != null ? sleep : idle);
+                } else if (ambientUntil == 0 && current != idle && current != sleep
+                        && current != celebrate && current != party && current != joy) {
+                    // 小动作被外部打断后落到未知状态 → 归位
+                    pick(drowsy > 0.5f && sleep != null ? sleep : idle);
+                }
+            }
             if (now >= ambientUntil) {
                 if (dragging || talking) {
                     ambientUntil = now + 5000;   // 拖拽/说话由各自的收尾逻辑接管
@@ -184,28 +225,68 @@ public class WhaleGirlView extends View {
 
     private final String dir;
 
-    public WhaleGirlView(Context c, String skin) {
-        super(c);
-        this.dir = "sakura".equals(skin) ? DIR_SPORT : DIR_DEFAULT;
-        idle      = load("idle", 3, 2, "blink", null);
-        joy       = load("joy", 2, 5, "loop", null);
-        celebrate = load("celebrate", 3, 4, "loop", null);
-        sleep     = load("sleep", 2, 1, "loop", null);
-        drag      = load("drag", 1, 5, "loop", "tilt");
-        welcome   = load("welcome", 2, 3, "loop", null);
+    /** 全部 sheet 名（预解码清单与 load 一一对应） */
+    private static final String[] SHEET_NAMES = {
+            "idle", "joy", "celebrate", "sleep", "drag", "welcome",
+            "headtilt", "wait", "think", "reading", "tea", "pillow",
+            "eat", "play", "walk", "party", "working", "nap",
+    };
 
-        headtilt  = load("headtilt", 2, 2, "loop", null);
-        wait      = load("wait", 1, 2, "loop", "wiggle");
-        think     = load("think", 1, 2, "loop", "float");
-        reading   = load("reading", 2, 2, "loop", null);
-        tea       = load("tea", 3, 2, "loop", null);
-        pillow    = load("pillow", 2, 1, "loop", null);
-        eat       = load("eat", 3, 8, "loop", null);
-        play      = load("play", 3, 4, "loop", null);
-        walk      = load("walk", 3, 6, "pingpong", null);
-        party     = load("party", 3, 4, "loop", null);
-        working   = load("working", 3, 3, "loop", null);
-        nap       = load("nap", 2, 1, "loop", null);
+    /** 单线程解码池（第 133 轮换肤异步化）：daemon 线程，进程退出即消失 */
+    private static final java.util.concurrent.ExecutorService DECODE_POOL =
+            java.util.concurrent.Executors.newSingleThreadExecutor((Runnable r) -> {
+                Thread t = new Thread(r, "whale-predecode");
+                t.setDaemon(true);
+                return t;
+            });
+
+    public WhaleGirlView(Context c, String skin) {
+        this(c, skin, null);
+    }
+
+    /**
+     * 后台预解码（第 133 轮换肤异步化）：把某皮肤的 18 张 sheet 在后台线程
+     * 解码成 name→Bitmap 表（与 load 同款 HARDWARE 闸门），完成后回主线程
+     * 回调。换肤路径用它消除主线程 10MB 同步解码长帧（此前是确定性卡顿）。
+     * 解码失败以 null 值占位——缺一张比崩进程好，与 load 同语义。
+     */
+    public static void predecodeAsync(Context context, String skin,
+                                      java.util.function.Consumer<java.util.HashMap<String, Bitmap>> onReady) {
+        final String dir = "sakura".equals(skin) ? DIR_SPORT : DIR_DEFAULT;
+        final Context app = context.getApplicationContext();
+        DECODE_POOL.execute(() -> {
+            java.util.HashMap<String, Bitmap> out = new java.util.HashMap<>();
+            for (String n : SHEET_NAMES) out.put(n, decodeSheet(app, dir + n + ".png"));
+            new Handler(Looper.getMainLooper()).post(() -> onReady.accept(out));
+        });
+    }
+
+    public WhaleGirlView(Context c, String skin, java.util.HashMap<String, Bitmap> predecoded) {
+        super(c);
+        // Surface 透明（第 133 轮）：精灵四周必须透出底下内容，默认格式不带 alpha
+        getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        getHolder().addCallback(this);
+        this.density = c.getResources().getDisplayMetrics().density;
+        this.dir = "sakura".equals(skin) ? DIR_SPORT : DIR_DEFAULT;
+        idle      = load("idle", 3, 2, "blink", null, predecoded);
+        joy       = load("joy", 2, 5, "loop", null, predecoded);
+        celebrate = load("celebrate", 3, 4, "loop", null, predecoded);
+        sleep     = load("sleep", 2, 1, "loop", null, predecoded);
+        drag      = load("drag", 1, 5, "loop", "tilt", predecoded);
+        welcome   = load("welcome", 2, 3, "loop", null, predecoded);
+
+        headtilt  = load("headtilt", 2, 2, "loop", null, predecoded);
+        wait      = load("wait", 1, 2, "loop", "wiggle", predecoded);
+        think     = load("think", 1, 2, "loop", "float", predecoded);
+        reading   = load("reading", 2, 2, "loop", null, predecoded);
+        tea       = load("tea", 3, 2, "loop", null, predecoded);
+        pillow    = load("pillow", 2, 1, "loop", null, predecoded);
+        eat       = load("eat", 3, 8, "loop", null, predecoded);
+        play      = load("play", 3, 4, "loop", null, predecoded);
+        walk      = load("walk", 3, 6, "pingpong", null, predecoded);
+        party     = load("party", 3, 4, "loop", null, predecoded);
+        working   = load("working", 3, 3, "loop", null, predecoded);
+        nap       = load("nap", 2, 1, "loop", null, predecoded);
 
         ambient = buildPool(headtilt, wait, think, reading, tea, pillow, eat, play, walk, working, nap);
         cheers = buildPool(celebrate, party, joy);
@@ -224,27 +305,34 @@ public class WhaleGirlView extends View {
         return out;
     }
 
-    private Anim load(String name, int frames, int fps, String playback, String motion) {
-        try (java.io.InputStream in = getContext().getAssets().open(dir + name + ".png")) {
-            // HARDWARE 位图（第 100 轮）：ARGB_8888 软位图画在硬件加速画布上时，
-            // 像素要先进 HWUI 的 LRU 纹理缓存——内存吃紧时会被逐出，下一次
-            // drawBitmap 再整张重传（一张 768×256×4 ≈ 786KB，交叉溶解一次画两张
-            // 就是 1.5MB 的单帧上传）= 用户实测的"偶尔卡一帧"。HARDWARE 把像素
-            // 直接放进显存，永不逐出重传；同时 10.25MB 不再占 Java 堆
-            // （本进程还常驻 MediaPipe，堆压力就是 LMK 风险）。
-            // 双重前提（软件画布画 HARDWARE 位图会直接抛异常，onDraw 崩）：
-            //   ① API ≥ 26；② App 级未关硬件加速（窗口的
-            //   FLAG_HARDWARE_ACCELERATED 由 showPet 显式携带）。
+    private Anim load(String name, int frames, int fps, String playback, String motion,
+                      java.util.HashMap<String, Bitmap> predecoded) {
+        // 预解码通道（第 133 轮）：换肤路径传入后台解好的表，主线程零解码
+        Bitmap b = predecoded != null ? predecoded.get(name)
+                : decodeSheet(getContext(), dir + name + ".png");
+        if (b == null) return null;
+        return new Anim(name, b, frames, fps, playback, motion);
+    }
+
+    /** 单张 sheet 解码（load 与 predecodeAsync 共用）。
+     *  HARDWARE 位图（第 100 轮）：ARGB_8888 软位图画在硬件加速画布上时，
+     *  像素要先进 HWUI 的 LRU 纹理缓存——内存吃紧时会被逐出，下一次
+     *  drawBitmap 再整张重传（一张 768×256×4 ≈ 786KB，交叉溶解一次画两张
+     *  就是 1.5MB 的单帧上传）= 用户实测的"偶尔卡一帧"。HARDWARE 把像素
+     *  直接放进显存，永不逐出重传；同时 10.25MB 不再占 Java 堆
+     *  （本进程还常驻 MediaPipe，堆压力就是 LMK 风险）。
+     *  三重前提（软件画布画 HARDWARE 位图会直接抛异常）：
+     *    ① API ≥ 26（lockHardwareCanvas 同岁）；② App 级未关硬件加速。 */
+    private static Bitmap decodeSheet(Context context, String path) {
+        try (java.io.InputStream in = context.getAssets().open(path)) {
             BitmapFactory.Options opts = null;
-            boolean hwApp = (getContext().getApplicationInfo().flags
+            boolean hwApp = (context.getApplicationInfo().flags
                     & android.content.pm.ApplicationInfo.FLAG_HARDWARE_ACCELERATED) != 0;
             if (android.os.Build.VERSION.SDK_INT >= 26 && hwApp) {
                 opts = new BitmapFactory.Options();
                 opts.inPreferredConfig = Bitmap.Config.HARDWARE;
             }
-            Bitmap b = BitmapFactory.decodeStream(in, null, opts);
-            if (b == null) return null;
-            return new Anim(name, b, frames, fps, playback, motion);
+            return BitmapFactory.decodeStream(in, null, opts);
         } catch (OutOfMemoryError e) {
             // 低内存设备解码 41 帧 256×256 可能 OOM：缺一张比崩进程好
             return null;
@@ -256,17 +344,57 @@ public class WhaleGirlView extends View {
     public void start() {
         if (running) return;
         running = true;
-        resumed = true;
-        tickAnchor = SystemClock.uptimeMillis();
-        main.postDelayed(tick, TICK_MS);
+        // surface 已就绪就立刻起循环；surface 未建（窗口还没 addView 完成）
+        // 则由 surfaceCreated 兜底启动
+        kickLoop();
         main.postDelayed(ambientTick, 500);
     }
 
     public void stop() {
         running = false;
-        resumed = false;
-        main.removeCallbacks(tick);
+        loopAlive = false;
         main.removeCallbacks(ambientTick);
+        Handler h = renderHandler;
+        if (h != null) h.removeCallbacks(frameLoop);
+    }
+
+    /** 幂等起循环：stop→start 重挂、surface 重建重挂都走这里，loopAlive 防双排 */
+    private void kickLoop() {
+        if (loopAlive || !surfaceReady) return;
+        loopAlive = true;
+        if (renderThread == null) {
+            HandlerThread t = new HandlerThread("whale-render");
+            t.start();
+            renderThread = t;
+            renderHandler = new Handler(t.getLooper());
+        }
+        tickAnchor = SystemClock.uptimeMillis();
+        lastDrawnIdx = -1;                  // 重建后强制出一帧
+        lastDrawnMotion = Float.NaN;
+        renderHandler.post(frameLoop);
+    }
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        surfaceReady = true;
+        if (running) kickLoop();
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        surfaceW = width;
+        surfaceH = height;
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        // 先摘循环再返回：destroy 返回后 surface 即失效，任何在途 draw 都必须停
+        surfaceReady = false;
+        loopAlive = false;
+        Handler h = renderHandler;
+        if (h != null) h.removeCallbacks(frameLoop);
+        lastDrawnIdx = -1;
+        lastDrawnMotion = Float.NaN;
     }
 
     /** 庆祝：点角色、开关注护眼时随机来一段，播约 1.8s 回常态。 */
@@ -331,7 +459,8 @@ public class WhaleGirlView extends View {
         swappedAt = System.currentTimeMillis();
         current = a;
         stateSince = swappedAt;
-        invalidate();
+        // 不再 invalidate（第 133 轮）：渲染循环 33ms 内自会取到新状态并因
+        // 溶解窗口开始出帧；渲染线程独立于主线程，无需也不能从这里触发
     }
 
     /** 桌宠此刻的动作名（getPetState 查询用；动作↔文案一致性）。 */
@@ -407,31 +536,38 @@ public class WhaleGirlView extends View {
         return ambient[ambient.length - 1];
     }
 
-    @Override
-    protected void onDraw(Canvas c) {
-        super.onDraw(c);
+    /** 渲染线程：取画布 → 绘制 → 提交。清屏与绘制同一 buffer 内完成，无可见空窗。 */
+    private void drawFrame() {
+        SurfaceHolder holder = getHolder();
+        Canvas c = null;
+        try {
+            // API ≥ 26 用硬件画布：HARDWARE 位图只能画进硬件画布（load 同款闸）；
+            // 更低版本回退软件画布 + 软位图
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                c = holder.lockHardwareCanvas();
+            } else {
+                c = holder.lockCanvas();
+            }
+            if (c == null) return;
+            // Surface 画布初始内容未定义（双缓冲）：先清成透明再画精灵，
+            // 清与画同一 buffer，post 前不分离——不存在"清完露底"闪帧
+            c.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+            drawWhale(c);
+        } catch (Throwable e) {
+            // surface 竞态（destroyed 中途）/画布异常：丢这一帧，不拖垮循环
+        } finally {
+            if (c != null) {
+                try { holder.unlockCanvasAndPost(c); } catch (Throwable ignored) { }
+            }
+        }
+    }
+
+    private void drawWhale(Canvas c) {
         Anim a = current;
         if (a == null || a.sheet == null || a.sheet.isRecycled()) return;
         long now = System.currentTimeMillis();
 
-        if (!dragging && !talking) {
-            // 庆祝到点回落常态
-            if (cheerUntil != 0 && now > cheerUntil) {
-                cheerUntil = 0;
-                // 庆祝后歇一段正常待机节奏——此前置 0 会让庆祝 500ms 内
-                // 又接一个小动作，点一下串出连场戏
-                ambientUntil = now + IDLE_PAUSE_MIN + rng.nextInt(IDLE_PAUSE_VAR);
-                pick(drowsy > 0.5f && sleep != null ? sleep : idle);
-                a = current;
-            } else if (ambientUntil == 0 && a != idle && a != sleep
-                    && a != celebrate && a != party && a != joy) {
-                // 小动作被外部打断后落到未知状态 → 归位
-                pick(drowsy > 0.5f && sleep != null ? sleep : idle);
-                a = current;
-            }
-        }
-
-        int w = getWidth(), h = getHeight();
+        int w = surfaceW, h = surfaceH;
         if (w == 0 || h == 0) return;
 
         int fw = a.sheet.getWidth() / a.frames;
@@ -506,6 +642,14 @@ public class WhaleGirlView extends View {
     @Override
     protected void onDetachedFromWindow() {
         stop();
+        // 线程级回收（第 133 轮）：视图丢弃（换肤重建/停服）时连渲染线程一起退
+        Handler h = renderHandler;
+        if (h != null) h.removeCallbacks(frameLoop);
+        if (renderThread != null) {
+            renderThread.quitSafely();
+            renderThread = null;
+            renderHandler = null;
+        }
         super.onDetachedFromWindow();
     }
 }

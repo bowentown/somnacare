@@ -163,6 +163,32 @@ ok('滑动：轨道落位 layout effect 也随补水闸重跑（闸前切页后�
     !doctoredSnap.includes('}, [activeTab, hydrated]);'));
 }
 
+// ── 手势闸门（第 131 轮流畅度）：拖拽进行中常驻工作全部让路 ──
+// 拖拽本身不进 React state，但 60s 分钟滴答脉冲 / 池塘 30fps / 极光×氛围光
+// 全屏 soft-light 常驻合成都会在拖拽帧之间抢主线程。闸门打在 <html> class
+// 上（零重渲染），四处消费者各自检查。
+const tickSrc = read('src/hooks/useMinuteTick.ts');
+const pondBoot = read('src/pond/bootstrap.ts');
+const indexCssSrc = read('src/index.css');
+ok('手势闸门：App 开闸（锁定横向时置 live + html class）且关闸（finish 先清）',
+  appSwipeSrc.includes('setGestureLive(true)')
+  && appSwipeSrc.includes("document.documentElement.classList.add('gesture-live')")
+  && appSwipeSrc.indexOf('setGestureLive(false)') < appSwipeSrc.indexOf("if (d.skip || d.id !== e.pointerId || d.locked !== 'h') return;"));
+ok('手势闸门：分钟滴答拖拽期跳过（下一拍按真实分钟补齐）',
+  tickSrc.includes('if (isGestureLive()) return;'));
+ok('手势闸门：池塘 animate 循环拖拽期早退（与 paused 同分支不积累时间）',
+  pondBoot.includes('if (paused || isGestureLive()) {'));
+ok('手势闸门：CSS 让路规则在场（氛围光隐藏 + 极光/CTA 呼吸暂停）',
+  indexCssSrc.includes('html.gesture-live .ambient-tint')
+  && indexCssSrc.includes('html.gesture-live .animate-aurora-drift')
+  && indexCssSrc.includes('animation-play-state: paused;'));
+{
+  const doctoredGate = appSwipeSrc.replace("document.documentElement.classList.add('gesture-live');", '');
+  ok('反向自检：开闸接线被剥后判据不再成立', !doctoredGate.includes("classList.add('gesture-live')"));
+  const doctoredTick = tickSrc.replace('if (isGestureLive()) return; // 拖拽帧让路，下一拍按真实分钟补上', '');
+  ok('反向自检：滴答让路被剥后判据不再成立', !doctoredTick.includes('isGestureLive()'));
+}
+
 // ── 对外形象：分享卡 canvas 接品牌字体（第 118 轮）──
 const shareCard = read('src/utils/sleepShareCard.ts');
 ok('对外形象：分享卡大数字走 Space Grotesk（canvas 不吃 CSS，显式 fonts.load 预热）',

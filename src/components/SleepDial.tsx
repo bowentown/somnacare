@@ -40,7 +40,7 @@ function timeToMin(t?: string): number | null {
   return clockMinutes(t);
 }
 
-export const SleepDial: React.FC<Props> = ({ record, scoreHex, scoreLabel, size = 96 }) => {
+export const SleepDial: React.FC<Props> = React.memo(function SleepDial({ record, scoreHex, scoreLabel, size = 96 }) {
   const [displayScore, setDisplayScore] = useState(0);
   const gid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
 
@@ -143,4 +143,4 @@ export const SleepDial: React.FC<Props> = ({ record, scoreHex, scoreLabel, size 
       </div>
     </div>
   );
-};
+});

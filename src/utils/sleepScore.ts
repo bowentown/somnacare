@@ -149,22 +149,26 @@ export function computeMSFsc(
   const rows = sleepIntervalsOf(nights, chronotype).map((iv) => {
     const wakeDay = new Date(iv.end).getDay();          // 醒来那天的星期
     const isFree = wakeDay === 0 || wakeDay === 6;
-    const dur = iv.end - iv.start;
-    return { isFree, dur, mid: iv.start + dur / 2 };    // 睡眠中点（epoch）
+    const durMin = (iv.end - iv.start) / 60000;
+    // 中点必须取【本地钟点】分钟（0..1439），绝不能对历元均值（第 134 轮修正）：
+    // 历元均值 = 窗口中心日期 + 钟点——自由日成对（周六+周日）时均值日期落在
+    // 【正午】，3 对（6 个自由日）整体 +12h，建议就寝被钳到错误的域边
+    //（2026-11-06 e2e 实测：MSFsc 18:30 而非 06:30 → 建议 21:00–05:00）。
+    // 钟点空间求均值 = MCTQ 的"自由日睡眠中点取平均"，与日期解耦。
+    // ★ 每个中点各自相对【本地午夜】归一：epoch % 86400000 是 UTC 日界，
+    //   UTC+8 下本地 05:00 会被算成前一天 21:00（第 105 轮护栏锚点抓出的同款坑）。
+    const midDate = new Date(iv.start + (iv.end - iv.start) / 2);
+    const localMid = new Date(midDate.getFullYear(), midDate.getMonth(), midDate.getDate()).getTime();
+    const mid = (midDate.getTime() - localMid) / 60000;
+    return { isFree, durMin, mid };
   });
   const free = rows.filter((r) => r.isFree);
   const work = rows.filter((r) => !r.isFree);
   if (free.length < 3 || work.length < 3) return null;
   const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const msfFree = mean(free.map((r) => r.mid));
-  const sdWorkMin = mean(work.map((r) => r.dur)) / 60000;
-  const sdFreeMin = mean(free.map((r) => r.dur)) / 60000;
-  const msfsc = msfFree - ((sdWorkMin - sdFreeMin) / 2) * 60000;
-  // 归一必须相对【本地午夜】：epoch % 86400000 是 UTC 日界，UTC+8 下本地
-  // 05:00 会被算成前一天 21:00（第 105 轮护栏锚点实测抓出）
-  const mid = new Date(msfsc);
-  const localMid = new Date(mid.getFullYear(), mid.getMonth(), mid.getDate()).getTime();
-  let minutes = Math.round((msfsc - localMid) / 60000);
+  const msfFree = mean(free.map((r) => r.mid));   // 钟点分钟域的算术平均（MCTQ 口径）
+  const msfsc = msfFree - (mean(work.map((r) => r.durMin)) - mean(free.map((r) => r.durMin))) / 2;
+  let minutes = Math.round(msfsc);
   minutes = ((minutes % 1440) + 1440) % 1440;   // MCTQ 允许 MSF > 24h
   const label = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   return { msfMinutes: minutes, label, freeSamples: free.length, workSamples: work.length };

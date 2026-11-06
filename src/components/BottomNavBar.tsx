@@ -11,7 +11,7 @@ interface BottomNavBarProps {
   theme: ThemeConfig;
 }
 
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onChangeTab, theme }) => {
+export const BottomNavBar: React.FC<BottomNavBarProps> = React.memo(function BottomNavBar({ activeTab, onChangeTab, theme }) {
   const tabs: { key: NavTab; label: string; icon: React.ElementType }[] = [
     { key: 'today', label: '睡眠', icon: Moon },
     { key: 'trends', label: '趋势', icon: BarChart2 },
@@ -72,4 +72,4 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onChangeT
       </div>
     </nav>
   );
-};
+});

@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -127,6 +128,10 @@ public class PetOverlayService extends Service {
     // 桌宠当前上屏的皮肤：WhaleGirlView 的素材目录在构造时定死，
     // 换装必须整个重建 View（ petStop→petStart 用户早就要手动做一遍）
     private String currentSkin = "default";
+    // 换肤异步解码（第 133 轮）：后台解好的 sheet 表，showPet 消费一次。
+    // 此前重建在主线程同步解码 18 张 ≈10MB——确定性长帧，换装瞬间必卡。
+    private java.util.HashMap<String, Bitmap> pendingSkinBitmaps;
+    private String pendingSkinBitmapsFor;
 
     // ---- 拖拽状态 ----
     private int downRawX, downRawY, downWinX, downWinY;
@@ -238,18 +243,21 @@ public class PetOverlayService extends Service {
             String want = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString("pet_skin", "default");
             if (!want.equals(currentSkin)) {
-                // 换装即时生效：偏好已变但屏幕上的 View 还是旧皮肤——
-                // 必须重建（素材目录构造时定死），此前只能关掉桌宠再开
-                main.removeCallbacks(drowsyTick);
-                if (fanShown) hideFan();
-                if (bubbleShown) hideBubble();
-                if (pickerShown) hideZonePicker();
-                if (whale != null) { try { whale.stop(); } catch (Exception ignored) { } whale = null; sActiveView = null; }
-                if (petRoot != null) {
-                    try { wm.removeViewImmediate(petRoot); } catch (Exception ignored) { }
-                    petRoot = null;
-                }
-                showPet();
+                // 换装即时生效：偏好已变但屏幕上的 View 还是旧皮肤——必须重建
+                //（素材目录构造时定死）。第 133 轮起解码先走后台：18 张 sheet
+                // ≈10MB 在后台线程解完回主线程再重建，旧窗口保持上屏直到
+                // 新位图就绪——主线程从此没有同步解码长帧，换装不卡顿。
+                WhaleGirlView.predecodeAsync(this, want, (map) -> {
+                    // 服务已被销毁（onDestroy 置空 whale）→ 不再重建
+                    if (whale == null) return;
+                    // 期间又换了皮肤：丢弃本次，最新一次 onStartCommand 自会再排
+                    String now = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                            .getString("pet_skin", "default");
+                    if (!want.equals(now)) return;
+                    pendingSkinBitmaps = map;
+                    pendingSkinBitmapsFor = want;
+                    rebuildPetWindow();
+                });
             } else {
                 // 幂等重启：屏幕尺寸可能已变（转屏/折叠/改显示尺寸），重夹一次位置
                 clampToScreen(petParams);
@@ -264,13 +272,36 @@ public class PetOverlayService extends Service {
 
     // ================= 角色窗 =================
 
+    /** 换肤重建（第 133 轮抽出）：摘旧窗 → showPet。由后台解码完成后的主线程
+     *  回调调用；drowsyTick 由 showPet 重新挂。 */
+    private void rebuildPetWindow() {
+        main.removeCallbacks(drowsyTick);
+        if (fanShown) hideFan();
+        if (bubbleShown) hideBubble();
+        if (pickerShown) hideZonePicker();
+        if (whale != null) { try { whale.stop(); } catch (Exception ignored) { } whale = null; sActiveView = null; }
+        if (petRoot != null) {
+            try { wm.removeViewImmediate(petRoot); } catch (Exception ignored) { }
+            petRoot = null;
+        }
+        showPet();
+    }
+
     private void showPet() {
         try {
             android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
 
             petRoot = new FrameLayout(this);
             currentSkin = sp.getString("pet_skin", "default");
-            whale = new WhaleGirlView(this, currentSkin);
+            // 预解码消费（第 133 轮）：仅当缓存表对得上当前皮肤时使用一次
+            java.util.HashMap<String, Bitmap> pre = null;
+            if (pendingSkinBitmaps != null && pendingSkinBitmapsFor != null
+                    && pendingSkinBitmapsFor.equals(currentSkin)) {
+                pre = pendingSkinBitmaps;
+            }
+            pendingSkinBitmaps = null;
+            pendingSkinBitmapsFor = null;
+            whale = new WhaleGirlView(this, currentSkin, pre);
             sActiveView = whale;   // getPetState 查询通道（动作↔文案一致性）
             petRoot.addView(whale, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));

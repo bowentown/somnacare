@@ -21,6 +21,7 @@ import { connectSettingsEffects } from "./settings/effects";
 import { connectPersistence, loadInto } from "./settings/persistence";
 import { settings } from "./settings/store";
 import { getWeatherPreset, type WeatherPresetId } from "./weather";
+import { isGestureLive } from "../utils/gestureGate";
 
 // 持久化沿用 nagomi 自有的隔离键（nagomi:pond-settings:v2），与 App 数据零交集
 loadInto(settings);
@@ -104,8 +105,8 @@ export function createPond(
       const w = window as unknown as { __pondFrames?: number };
       w.__pondFrames = (w.__pondFrames ?? 0) + 1;
     }
-    if (paused) {
-      previousTime = now; // 暂停期间不积累时间，恢复时不跳变
+    if (paused || isGestureLive()) {
+      previousTime = now; // 暂停/拖拽期间不积累时间，恢复时不跳变
       return;
     }
     if (now - previousTime < FRAME_MS) return;   // 未到 33ms 的中间帧直接让出
