@@ -99,7 +99,9 @@ check('补水：迁移语义完整（夜归属迁移 + 跳过标记 + rescore �
   hydr.includes('maybeMigrateRecordDates') && hydr.includes('recordDateMigrationDone')
   && hydr.includes('rescoreRecordsIfNeeded'));
 check('反向自检：写回闸被剥后判据不再成立',
-  (() => { const d = appSrc.replace('if (!hydrated) return;', ''); return !d.includes('if (!hydrated) return;'); })());
+  // 全局替换（第 134 轮起 App 有两处 hydrated 闸：写回 + 预热排队——只剥
+  // 第一处会让预热闸残留、判据假绿）
+  (() => { const d = appSrc.split('if (!hydrated) return;').join(''); return !d.includes('if (!hydrated) return;'); })());
 
 if (failures > 0) {
   console.error(`\n${failures} 项失败——迁移/夜归属键不一致`);

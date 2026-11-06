@@ -168,11 +168,11 @@ ok('全局规则点击上限 + 诊断带命中文字（误触时能看到点的�
   && service.includes('globalClicksThisLaunch')
   && service.includes('diagText(node)')
   && service.includes('hit=" + best.source + "[" + best.matchedText + "]"'));
-ok('多窗口：启动窗口内同包悬浮窗也扫描（含活动窗口同包的情况）',
-  service.includes('scanSiblingWindows')
+ok('多窗口：启动窗口内同包悬浮窗也扫描（含活动窗口同包的情况；第 133 轮起为后台扫描段的 findBestInSiblings）',
+  service.includes('findBestInSiblings')
   && service.includes('MAX_SIBLING_WINDOWS')
   && service.includes('AccessibilityWindowInfo')
-  && service.includes('if (elapsed <= APP_RULE_HARD_LIMIT_MS) scanSiblingWindows'));
+  && service.includes('if (best == null && siblingOk) best = findBestInSiblings(pkg, elapsed, root, activity);'));
 ok('倒计时：跳过 3/跳过 3s 不受 15s 通用窗口限制',
   service.includes('COUNTDOWN')
   && service.includes('isCountdown')
