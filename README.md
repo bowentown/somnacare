@@ -6,179 +6,110 @@
 
 **懂睡眠，更懂你。**
 
-一款 100% 离线优先的 Android 睡眠记录与分析应用 · React 19 + Capacitor 8 原生封装
+一款 100% 离线优先的 Android 睡眠记录与分析应用——记录零打扰，洞察只基于真实数据，一只鲸鱼娘桌宠陪你早睡。
 
 [![Build APK](https://github.com/bowentown/somnacare/actions/workflows/build-apk.yml/badge.svg)](../../actions/workflows/build-apk.yml)
 [![Release](https://img.shields.io/badge/下载-最新%20Release-blue)](../../releases/latest)
 [![Guardrails](https://img.shields.io/badge/护栏-46%20条%20·%20650%2B%20断言-green)](#-质量与验证)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](#-许可证与致谢)
+![Platform](https://img.shields.io/badge/platform-Android%207%2B-3ddc84)
 
-<img src="docs/screenshots/sleep-tab.png" width="180" />&nbsp;<img src="docs/screenshots/trends-tab.png" width="180" />&nbsp;<img src="docs/screenshots/ai-tab.png" width="180" />&nbsp;<img src="docs/screenshots/eyecare-tab.png" width="180" />&nbsp;<img src="docs/screenshots/sound-mixer.png" width="180" />
+<img src="docs/screenshots/sleep-tab.png" width="240" alt="睡眠分区 · 晨间评分环" />
+
+*晨间打开即见：昨晚评分环 · 时长 · 与作息目标的偏差 · 一只会看你睡眠数据的锦鲤池*
+
+**[📥 下载安装](#-下载安装) · [🚀 快速上手](#-快速上手你的第一晚) · [❓ 常见问题](#-常见问题) · [🛠️ 构建指南](#️-从源码运行构建)**
 
 </div>
 
 ---
 
-## 🚀 快速开始
+## 📖 这是什么
 
-**📱 手机用户 — 三步开跑**
+**极光睡眠**是一件贴身的小事：把"记录昨晚睡得怎么样"压缩到 10 秒钟，再把积累的每一晚变成看得懂的洞察。
 
-1. 从 [Releases](../../releases/latest) 下载最新的 `SomnaCare-*.apk`，点开安装（允许"安装未知来源应用"）；
-2. 打开 App，在 **偏好 → 我的作息** 设好就寝/起床目标；
-3. **睡眠** 页记第一晚：按"开始夜间监测"，或开启 **自动记录** 授权——之后每晚交给手机识别，醒来点一下确认即可。
+它建立在这三条承诺上：
 
-**💻 开发者 — 本地跑起**
+- **🔌 离线优先** —— 所有睡眠数据只存在你的手机里。没有账号、没有上传、没有后台偷偷联网；联网只发生在你主动点击的时刻（检查更新 / 下载 AI 模型 / AI 对话）。
+- **📏 数据诚实** —— 没有体动或脑波传感器，就不会假装测出了深睡和 REM。所有分期都是模型估算并在界面上明确标注；零记录的夜晚不生成假报告，AI 被禁止编造任何数字。
+- **🔒 隐私默认** —— 不上传任何音频；备份文件自动剥离 API 密钥；广告跳过规则全本地运行。
 
-```bash
-git clone https://github.com/bowentown/somnacare.git
-cd somnacare
-npm install --legacy-peer-deps
-npm run dev          # http://localhost:3000
-```
+## ✨ 功能一览
 
-> Android 构建、发布签名见下文「构建与开发」「发布与签名」。
+| | 功能 | 一句话 |
+|---|---|---|
+| 🌙 | **一键记录** | 睡前轻按开始、醒后点"已醒来"，按真实起止时间计算，绝无虚构拉长 |
+| 🤖 | **自动提议**（可选） | 授权"使用情况访问"后，从屏幕亮灭时刻推算昨晚作息，醒来点一下确认即完成记录 |
+| ⌚ | **床头夜钟伴眠** | 全屏暗色监测页，实时环境声级 + 频谱可视化（本地计算，不上传任何音频） |
+| 📊 | **趋势与洞察** | 起卧时段哑铃图、得分曲线、分期估算、月历点选、就诊摘要导出 |
+| ✨ | **AI 顾问** | 本地洞察引擎 + 三引擎自由切换（DeepSeek 云端 / 端侧离线模型 / 零配置规则引擎），编造数字会被整条拒收 |
+| 🐋 | **鲸鱼娘桌宠** | 时段权重驱动的行为系统：午后喝茶、傍晚看书、深夜劝你放下手机；连续达标她真会庆祝 |
+| 🏝️ | **梦境漫游** | 锦鲤池塘 + 旅行图鉴，记录达标攒能量解锁新地点 |
+| 👁 | **护眼健康台** | 全局护眼滤镜、20-20-20 远眺提醒、用眼日报 |
+| 🔊 | **助眠音景** | 9 种实时合成音效多层混音 + 4-7-8 呼吸引导，零音频文件断网可用 |
+| 🚫 | **广告跳过**（可选） | 本地规则自动点击开屏/弹窗关闭按钮（参考 GKD 订阅规则，无障碍服务，默认关闭） |
+| ⏰ | **自定义闹钟** | 原生精确闹钟 + 30 秒渐弱钟声，息屏可靠唤醒 |
+| 🎨 | **四套主题** | 午夜蓝 / 纯黑 OLED / 琥珀暖夜 / 静谧深海，桌面图标随主题联动换色 |
 
----
+## 📸 界面预览
 
-## ✨ 它能做什么
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/sleep-tab.png" width="180" /><br><sub>睡眠 · 晨间评分环</sub></td>
+    <td align="center"><img src="docs/screenshots/auto-proposal-card.png" width="180" /><br><sub>自动提议 · 点一下完成记录</sub></td>
+    <td align="center"><img src="docs/screenshots/sleep-monitor.png" width="180" /><br><sub>床头夜钟 · 声级可视化</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/trends-tab.png" width="180" /><br><sub>趋势 · 起卧时段与小结</sub></td>
+    <td align="center"><img src="docs/screenshots/ai-tab.png" width="180" /><br><sub>AI 顾问 · 大肥鱼的朋友圈</sub></td>
+    <td align="center"><img src="docs/screenshots/sound-mixer.png" width="180" /><br><sub>助眠音景 · 多层混音</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/eyecare-tab.png" width="180" /><br><sub>护眼健康台</sub></td>
+    <td align="center"><img src="docs/screenshots/settings-tab.png" width="180" /><br><sub>偏好 · 四套主题</sub></td>
+    <td align="center"><img src="docs/screenshots/moments-postcard.jpg" width="180" /><br><sub>旅行明信片 · AI 好友评论</sub></td>
+  </tr>
+</table>
 
-五个分区（底栏切换，支持左右滑动）：**睡眠 · 趋势 · AI 顾问 · 护眼 · 偏好**，外加一只会看你睡眠数据的鲸鱼娘桌宠。
+## 📥 下载安装
 
----
+1. 打开 [**Releases 页面**](../../releases/latest)，下载最新的 `SomnaCare-vX.X.X.apk`（无需登录）；
+2. 手机上点开安装——首次需允许「安装未知来源应用」；
+3. 打开 App，跟完 30 秒首次引导即可开始使用。
 
-### 🌙 睡眠记录与自动提议
+> - **系统要求**：Android 7.0（API 24）及以上；护眼滤镜的全局模式建议 Android 10+。
+> - **升级**：直接覆盖安装即可，睡眠数据与图鉴进度全部保留（固定 release 签名，versionCode 随构建号递增）。
+> - **不上架应用商店**：本应用的权限组合（无障碍服务 + 悬浮窗等）不符合 Google Play 政策，仅通过 GitHub Release 侧载分发。
 
-<p align="center">
-  <img src="docs/screenshots/sleep-auto-mode.jpg" width="250" alt="睡眠分区 · 自动记录" />&nbsp;&nbsp;
-  <img src="docs/screenshots/auto-proposal-card.png" width="250" alt="自动提议卡" />
-</p>
-<p align="center"><sub>左：自动记录已开启　·　右：醒来后的"昨晚睡眠"提议卡——点一下就完成记录</sub></p>
+## 🚀 快速上手：你的第一晚
 
-**手动档 · 一键记录**
-- 睡前轻按开始、醒后点"已醒来"，按真实起止时间计算，绝无虚构拉长；
-- **床头夜钟伴眠**：全屏暗色监测页，实时麦克风环境声级 + 频谱可视化（本地 RMS→dBFS，不上传任何音频）；
-- **昨晚睡眠卡**：评分环、深睡占比结构条、与作息目标的偏差，点按直达趋势。
+**睡前（30 秒）**
 
-**自动档 · 手机自动识别作息**
-- 授权"使用情况访问"后，App 读取**屏幕亮灭时刻**（仅时刻，不读内容），由 SensibleSleep 贝叶斯切换点模型 + 启发式回退引擎推算昨晚的就寝/起床区间；
-- 第二天醒来打开 App，昨晚的睡眠会作为**提议卡**出现——点一下就完成记录，全程只预填不自动写入；
-- **提议链路自检面板**：模型拒绝、数据不足、授权失效……每一站状态逐条可读，不再有"说不清的静默失败"；
-- 引擎细节为真实用户打磨过：就寝跨午夜用圆周中位数、先验错位时放行启发式回退、授权返回即时重跑、模型明确拒绝时绝不拿旧算法乱报。
+1. 在 **睡眠** 页按 **开始夜间监测**（床头夜钟），或什么都不做——明早用自动提议 / 手动补录也一样；
+2. 想要自动提议？在 **睡眠页 → 开启自动记录** 授权"使用情况访问"（只读亮屏时刻，不读屏幕内容）。
 
-<p align="center"><img src="docs/screenshots/proposal-selfcheck.jpg" width="280" alt="提议链路自检面板" /></p>
-<p align="center"><sub>偏好页 · 提议链路自检：权限 → 查询 → 模型 → 启发式，逐站报状态</sub></p>
+**醒来（10 秒）**
 
-**到点提醒**（可选）：到就寝时间后无论你在桌面还是其他应用，都会弹出开屏同款的弯刀月动画提醒你早点睡——点"好的"晚安💤；未开启自动记录时会顺手帮你把计时开好，已开启自动记录则不越俎代庖。
+3. 打开 App：昨晚的睡眠卡已经在等你——核对就寝/起床时刻，点一下完成记录；
+4. 评分环、分期结构、与作息目标的偏差当场可见；点卡片直达 **趋势** 看曲线与月历。
 
----
+**之后（交给 App）**
 
-### 📊 趋势与洞察（只对真实测量做洞察）
+- 到就寝时间，弯刀月动画会提醒你放下手机（可关）；
+- 连续断记几晚，会收到一条温和的召回提醒（每周至多一次，可关）；
+- 醒来后 9 点有一条"确认昨晚记录"的晨间提醒（可关）。
 
-<p align="center"><img src="docs/screenshots/trends-circadian.png" width="260" alt="起卧时段 · 默认视图" /></p>
-<p align="center"><sub>起卧时段（默认）· 得分曲线 · 分期估算 · 历史记录 · 近期小结</sub></p>
+> 全部提醒与自动化都在 **偏好** 页有独立开关，默认保守。
 
-**数据诚实原则**：深睡/浅睡/REM 是无硬件的模型估算，App 不拿它冒充测量——主视图只放真实数据，估算降级为参考并明确标注。
+## 🔒 隐私与数据诚实
 
-- **起卧时段（默认视图）**：哑铃图——入睡点（主题色）与醒来点（白）细线相连，偏离目标 ≥45 分钟的晚上整条染琥珀；目标作息窗 + 就寝/醒来均值与偏差；
-- **得分曲线**：Recharts 面积图，Y 轴 50/75/90/100 刻度、75–100 目标带、90/75 参考线、7 晚均值与缺数据断点，点按/拖动逐晚查看；
-- **分期估算**：100% 堆叠横条 + 浮层给分钟数，视图内标注"模型估算 · 非测量"；
-- **历史记录**：窗口化渲染，几千条记录也只渲染可视行，滚动流畅；删除支持 5 秒撤销；
-- **近期睡眠小结**：平均评分/日均时长/平均效率 + 作息规律度 + 连续达标战报；
-- **就诊摘要**：1080×1440 Canvas 报告，主题跟随，导出图不含梦境/心情/习惯。
-
----
-
-### ✨ AI 顾问
-
-<p align="center"><img src="docs/screenshots/ai-tab.png" width="260" alt="AI 顾问分区" /></p>
-<p align="center"><sub>个性化洞察 · 三引擎切换 · 数字白名单</sub></p>
-
-- **个性化洞察**：本地引擎从你的真实记录里挖掘"什么在影响你的睡眠"——睡前屏幕拉低了几分、就寝在往后拖还是提前、周末是否在报复性补觉……点洞察卡即深入提问；
-- **三种引擎自由切换**：
-  - **DeepSeek 云端**（自带 Key，回答引用你的真实数据）；
-  - **端侧离线模型**：wllama + Qwen3-0.6B（Web）或原生 MediaPipe + Gemma 3 1B（mmap 加载、断点续传、停滞看门狗、流式生成）；
-  - **本地临床规则引擎**（零配置兜底，含危机干预与用药安全护栏）；
-- **她不许自己编数字**：发给模型的提示词只允许引用真实记录产出的"事实清单"，返回文案经**数字白名单**校验——编造的评分/时长会被整条拒收退回本地模板（有 e2e 实证）。
-
----
-
-### 🐋 大肥鱼桌宠 · 一只有行为逻辑的鲸鱼娘
-
-不是随机换图的挂件，而是一套**可解释的行为系统**：
-
-- **时段权重表**：午后多半在喝茶打盹、傍晚看书、深夜从不喝茶吃饭上班——"约束即人格"；
-- **记录感知**：连续几晚没记录她会蔫下来只想抱枕头；昨晚达标第二天会庆祝（**每天只庆祝一次**，没有"每天都是第一次见你"的塑料感）；今晚还没记录时她会"放空想事情"提醒你去记；
-- **深夜劝睡**：23 点后如果你还亮着屏幕，她会隔着悬浮窗开口劝你放下手机——**每晚至多一次**，已熄屏绝不打扰；
-- **动作与文案一致**：生成朋友圈文案前会把"她此刻的动作"喂给模型——她在打盹，文案就不会写庆祝；
-- **180ms 交叉溶解**：状态切换是"角色在动"而不是"贴图换位"；
-- 拖拽拎起、点击庆祝、分区胶囊直达、两套皮肤（默认 / 樱花运动装）。
-
-**大肥鱼的朋友圈**：她每天根据你的真实睡眠数据发动态，AI 好友（楼下Claude / 美国豆包Gemini / 被压榨的Qwen / 被蒸馏的Kimi / 意难平的豆包姐姐）来毒舌评论，你可以点赞回帖——她会傲娇地回。每条动态下方挂着**数据来源清单**，每句都有出处。
-
-<p align="center">
-  <img src="docs/screenshots/moments-postcard.jpg" width="260" alt="大肥鱼的朋友圈 · 旅行明信片与 AI 好友评论" />
-</p>
-<p align="center"><sub>旅行明信片动态 · AI 好友评论 · 数据来源清单</sub></p>
-
----
-
-### 👁 护眼健康台
-
-<p align="center"><img src="docs/screenshots/eyecare-health.png" width="260" alt="护眼健康台" /></p>
-<p align="center"><sub>四场景预设 · 20-20-20 远眺提醒 · 用眼日报 · 放下前一小时</sub></p>
-
-- 全局护眼滤镜（所有应用上方生效）：暖色减蓝 + 屏幕减光双层，可暗至低于系统最低亮度；
-- 四场景预设（夜间 / 阅读 / 游戏 / 助眠）+ 调色盘自定义颜色；
-- **20-20-20 远眺提醒**：连续用屏 20 分钟（亮屏/熄屏事件真实测量）→ 全屏远眺引导 20 秒，点按可提前结束；滤镜关着也能独立运行；
-- **用眼日报**：近 7 天每日屏幕时间与解锁次数（系统使用记录统计），今日大数字卡 + 7 天柱状图；
-- **放下手机前的一小时**：昨夜最后一次熄屏前 60 分钟每应用前台分钟（真实应用名）——系统"屏幕使用时间"给全天 totals，这里只看与入睡相邻的最后一段；分类榜（数字健康台）与系统功能重复，已移除；
-- **自动日变**：白天自动减弱、渐强时段可自定义（默认 19–23 点渐强至满档）；
-- **下拉快捷磁贴**：通知栏一键开关护眼；定时开关支持跨午夜时段；滤镜层触摸穿透。
-
----
-
-### ⚙️ 偏好与个性化
-
-- 四套主题（午夜蓝 / 纯黑 OLED / 琥珀暖夜 / 静谧深海），**桌面图标随主题联动换色**；
-- 自定义闹钟：原生精确闹钟通道 + 30 秒渐弱钟声，息屏可靠唤醒；
-- **作息规律度**（近 7 晚就寝/起床稳定度）与**手机使用规律度**同屏对照；
-- **全量备份**：记录/档案/图鉴/朋友圈/聊天一键导出导入——API 密钥与端点地址**默认剥离、永不随备份迁移**，超大文件与超额记录导入前拦截，写入失败自动回滚；
-- **每周睡眠分享卡**：Canvas 生成的可保存长图，只含聚合数字，生成前可预览；
-- **应用内更新**：偏好页「应用更新」→ 显式检查 GitHub 最新 Release，展示版本说明与安装包大小；下载后原生校验**包名 / versionCode / 签名证书 / SHA-256** 才交给系统安装器（只在点击时联网，不后台上传任何数据）；
-- **广告跳过**：参考 [GKD_subscription](https://github.com/Lin-arm/GKD_subscription) 的广告规则（第 67 轮起按**完整关系链**求值：`@/</>/+/-/距离/祖先/index` 全语义，631 应用规则中 606 个应用的 1415 条可安全导入，另含全局选择器库的 SDK 卡片关闭规则），按包名 / Activity / 启动时限执行；开屏规则在启动窗口内生效（第 68 轮起**主动轮询 8 秒**——开屏 SDK 常只渲染一次不发事件；同包悬浮窗一并扫描），应用内弹窗/卡片广告在前台期间以滚动窗口限次生效（3 分钟 ≤4 次、单次会话 ≤8 次）；点击目标受 tier 绝对尺寸封顶与包裹比例双重约束，`ACTION_CLICK` 无效时用**坐标手势**兜底（SDK 自绘关闭按钮常是 clickable=false），常驻全局规则要求广告词锚点 + 目标 ≤25%×12%，并排除常见桌面；无障碍服务按系统规范声明 `exported="true"`，并提供电池优化白名单入口；装了 Shizuku 的高级用户可在服务被系统关掉后「一键修回」（Shizuku 本身需在运行，无法阻止 OEM 清理）。
-  - 规则由 `tools/import-gkd-splash.mts` 从订阅的 `dist/gkd.json5` 与选择器库生成（无锚点的纯结构链会被丢弃，宁可少几条也不误点）；**CI 构建时自动拉取订阅最新版重建规则表**（刷新后跑安全审计，不过关自动回退仓库内置版本）；订阅里没有规则的应用只走通用兜底；按用户要求参考该订阅，相关版权责任由使用者承担。
-
----
-
-### 🔊 助眠音景混音器
-
-<p align="center"><img src="docs/screenshots/sound-mixer.png" width="260" alt="助眠音景混音器" /></p>
-<p align="center"><sub>9 种实时合成音效 · 多层混音 · 定时关闭</sub></p>
-
-- **9 种 Web Audio 实时合成的音效**：细雨、潮汐、竹林夜风、粉噪、颂钵、雷雨敲窗、篝火余温、山谷夜风、深棕噪音——零音频文件，断网可用；
-- **多层混音**：任意叠加、每层独立音量，配 4 组预设混音；
-- 定时关闭 + 内嵌 4-7-8 呼吸放松引导。
-
----
-
-## 📱 下载安装
-
-**GitHub Release 直链**（无需登录）：
-
-1. 打开 [Releases 页面](../../releases/latest)；
-2. 下载 `SomnaCare-vX.X.X.apk`；
-3. 手机上点开安装（需允许"安装未知来源应用"）；
-4. 从旧版本升级：**直接覆盖安装即可，睡眠数据、图鉴进度全部保留**（固定 release 签名，versionCode 随构建号递增）。
-
-> APK 使用固定 release 签名（密钥经 GitHub Secrets 注入 CI，`tools/android-signing.gradle` 可审阅）；仅当 Actions 未配置签名 Secrets 时回退 debug 签名（此时更新才需先卸载）。仅从早期"每次构建签名不同"的版本升级时需先卸载一次。
-
-## 🔒 隐私与诚实声明
-
-- **所有睡眠数据只存手机本地**（localStorage），无账号系统、无上传；
-- 睡眠分期是**基于作息起止点与 90 分钟超昼夜节律的模型推演值**——App 未读取体动/脑波传感器，界面均已标注"模型估算，非医疗诊断"，不能替代多导睡眠监测（PSG）；
-- 云端 AI 需要你自己的 DeepSeek API Key（仅本地存储、直连官方接口）；不填也能用端侧模型或规则引擎；
-- **凭据与端点地址不进备份文件**：导出的备份里没有 API 密钥，端点地址也不随备份迁移（防"备份改道"把数据发往陌生服务器）；
-- 桌宠"深夜劝睡"读取的只是系统屏幕亮灭状态（`isInteractive`），使用行为统计只来自系统聚合的亮屏事件（需你主动授权"使用情况访问"，不授权则该功能优雅降级）；
-- 护眼滤镜按 Android 12+ 规范控制窗口透明度，触摸穿透不影响任何应用操作。
+- **所有睡眠数据只存手机本地**（localStorage），无账号系统、无上传；联网仅发生在你主动点击时（更新检查 / 模型下载 / AI 对话）；
+- 睡眠分期是**基于作息起止点与 90 分钟超昼夜节律的模型推演值**——App 未读取体动/脑波传感器，界面均标注"模型估算，非医疗诊断"，不能替代多导睡眠监测（PSG）；
+- **不上传任何音频**：床头监测的声级在本地计算，AI 载荷里也排除了声事件与梦境笔记；
+- 云端 AI 需要你自己的 DeepSeek API Key（仅本地存储、直连官方接口）；不填也能用端侧模型或规则引擎兜底；
+- **凭据与端点地址不进备份文件**：导出的备份里没有 API 密钥，端点地址也不随备份迁移（防"备份改道"）；
+- **损坏自护**：存储数据异常时会先备份原始数据再进入空态，绝不无声覆盖；
+- 桌宠"深夜劝睡"只读系统屏幕亮灭状态（`isInteractive`）；使用行为统计只来自系统聚合的亮屏事件（需主动授权，不授权则优雅降级）。
 
 ## 🔐 权限用途
 
@@ -188,35 +119,84 @@ npm run dev          # http://localhost:3000
 | `POST_NOTIFICATIONS` | 闹钟铃声通道 / 护眼与提醒常驻通知 |
 | `WAKE_LOCK` | 息屏后维持响铃流程 |
 | `RECORD_AUDIO` | 仅床头监测页声级采样（点按开启、可拒绝、诚实降级） |
-| `RECEIVE_BOOT_COMPLETED` | 重启后自动恢复闹钟与提醒调度（BootReceiver 已实现） |
+| `RECEIVE_BOOT_COMPLETED` | 重启后自动恢复闹钟与提醒调度 |
 | `SYSTEM_ALERT_WINDOW` | 护眼全局滤镜 / 到点提醒悬浮动画 / 桌宠悬浮窗 |
 | `FOREGROUND_SERVICE(+SPECIAL_USE)` | 护眼滤镜、就寝提醒、桌宠、响铃前台服务 |
 | `PACKAGE_USAGE_STATS`（可选授权） | 自动记录提议与使用对照的亮屏时刻聚合；不授权则对应功能优雅降级 |
-| `INTERNET` | APK 形态下仅两类出口：① 应用内更新检查与下载 APK（用户点击时）；② 【用户主动】的 AI 出口——端侧模型下载（hf-mirror/HuggingFace，百 MB 级）、DeepSeek/自定义端点直连（填了 Key 才启用）。睡眠数据不出网。Web/PWA·自部署形态另有 `/api/sleep/*` 服务端代理（见下节） |
-| `REQUEST_INSTALL_PACKAGES` | 下载完成后调起系统安装器（仍需用户允许"安装未知应用"） |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | 用户可选地把应用加入电池优化白名单，降低无障碍服务被系统清理的概率 |
-| 无障碍服务（AdSkipService，可选启用） | 读【前台应用的界面树】以匹配并自动点击广告关闭按钮；规则本地存储、可随时在系统设置关闭；默认关闭。该权限组合（含 `QUERY_ALL_PACKAGES`）不符合 Google Play 政策——本应用仅侧载/自建渠道分发 |
+| `INTERNET` | 仅两类出口：① 应用内更新检查与下载 APK（点击时）；② 【用户主动】的 AI 出口（模型下载 / DeepSeek 直连，填 Key 才启用）。睡眠数据不出网 |
+| `REQUEST_INSTALL_PACKAGES` | 下载完成后调起系统安装器 |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | 可选加入电池优化白名单，降低无障碍服务被系统清理的概率 |
+| 无障碍服务（AdSkipService，可选启用，默认关闭） | 读【前台应用的界面树】以自动点击广告关闭按钮；规则全本地、可随时在系统设置关闭 |
 
-**形态差异（数据去向）**：APK 主路径 100% 离线；Web/PWA·自部署形态下，AI 分析走 `/api/sleep/analyze` 代理——该路径会把【7 晚精简睡眠摘要】与你的 AI 配置（含 Key，若填写）发往你部署的那台服务器，由它代发上游。直连模式（APK 内填 Key）不经任何服务端。备份导出不含 `customBaseUrl`（防改道）。
+## ❓ 常见问题
 
-## 🧬 技术栈
+<details>
+<summary><b>睡眠数据准确吗？</b></summary>
 
-- **前端**：React 19 + TypeScript + Vite + Tailwind CSS；Web Audio API 实时合成 9 种音效；品牌视觉（图标/开屏/启动屏）由 `tools/` 下的手写 PNG/SVG 生成器产出
-- **图表与 UI**：评分/分期/日报图表使用 [Recharts](https://github.com/recharts/recharts)（MIT）；组件层与图表语法参考 shadcn/ui Charts / Tremor / Observable Plot；空态插画来自 [unDraw](https://undraw.co)（免费商用免署名，主色随主题）
-- **原生封装**：Capacitor 8（minSdk 24），GitHub Actions 全自动出包
-- **端侧 LLM**：Web 路径 [wllama](https://github.com/transformersjs/wllama)（llama.cpp WASM）+ Qwen3-0.6B；原生路径自定义插件封装 Google MediaPipe LLM Inference（Gemma 3 1B int4，mmap 加载、断点续传、停滞看门狗、流式生成）
-- **全局滤镜**：前台服务 + `TYPE_APPLICATION_OVERLAY` 双悬浮层，窗口级 alpha 按 Android 12+ 非信任触摸豁免规范控制，真实物理分辨率全屏覆盖
+就寝/起床时刻是真实测量的（你确认的，或亮灭屏信号推算的）；深睡/浅睡/REM 占比是按 90 分钟昼夜节律模型的**估算值**，界面全程标注"模型估算"。它适合观察趋势与作息规律，不能替代医疗检测。
+</details>
 
-## 🧪 质量与验证
+<details>
+<summary><b>会耗电吗？</b></summary>
+夜间监测只做本地麦克风声级采样（可随时关闭）；自动记录读的是系统聚合的亮屏事件，不驻留后台轮询；桌宠动画在熄屏、被遮挡、画面无变化时全部自动暂停。
+</details>
+
+<details>
+<summary><b>换手机 / 重装，数据怎么办？</b></summary>
+偏好页的<b>全量备份</b>一键导出 JSON（含记录/档案/图鉴/朋友圈），新机导入即恢复。备份文件不含任何 API 密钥；覆盖安装升级永远不丢数据。
+</details>
+
+<details>
+<summary><b>AI 要花钱吗？必须联网吗？</b></summary>
+不必须。默认的本地规则引擎与端侧离线模型（Gemma 3 1B）完全免费离线；想用 DeepSeek 云端时填你自己的 API Key 直连官方接口。
+</details>
+
+<details>
+<summary><b>广告跳过安全吗？会不会误点？</b></summary>
+规则要求明确的广告词锚点 + 点击目标尺寸约束，误触保护（tapjacking 防护）内置；默认关闭，需要你显式开启无障碍服务。仅在自己手机上使用，规则不联网上传任何内容。
+</details>
+
+## 🛠️ 从源码运行 / 构建
+
+```bash
+git clone https://github.com/bowentown/somnacare.git
+cd somnacare
+npm install --legacy-peer-deps
+npm run dev          # Web 预览 http://localhost:3000
+```
+
+```bash
+npm run verify       # 静态护栏 + 行为断言（关键护栏带反向自检）
+npm run build        # Web 产物（dist/ 可直接作为 PWA 部署）
+npx playwright test  # 浏览器 e2e 全量回归
+```
+
+Android APK（需 Android SDK / JDK 21）：
+
+```bash
+npm run build && npx cap add android && npx cap sync android
+cd android && ./gradlew assembleDebug
+```
+
+> 不想配环境？推送 `main` 分支 CI 自动构建；**打 `v*` 标签**自动发布到 [Releases](../../releases)。APK 由 CI 用固定签名构建（密钥经 GitHub Secrets 注入，仓库不含任何密钥）——⚠️ keystore 一旦丢失，存量安装将永远无法覆盖更新。开发约定、架构边界与 46 条护栏的接线方式见 [AGENTS.md](AGENTS.md)。
+
+## ✅ 质量与验证
 
 这个项目把"验证体系"当作与功能同等重要的部分来建设：
 
-- **46 条静态护栏（650+ 项断言）**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位、先验错位回退）、备份凭据剥离与字段白名单、文案语料（诗文引用原序 / 地理物种事实 / 人设自称纪律）、桌宠行为形状（权重表时段密度、交叉溶解、劝睡去重）……全部接入 CI，且关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
-- **68 条 Playwright e2e**：五分区渲染、分区跟手滑动（拖拽翻页 + 纵向滚动不劫持，第 130 轮）、自动提议全链路（含 LLM 端点 mock 的"编数字拒收"）、授权即时生效、备份往返、主题持久、全分区漫游零未捕获异常看门狗、睡眠日历点选详情（第 107 轮）；
-- **变异测试方法论**：对护栏本身做变异测试（破坏代码看护栏会不会红），按结果把"验字符串"升级为"验代码形态与调用点"；
-- **服务端冒烟**：鉴权结构不变量、fail-open 部署折中的可发现性锁、兜底回复数据完整性。
+- **46 条静态护栏（650+ 项断言）**：睡眠模型数值边界、提议闸门语义（含跨午夜圆周中位）、备份凭据剥离与字段白名单、文案纪律（无医疗声称/机制因果）、桌宠行为形状……全部接入 CI，关键护栏带**反向自检**（把坏实现喂进同一断言路径必须报红）；
+- **变异测试**：对护栏本身做变异测试（66 条已知坏代码形态，全部必须被对应护栏抓住才算绿）；
+- **68 条 Playwright e2e**：五分区渲染、分区跟手滑动、自动提议全链路（含"编数字拒收"）、授权即时生效、备份往返、日历点选、全分区漫游零异常看门狗。
 
-## 🏗️ 项目结构
+## 🧱 技术栈
+
+- **前端**：React 19 + TypeScript + Vite + Tailwind CSS；Web Audio 实时合成音效；Recharts 图表；unDraw 插画
+- **移动端**：Capacitor 8 原生封装（minSdk 24），GitHub Actions 全自动出包
+- **端侧 AI**：wllama + Qwen3-0.6B（Web）/ Google MediaPipe + Gemma 3 1B（Android，mmap 加载、断点续传、流式生成）
+- **原生插件**：护眼滤镜、桌宠行为系统（独立渲染线程）、精确闹钟、使用行为信号、桌面小组件
+
+<details>
+<summary><b>项目结构</b></summary>
 
 ```
 somnacare/
@@ -225,69 +205,42 @@ somnacare/
 │   ├── utils/             # 睡眠评分与分期推演、临床规则引擎、洞察引擎、
 │   │                      # 端侧 LLM、提议引擎与模型、原生闹钟、护眼滤镜、主题系统
 │   └── types/             # 领域模型
-├── plugins/cap-gemma-llm/ # 本地插件（MediaPipe Gemma、护眼服务、到点提醒、
-│   │                      # 桌宠行为系统、图标切换）
+├── plugins/cap-gemma-llm/ # 本地插件（MediaPipe Gemma、护眼服务、桌宠行为系统、桌面小组件）
 ├── plugins/cap-usage-signal/ # 使用行为信号（亮屏事件聚合，自动提议数据源）
-├── tools/                 # 图标/启动屏生成器、GKD 规则导入/刷新、46 条静态护栏
-├── native-resources/      # 全密度图标、四主题图标、自适应前景、铃声
+├── tools/                 # 截图采集、图标/启动屏生成器、GKD 规则导入、46 条静态护栏
 ├── docs/screenshots/      # README 截图
 ├── tests/e2e/             # Playwright：smoke / 提议链路 / 全应用流程 / 朋友圈
 └── .github/workflows/     # CI：push 自动构建 APK；打 v* tag 自动发 Release
 ```
 
-## 🛠️ 构建与开发
-
-```bash
-npm install --legacy-peer-deps
-npm run dev          # http://localhost:3000
-
-npm run verify       # 46 条静态护栏（650+ 断言，关键护栏带反向自检）
-npm run build        # Web 产物（PWA 可直接部署 dist/）
-npx playwright test  # 68 条浏览器 e2e
-
-# Android APK（需 Android SDK / JDK 21）
-npm run build && npx cap add android && npx cap sync android
-cd android && ./gradlew assembleDebug
-
-# 重新生成开屏广告规则（可选；需要 GKD_subscription 的 dist/gkd.json5）
-npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5
-```
-
-不想配环境？推送 `main` 自动构建（Actions 页下载需登录）；**打 `v*` 标签**自动发布到公开 [Releases](../../releases)，任何人无需登录即可下载。
-
-## 🚀 发布与签名（重要）
-
-APK 由 CI 用**固定签名**构建：签名密钥存放在 GitHub Secrets（`ANDROID_KEYSTORE_BASE64/PASSWORD/KEY_ALIAS/KEY_PASSWORD`），仓库中不含任何密钥。**同一签名 = 覆盖安装保留全部数据**。
-
-⚠️ **keystore 必须备份**：本地原件在 `~/.somnacare-signing/`（含密码，勿提交、勿外传）。**keystore 一旦丢失，已安装用户将永远无法覆盖更新**——丢失等于换一把钥匙，所有存量安装都得卸载重装。
+</details>
 
 ## ⚠️ 免责声明
 
-本项目为个人作品，仅供学习与个人使用（MIT）。所有睡眠分析结果均为模型估算值，不构成医疗诊断或治疗建议；如有睡眠障碍请咨询专业医生。
+本项目为个人作品，仅供学习与个人使用。所有睡眠分析结果均为模型估算值，不构成医疗诊断或治疗建议；如有睡眠障碍请咨询专业医生。
+
+## 📄 许可证与致谢
+
+- **代码**：[MIT](LICENSE)（含素材授权例外一节）
+- **角色美术**（鲸鱼娘桌宠素材）：**不在 MIT 范围内**，非商业授权、须保留署名，署名链见 [`pet/NOTICE.md`](plugins/cap-gemma-llm/android/src/main/assets/pet/NOTICE.md)
+- **池塘引擎**（`src/pond/`）：移植自 [nagomi](https://github.com/msk1039/nagomi)（PolyForm Noncommercial 1.0.0），**不在 MIT 范围内**
+- **广告规则**：参考 [GKD_subscription](https://github.com/Lin-arm/GKD_subscription)（构建时拉取并经安全审计）
+- 图表 [Recharts](https://github.com/recharts/recharts) · 插画 [unDraw](https://undraw.co) · 组件语法参考 shadcn/ui Charts / Tremor
 
 ## 📸 截图维护
 
-`docs/screenshots/` 下的截图用于本 README。界面迭代后按下表重截（390×844 或真机等比）：
+`docs/screenshots/` 由 [`tools/capture-screenshots.mts`](tools/capture-screenshots.mts) 自动采集（web 预览 = APK 同一套 WebView 渲染，390×844 @2x）。界面迭代后重截：
 
-| 文件名 | 内容 |
-|---|---|
-| `sleep-tab.png` / `sleep-auto-mode.jpg` | 睡眠分区（手动/自动记录） |
-| `trends-circadian.png` | 趋势 · 起卧时段（默认视图：哑铃点线 + 目标窗 + 均值） |
-| `trends-tab.png` | 趋势 · 得分曲线或分期估算 |
-| `eyecare-health.png` | 护眼 · 用眼日报 |
-| `winddown-card.png` | 首页 · 放下手机前的一小时 |
-| `eyecare-tab.png` | 护眼 · 滤镜与场景预设 |
-| `ai-tab.png` | AI 顾问 |
-| `sound-mixer.png` | 助眠音景混音器 |
-| `auto-proposal-card.png` / `proposal-selfcheck.jpg` | 自动提议卡 / 自检面板 |
-| `moments-postcard.jpg` | 大肥鱼的朋友圈 |
+```bash
+npm run dev &          # 若 dev server 未在跑
+npx tsx tools/capture-screenshots.mts
+```
 
-## 📄 License
+| 文件 | 内容 | 采集方式 |
+|---|---|---|
+| `sleep-tab.png` | 睡眠分区 · 晨间评分环 | 假时钟 08:00 + 近 3 周种子数据 |
+| `auto-proposal-card.png` | 自动提议卡 | 假时钟 07:50 + 亮屏事件 mock（旅程1 配方） |
+| `sleep-monitor.png` / `sound-mixer.png` | 床头监测 / 音景混音器 | 睡眠页点按对应入口 |
+| `trends-tab.png` / `ai-tab.png` / `eyecare-tab.png` / `settings-tab.png` | 四分区首屏 | 底栏导航 |
+| `moments-postcard.jpg` | 旅行明信片 | 需种子旅行状态，**当前为 v1.38 真机旧图** |
 
-代码为 [MIT](LICENSE)（含素材授权例外一节）。
-角色美术素材**不在 MIT 范围内**：非商业授权、须保留署名，署名链见
-`plugins/cap-gemma-llm/android/src/main/assets/pet/NOTICE.md`
-（樱花变体同源同条款，见 `pet-sport/NOTICE.md`）。
-Today 页"活的海"池塘引擎同样**不在 MIT 范围内**：移植自开源项目
-[nagomi](https://github.com/msk1039/nagomi)（PolyForm Noncommercial 1.0.0，
-非商业使用，署名 Mayank Kadam），全文见 `src/pond/LICENSE.nagomi`。
