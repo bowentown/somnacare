@@ -502,7 +502,10 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-lg transition-all relative overflow-hidden`}>
         {!sleepStartTime && visibleProposal ? (
           /* ── 提议态：昨晚手机使用 → 待确认（P3）。确认 = 1 次点击 ── */
-          <div className="space-y-3.5">
+          // wind-down-card（第 135 轮暴露）：e2e 断言必须收在卡内——
+          // document.body.innerText 的跨元素正则会命中页面其它分区的
+          // "HH:MM 放下"行（审查报告 P1-5 实测的确定性污染源）
+          <div className="space-y-3.5" data-testid="wind-down-card">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
                 <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>

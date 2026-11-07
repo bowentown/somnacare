@@ -130,13 +130,13 @@
       "date": "2026-10-01",
       "bedtime": "01:00",
       "wakeTime": "01:45",
-      "durationMinutes": 43,
+      "durationMinutes": 33,
       "deepSleepMinutes": 5,
-      "lightSleepMinutes": 38,
+      "lightSleepMinutes": 28,
       "remSleepMinutes": 0,
-      "awakeMinutes": 2,
-      "sleepScore": 68,
-      "sleepEfficiency": 96,
+      "awakeMinutes": 12,
+      "sleepScore": 64,
+      "sleepEfficiency": 73,
       "latencyMinutes": 12,
       "latencyEstimated": true,
       "wakeCount": 1,
@@ -146,20 +146,20 @@
         {
           "stage": "awake",
           "startTime": "01:00",
-          "endTime": "01:02",
-          "durationMinutes": 2
+          "endTime": "01:12",
+          "durationMinutes": 12
         },
         {
           "stage": "deep",
-          "startTime": "01:02",
-          "endTime": "01:07",
+          "startTime": "01:12",
+          "endTime": "01:17",
           "durationMinutes": 5
         },
         {
           "stage": "light",
-          "startTime": "01:07",
+          "startTime": "01:17",
           "endTime": "01:45",
-          "durationMinutes": 38
+          "durationMinutes": 28
         }
       ]
     },
@@ -620,7 +620,7 @@
   "m3000": {
     "record": {
       "id": "g-3000",
-      "date": "2026-10-01",
+      "date": "2026-10-02",
       "bedtime": "10:00",
       "wakeTime": "02:00",
       "durationMinutes": 943,
@@ -809,13 +809,13 @@
       "date": "2026-10-01",
       "bedtime": "23:50",
       "wakeTime": "00:10",
-      "durationMinutes": 18,
+      "durationMinutes": 8,
       "deepSleepMinutes": 2,
-      "lightSleepMinutes": 16,
+      "lightSleepMinutes": 6,
       "remSleepMinutes": 0,
-      "awakeMinutes": 2,
-      "sleepScore": 68,
-      "sleepEfficiency": 90,
+      "awakeMinutes": 12,
+      "sleepScore": 55,
+      "sleepEfficiency": 40,
       "latencyMinutes": 12,
       "latencyEstimated": true,
       "wakeCount": 1,
@@ -825,20 +825,20 @@
         {
           "stage": "awake",
           "startTime": "23:50",
-          "endTime": "23:52",
-          "durationMinutes": 2
+          "endTime": "00:02",
+          "durationMinutes": 12
         },
         {
           "stage": "deep",
-          "startTime": "23:52",
-          "endTime": "23:54",
+          "startTime": "00:02",
+          "endTime": "00:04",
           "durationMinutes": 2
         },
         {
           "stage": "light",
-          "startTime": "23:54",
+          "startTime": "00:04",
           "endTime": "00:10",
-          "durationMinutes": 16
+          "durationMinutes": 6
         }
       ]
     },

@@ -434,9 +434,11 @@ test('旅程7b 改一下：卡片预填到补录弹窗 → 修正后以 manual �
   await page.waitForTimeout(4200);
 
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
-  const cardText = await page.evaluate(() => document.body.innerText);
-  const shown = cardText.match(/(\d{2}:\d{2}) 放下/);
-  expect(shown).toBeTruthy();
+  // 卡内断言（第 135 轮，审查 P1-5）：body.innerText 的跨行/跨元素正则会命中
+  // 其它分区的"HH:MM 放下"行——收进 wind-down-card 并拆成两条独立断言
+  const card = page.getByTestId('wind-down-card');
+  await expect(card).toContainText('放下');
+  await expect(card).toContainText(/\d{2}:\d{2}/);
 
   await page.getByRole('button', { name: '改一下' }).click();
   await expect(page.getByText('补录睡眠')).toBeVisible();
@@ -1727,18 +1729,38 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
     await expect(cal.getByRole('button', { name: '下一月' })).toBeEnabled();
   }
 
-  // 点选前晚 → 详情切换（旧夜的时刻必须消失，不能只是叠加）
+  // 点选前晚 → 详情切换（旧夜的时刻必须消失，不能只是叠加）。
+  // ★ 先按 data-view-month 把视图切到目标格所在月（第 135 轮，审查 P0-1）：
+  //   每月 1-3 日种子跨月，目标格可能落在相邻月——此前直接点 data-date
+  //   假定"目标总在默认视图月里"，冻结 11-01/02/03 确定性失败
+  const ensureMonthInView = async (dateKey: string) => {
+    const targetMonth = dateKey.slice(0, 7);
+    for (let i = 0; i < 3; i++) {
+      const current = await cal.getAttribute('data-view-month');
+      if (current === targetMonth) return;
+      // 月份字符串比较即方向：目标更晚 → 下一月，更早 → 上一月
+      await cal.getByRole('button', { name: current! < targetMonth ? '下一月' : '上一月' }).click();
+      await page.waitForTimeout(120);
+    }
+  };
+  await ensureMonthInView(dstr(-2, base));
   await cal.locator(`[data-date="${dstr(-2, base)}"]`).click();
   await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
   await expect(detail).not.toContainText('就寝 23:10');
 
-  // 点选无记录日 → 诚实空态。候选必须落在默认视图月内（月历视图跟随
-  // 最近夜所在月）：同月场景用今天（future 格，今晚未完成）；跨月场景
-  // （今天=1 号）用最早夜前一天
-  const missingD = sameMonth
-    ? new Date(base.getFullYear(), base.getMonth(), base.getDate())
-    : new Date(firstD.getFullYear(), firstD.getMonth(), firstD.getDate() - 1);
-  const missKey = `${missingD.getFullYear()}-${String(missingD.getMonth() + 1).padStart(2, '0')}-${String(missingD.getDate()).padStart(2, '0')}`;
+  // 点选无记录日 → 诚实空态。候选从【当前视图月】里现算（读 data-view-month）：
+  // 从 28 号往前找第一个不在种子里的日期——任何月份都必然存在（只有 3 条种子）
+  const viewMonth = await cal.getAttribute('data-view-month');
+  expect(viewMonth).toMatch(/^\d{4}-\d{2}$/);
+  const seedKeys = [dstr(-1, base), dstr(-2, base), dstr(-3, base)];
+  const [vy, vm] = viewMonth!.split('-').map(Number);
+  let missKey = '';
+  for (let d = 28; d >= 1; d--) {
+    const key = `${viewMonth}-${String(d).padStart(2, '0')}`;
+    if (!seedKeys.includes(key)) { missKey = key; break; }
+  }
+  expect(missKey).not.toBe('');
+  await ensureMonthInView(`${vy}-${String(vm).padStart(2, '0')}`);
   await cal.locator(`[data-date="${missKey}"]`).click();
   await expect(detail).toContainText('该日无记录');
 

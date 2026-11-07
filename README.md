@@ -192,9 +192,12 @@ npm run dev          # http://localhost:3000
 | `SYSTEM_ALERT_WINDOW` | 护眼全局滤镜 / 到点提醒悬浮动画 / 桌宠悬浮窗 |
 | `FOREGROUND_SERVICE(+SPECIAL_USE)` | 护眼滤镜、就寝提醒、桌宠、响铃前台服务 |
 | `PACKAGE_USAGE_STATS`（可选授权） | 自动记录提议与使用对照的亮屏时刻聚合；不授权则对应功能优雅降级 |
-| `INTERNET` | 仅应用内更新检查与下载 APK（用户点击时）；睡眠数据不上传 |
+| `INTERNET` | APK 形态下仅两类出口：① 应用内更新检查与下载 APK（用户点击时）；② 【用户主动】的 AI 出口——端侧模型下载（hf-mirror/HuggingFace，百 MB 级）、DeepSeek/自定义端点直连（填了 Key 才启用）。睡眠数据不出网。Web/PWA·自部署形态另有 `/api/sleep/*` 服务端代理（见下节） |
 | `REQUEST_INSTALL_PACKAGES` | 下载完成后调起系统安装器（仍需用户允许"安装未知应用"） |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | 用户可选地把应用加入电池优化白名单，降低无障碍服务被系统清理的概率 |
+| 无障碍服务（AdSkipService，可选启用） | 读【前台应用的界面树】以匹配并自动点击广告关闭按钮；规则本地存储、可随时在系统设置关闭；默认关闭。该权限组合（含 `QUERY_ALL_PACKAGES`）不符合 Google Play 政策——本应用仅侧载/自建渠道分发 |
+
+**形态差异（数据去向）**：APK 主路径 100% 离线；Web/PWA·自部署形态下，AI 分析走 `/api/sleep/analyze` 代理——该路径会把【7 晚精简睡眠摘要】与你的 AI 配置（含 Key，若填写）发往你部署的那台服务器，由它代发上游。直连模式（APK 内填 Key）不经任何服务端。备份导出不含 `customBaseUrl`（防改道）。
 
 ## 🧬 技术栈
 

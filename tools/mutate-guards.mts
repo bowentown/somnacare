@@ -441,9 +441,69 @@ const MUTATIONS: Mutation[] = [
   {
     file: 'src/utils/sleepScore.ts',
     guard: 'verify-regularity.mts',
-    find: 'const mid = (midDate.getTime() - localMid) / 60000;',
-    replace: 'const mid = (midDate.getTime() - localMid) / 60000 + (free.length % 2 === 0 ? 720 : 0);',
-    note: 'MSFsc 偶数对自由日 +12h 偏移回归（历元均值混入窗口中心日期的半天偏移，第 134 轮修正对象）',
+    find: 'const anchor = startClock < 720 ? startClock + 1440 : startClock;',
+    replace: 'const anchor = startClock + 720;',
+    note: 'MSFsc 均值整体 +12h 偏移（偶数对历元均值缺陷的当代形态，第 134 轮修正对象）',
+  },
+  {
+    file: 'src/utils/sleepScore.ts',
+    guard: 'verify-regularity.mts',
+    find: 'const anchor = startClock < 720 ? startClock + 1440 : startClock;',
+    replace: 'const anchor = startClock;',
+    note: 'MSFsc 跨午夜中点算术平均回归（23:55/03:00 被拉向正午——第 135 轮审查 P1-4）',
+  },
+  {
+    file: 'src/utils/sleepScore.ts',
+    guard: 'verify-regularity.mts',
+    // ★ 锚点必须带 .slice(0, days) 尾（computeSleepNeed 有一模一样的过滤行，
+    //   单行锚点会替换到先出现的它而假绿）
+    find: 'return t >= windowStart && t < dayStart;\n    })\n    .slice(0, days);',
+    replace: 'return true;\n    })\n    .slice(0, days);',
+    note: '睡债比值退回只切条数不看日期 → 三个月前记录冒充近 7 夜（第 135 轮审查 P2-5）',
+  },
+  {
+    file: 'src/utils/sleepRegularity.ts',
+    guard: 'verify-regularity.mts',
+    find: "const dayShift = chronotype === 'day' || isNap\n      ? 0\n      : (parseInt(r.bedtime.split(':')[0], 10) < 12 ? 1 : 0);",
+    replace: "const dayShift = chronotype === 'day'\n      ? 0\n      : (parseInt(r.bedtime.split(':')[0], 10) < 12 ? 1 : 0);",
+    note: '上午小睡回归 +1 天位移 → 区间与 date 键错位一天（第 135 轮审查 P2-1）',
+  },
+  {
+    file: 'src/utils/sleepRegularity.ts',
+    guard: 'verify-regularity.mts',
+    find: '      end = start + 60000;',
+    replace: '      end = start + 86400000;',
+    note: '零长区间回归 24h 放大 → 畸形数据把 SRI 顶满分（第 135 轮审查 P2-4）',
+  },
+  {
+    file: 'src/utils/recordFilter.ts',
+    guard: 'verify-regularity.mts',
+    find: "return { ...r, kind: undefined, date: nightKeyOfBed(bedEpoch, 'night') };",
+    replace: "return { ...r, kind: undefined, date: shiftDate(r.date, -1) };",
+    note: '昼转夜退回常数 -1 → 23:00 就寝被错挪前一天（第 135 轮审查 P2-2）',
+  },
+  {
+    file: 'src/utils/recordBuilder.ts',
+    guard: 'verify-record-builder.mts',
+    find: '    awakeMin = latencyUsed;',
+    replace: '    awakeMin = Math.min(2, exactDurationMinutes);',
+    note: '短窗回归固定 2 分觉醒 → 字段/分期/评分三方矛盾复发（第 135 轮审查 P2-3）',
+  },
+  {
+    file: 'src/utils/recordBuilder.ts',
+    guard: 'verify-record-builder.mts',
+    find: "  const recordDate = kind === 'nap'\n    ? naturalDateKey(effectiveStart)\n    : nightKeyOfBed(effectiveStart.getTime(), input.chronotype === 'day' ? 'day' : 'night');",
+    replace: "  const recordDate = nightKeyOfBed(effectiveStart.getTime(), input.chronotype === 'day' ? 'day' : 'night');",
+    note: '小睡退回夜归属键 → 上午小睡 date 挪到前一天（第 135 轮审查 P2-1）',
+  },
+  {
+    file: 'src/utils/careNotifications.ts',
+    guard: 'verify-notification-matrix.mts',
+    // ★ 锚点带召回独有的 setItem 行（晨间确认有同形态权限分支，单块锚点
+    //   会替换到先出现的它而假绿）
+    find: "try { localStorage.setItem(RECALL_WEEK_KEY, weekKey); } catch { /* ignore */ }\n    if (!(await ensureChannelAndPerm())) {\n      try { localStorage.removeItem(RECALL_WEEK_KEY); } catch { /* ignore */ }\n      return 'noop';\n    }",
+    replace: "try { localStorage.setItem(RECALL_WEEK_KEY, weekKey); } catch { /* ignore */ }\n    if (!(await ensureChannelAndPerm())) return 'noop';",
+    note: '召回周占位在权限拒绝后不回滚 → 本周授权也不再补排（第 135 轮审查 P2-6）',
   },
 ];
 

@@ -292,7 +292,7 @@ function generateClinicalSleepAnalysis(recentLogs: any[] = [], userProfile: any 
     issues.push('午后摄入咖啡因阻断腺苷受体清除，导致夜间睡眠压力（Homeostatic Sleep Drive）积累不足');
   }
   if (Number(avgWake) > 1.2) {
-    issues.push(`夜间平均觉醒 ${avgWake} 次，截断慢波深睡（N3阶段）周期的完整性，易诱发晨起残余昏睡感`);
+    issues.push(`夜间平均觉醒 ${avgWake} 次（模型估算）。觉醒偏多时，模型估算的深睡占比通常也随之下降——参考第 3 条建议尝试减少夜间干扰`);
   }
   if (avgLatency > 22) {
     issues.push('入睡潜伏期偏长（超20分钟），表明睡前交感神经过度兴奋，副交感神经未能及时切换接管');
@@ -312,7 +312,7 @@ function generateClinicalSleepAnalysis(recentLogs: any[] = [], userProfile: any 
     scoreSummary: `近${count || 7}天平均睡眠${hours}小时，深睡率${deepPct}%，总体处于${healthGrade}水平。`,
     clinicalMetricsAnalysis: {
       durationAssessment: `周期平均睡眠时长为 ${hours} 小时（目标 ${targetH} 小时），睡眠债务差额约 ${debt} 小时。总体时长${Math.abs(Number(debt)) <= 0.5 ? '充足合理，利于神经元代谢更新' : '稍显不足，建议周末避免过度补觉以免打乱时相'}。`,
-      deepSleepAssessment: `深睡眠（慢波期N3）平均达 ${avgDeep} 分钟，占总睡眠比 ${deepPct}%（临床推荐健康值为 15%-25%）。该阶段脑脊液加速冲洗大脑代谢废物（含β-淀粉样蛋白），对体力与免疫修复至关重要。`,
+      deepSleepAssessment: `深睡眠平均达 ${avgDeep} 分钟，占总睡眠比 ${deepPct}%（常见参考区间约 15%-25%，仅作粗略对照）。注意：这是按生理周期模型估算的值，不是仪器实测，数值请以体感为准。`,
       remSleepAssessment: `快速眼动期(REM)平均 ${avgRem} 分钟，占比 ${remPct}%（参考健康值为 20%-25%）。此时脑电波接近清醒，是白天工作情绪过滤、记忆长时存储与创造力神经重组的关键窗口。`,
       efficiencyAssessment: `睡眠效率评分为 ${avgEfficiency}%（临床优良阈值 >85%），卧床实际入睡时间占比良好，夜间偶有 ${avgWake} 次微觉醒，均在良性生理范围内。`,
       sleepLatencyAssessment: `平均入睡潜伏期为 ${avgLatency} 分钟（健康参考 10-20 分钟），反映睡前神经松弛机制运行顺畅。`,
@@ -356,7 +356,7 @@ function generateClinicalChatResponse(messages: any[] = [], currentSleepStats: a
 
 
   if (text.includes('不打呼') || text.includes('打呼噜') || text.includes('鼾声') || text.includes('可行') || text.includes('检测') || text.includes('原理')) {
-    return `这是一个非常专业且切中要害的问题！很多朋友误以为“手机测睡眠就是录打呼噜”，其实完全不是：\n\n1. 🫁 **体动节律学 (Actigraphy) 是核心**：\n医学研究表明，人类进入非快速眼动期（N1-N3）特别是慢波深睡眠时，全身横纹肌张力会降至极低，翻身和肢体位移基本归零；而在浅睡或觉醒阶段，会有频繁的翻身与被褥摩擦微动。手机即使放在床头柜或枕边，麦克风监测的主要是这种**床品摩擦频次和呼吸起伏的周期性包络**，而不是只听鼾声！\n\n2. 📊 **呼吸频率深浅变化**：\n深睡时呼吸深长平缓（约12-14次/分），浅睡与REM梦境期呼吸较快且不规则。即便您呼吸非常安静、完全不打呼噜，声波的微小周期性起伏依然能提供可靠特征。\n\n3. 💡 **如果您觉得夜间放手机太繁琐**：\n您完全不需要整夜开启夜间监测！每天早上起床后，只需在APP首页点击【晨起极速记录】，花3秒钟填一下入睡和起床时间，APP会按人类生理周期模型（每90分钟一个轮次）估算深睡与REM占比并给出参考评分——都是模型估算值，不是仪器实测，完全零打扰、不耗电、不录音！`;
+    return `先说结论：手机的声级采样只能做很粗的环境响度估计，**不足以判断睡眠分期**——本应用也不会用声音推断深睡/REM，所有分期都是按生理周期模型给出的估算值，界面有标注。\n\n1. 🫁 **体动/使用节律是主要依据**：\n本应用主要参考手机使用与亮屏节律（近似 Actigraphy 的思路）来推算入睡与醒来时间——这比声音可靠得多。\n\n2. 🔊 **声音采样的真实边界**：\n夜间声音只用于记录环境响度事件（吵闹/安静），帮您留意噪音干扰；它听不出深睡还是浅睡，也不上传任何音频。\n\n3. 💡 **如果觉得整夜监测麻烦**：\n早上用【晨起极速记录】花几秒填入睡/起床时间即可——APP 按生理周期模型（约90分钟一个轮次）估算分期占比并给出参考评分，都是模型估算值，不是仪器实测，零打扰、不耗电、不录音！`;
   }
 
   if (text.includes('深睡') || text.includes('深度睡眠') || text.includes('提升')) {
@@ -449,12 +449,14 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
     ) {
       try {
         const baseUrl = aiConfig.customBaseUrl.replace(/\/+$/, '');
+        const upstream = upstreamDeepSeekSignal(res);   // 第 135 轮：上游挂起不再无限占住连接
         const customRes = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${aiConfig.customApiKey.trim()}`,
           },
+          signal: upstream.signal,
           body: JSON.stringify({
             model: aiConfig.customModelName || 'gpt-4o-mini',
             messages: [
@@ -464,7 +466,7 @@ app.post('/api/sleep/analyze', async (req: Request, res: Response): Promise<void
             response_format: { type: 'json_object' },
             temperature: 0.3,
           }),
-        });
+        }).finally(() => upstream.done());
 
         if (customRes.ok) {
           const customData = await customRes.json();
@@ -634,18 +636,20 @@ ${JSON.stringify(currentSleepStats || {})}
           })),
         ];
 
+        const upstream = upstreamDeepSeekSignal(res);   // 第 135 轮：同 analyze 路径补超时
         const customRes = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${aiConfig.customApiKey.trim()}`,
           },
+          signal: upstream.signal,
           body: JSON.stringify({
             model: aiConfig.customModelName || 'gpt-4o-mini',
             messages: customMessages,
             temperature: 0.7,
           }),
-        });
+        }).finally(() => upstream.done());
 
         if (customRes.ok) {
           const customData = await customRes.json();

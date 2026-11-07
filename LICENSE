@@ -34,6 +34,10 @@ SOFTWARE.
 - `plugins/cap-gemma-llm/android/src/main/assets/pet-sport/**`
 - `public/whale-selfie*.png`
 
+此外，`src/pond/` 下的池塘渲染核心取自开源项目 nagomi（原作者 Mayank Kadam），
+以 **PolyForm Noncommercial 1.0.0** 授权（全文见 `src/pond/LICENSE.nagomi`）——
+该目录同样【不在 MIT 范围内】，仅限非商业使用，二次分发须保留其许可与署名声明。
+
 这些素材源自鲸鱼娘角色创作社区（原作：上善；DeepSeek 女仆鲸鱼娘二次设计：
 ZipZipPipe；整理与重绘：Henryang777），仅随免费、离线、无广告的
 SomnaCare 应用分发。

@@ -92,7 +92,16 @@ export const SleepCalendar: React.FC<{
     score === undefined ? null : score >= 90 ? 1 : score >= 80 ? 0.78 : score >= 60 ? 0.55 : 0.3;
 
   return (
-    <div data-testid="sleep-calendar" role="group" aria-label="睡眠评分月历，点按查看单晚详情" className="space-y-2">
+    <div
+      data-testid="sleep-calendar"
+      // 当前视图月（YYYY-MM，第 135 轮暴露）：e2e 旅程33 据此做"点按前先切到
+      // 目标月"的鲁棒导航——此前测试假定目标日期总在默认视图月里，每月 1-3 日
+      // 种子跨月时确定性失败（审查报告 P0-1）
+      data-view-month={`${view.getFullYear()}-${String(view.getMonth() + 1).padStart(2, '0')}`}
+      role="group"
+      aria-label="睡眠评分月历，点按查看单晚详情"
+      className="space-y-2"
+    >
       {/* 月份标题即导航：‹ 10月 ›（跨年月份补年份） */}
       <div className="flex items-center justify-center gap-4">
         <button

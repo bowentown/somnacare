@@ -21,6 +21,9 @@ import { recordOutcome, dropShadowEntry, pruneShadowEntries, clearShadowOutcomes
 import { SettingsTab } from './components/SettingsTab';
 import { EyeCareTab } from './components/EyeCareTab';
 import { BottomNavBar, NavTab } from './components/BottomNavBar';
+
+// 分区顺序（第 135 轮提为模块级常量）：组件体内每渲染新建数组纯浪费
+const MODULE_TAB_ORDER: NavTab[] = ['today', 'trends', 'coach', 'eyecare', 'settings'];
 import { ActiveSleepModal, hasRecoverableActiveSleepSession } from './components/ActiveSleepModal';
 import { ManualLogModal } from './components/ManualLogModal';
 import { APP_THEMES } from './utils/themeStyles';
@@ -148,7 +151,8 @@ export const App: React.FC = () => {
   const justStoppedRef = useRef(0);
   const [bedtimeReminder, setBedtimeReminder] = useState<BedtimeReminderPhase | null>(null);
   const [sleepStartSignal, setSleepStartSignal] = useState(0);
-  const TAB_ORDER: NavTab[] = ['today', 'trends', 'coach', 'eyecare', 'settings'];
+  // TAB_ORDER 在模块级（第 135 轮）：此前每渲染新建数组
+  const TAB_ORDER = MODULE_TAB_ORDER;
   // 分区懒渲染（第 74 轮性能）：首帧只渲染当前分区，其余按需挂载且挂载后常驻。
   // 此前五分区全量常驻——趋势页的 Recharts、护眼层、AI 面板都在开屏动画窗口里
   // 抢主线程，冷启动帧预算被白白吃掉。相邻分区在空闲/手势开始时预热，滑动不空白。
@@ -303,6 +307,9 @@ export const App: React.FC = () => {
 
   // 二段式补水（第 128 轮）：挂载后动态加载懒 chunk 做清洗/迁移/重打分。
   // needsPersist=true → 撤销首次写回跳过（迁移结果必须落盘）
+  // .catch 兜底（第 135 轮）：懒 chunk 加载失败/存储被禁/迁移抛错曾让
+  // setHydrated 永不执行——应用永久停在空壳且无任何提示。现在失败也放行
+  // 挂载（空态可用），同时禁止本会话写回（存储不可信时不覆盖磁盘）。
   useEffect(() => {
     let cancelled = false;
     import('./utils/recordsHydrate')
@@ -311,8 +318,16 @@ export const App: React.FC = () => {
         if (cancelled) return;
         setRecords(r.records);
         if (r.needsPersist) skipFirstPersistRef.current = false;
-        if (r.skipFirstPersist) skipFirstPersistRef.current = true;
+        if (r.skipFirstPersist || r.corrupted) skipFirstPersistRef.current = true;
+        if (r.corrupted) showToast('检测到本地数据异常，原始数据已备份；本次以空数据启动', 6000);
         setHydrated(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('[hydrate] 补水失败：', e);
+        skipFirstPersistRef.current = true;   // 存储不可信：本会话绝不写回
+        setHydrated(true);
+        showToast('本地数据加载失败，本次以空数据启动（不会覆盖原数据）；重启可重试', 6000);
       });
     // 旅行到达弹窗（第 128 轮顺带移出首帧）：原同步 readTravelState 只为取
     // pendingPostcardId，语义不变、时机延后到补水后
@@ -388,7 +403,6 @@ export const App: React.FC = () => {
         showToast(`发现 ${suspect.length} 条记录像白天小睡。若你的夜间记录曾消失过，可能是被它覆盖了——新版本已修复，可在偏好页手动补回`);
       }
     } catch { /* ignore */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // APK 启动时无条件同步一次闹钟到原生 AlarmManager（重启/重装后打开即恢复调度）
@@ -408,10 +422,6 @@ export const App: React.FC = () => {
   // 记录自动撤销。App 打开时同步一次即可（排进系统后离线仍会响）
   useEffect(() => {
     void syncRecallNotify(records);
-  }, [records]);
-  // 断记召回（第 124 轮）：missedDays ≥2 → 本周一条 21:00 温和提醒；
-  // 恢复记录自动撤销。App 打开时同步一次即可（通知排进系统后离线仍会响）
-  useEffect(() => {
   }, [records]);
 
   // Android 返回键治理（第 52 轮）——详见 hooks/appWatchers.ts
@@ -749,7 +759,6 @@ export const App: React.FC = () => {
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 响铃检测循环（每 10s 对表）

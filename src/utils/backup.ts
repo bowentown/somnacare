@@ -35,6 +35,9 @@ const KEYS = {
   skin: 'somnacare_pet_skin',
   bubble: 'somnacare_pet_bubble_every',
   petEnabled: 'somnacare_pet_enabled',
+  // 关怀通知开关（第 135 轮）：不进备份 → 换机后用户关掉的提醒会重新打开
+  notifyMorning: 'somnacare_notify_morning',
+  notifyRecall: 'somnacare_notify_recall',
 } as const;
 
 /** 这些字段属于"数据去向"类凭据，默认不进备份文件（customBaseUrl 第 45 轮 F1 加入：

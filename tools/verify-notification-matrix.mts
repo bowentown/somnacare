@@ -96,6 +96,18 @@ check('ID 分区：晨间 2M+ / 召回 3M+（闹钟 <1M、提议 ≥1M）',
     !doctored2.includes('RECALL_WEEK_KEY) === weekKey'));
 }
 
+// ── 召回周占位的权限拒绝回滚（第 135 轮，审查 P2-6）──
+check('召回：权限拒绝路径回滚周占位（残留 = 本周授权后也不再补排）',
+  care.includes("if (!(await ensureChannelAndPerm())) {")
+  && care.includes("try { localStorage.removeItem(RECALL_WEEK_KEY); } catch { /* ignore */ }\n      return 'noop';"));
+{
+  const doctored = care.replace(
+    "if (!(await ensureChannelAndPerm())) {\n      try { localStorage.removeItem(RECALL_WEEK_KEY); } catch { /* ignore */ }\n      return 'noop';\n    }",
+    "if (!(await ensureChannelAndPerm())) return 'noop';");
+  check('反向自检：权限拒绝回滚被剥后判据不再成立',
+    !doctored.includes("if (!(await ensureChannelAndPerm())) {"));
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——关怀通知矩阵护栏不符`);
   process.exit(1);

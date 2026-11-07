@@ -241,6 +241,71 @@ const check = (name: string, ok: boolean, detail = '') => {
     check('MSFsc：偶数对自由日（6 个）钟点均值不偏移（04:30 校正后 05:00）',
       s6 !== null && s6.label === '05:00' && s6.freeSamples === 6,
       `label=${s6?.label} free=${s6?.freeSamples}`);
+
+  }
+
+  // ── 第 135 轮审查修复的行为锁：nap 位移 / 零长区间 / MSFsc 跨午夜 / 睡债窗口 ──
+  {
+    const { sleepIntervalsOf } = await import(new URL('../src/utils/sleepRegularity.ts', import.meta.url).href);
+    const { computeSleepDebtRatio } = await import(new URL('../src/utils/sleepScore.ts', import.meta.url).href);
+    const napRec = { id: 'np', date: '2026-11-07', bedtime: '10:30', wakeTime: '11:10',
+      durationMinutes: 40, kind: 'nap', sleepScore: 80, sleepEfficiency: 90,
+      latencyMinutes: 5, wakeCount: 0, deepSleepMinutes: 4, lightSleepMinutes: 35, remSleepMinutes: 0, awakeMinutes: 1 } as any;
+    const napIv = sleepIntervalsOf([napRec], 'night')[0];
+    check('nap：上午小睡区间 = 记录日当天（不再 +1 天与 date 键错位）',
+      new Date(napIv.start).getDate() === 7 && new Date(napIv.start).getHours() === 10,
+      new Date(napIv.start).toString());
+    const nightRec = { id: 'nt', date: '2026-11-07', bedtime: '02:00', wakeTime: '10:00',
+      durationMinutes: 480, sleepScore: 85, sleepEfficiency: 90, latencyMinutes: 10,
+      wakeCount: 1, deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 70, awakeMinutes: 20 } as any;
+    const nightIv = sleepIntervalsOf([nightRec], 'night')[0];
+    check('night：凌晨夜睡位移保留（bed<12 → 次日物理区间）',
+      new Date(nightIv.start).getDate() === 8);
+    const zeroIv = sleepIntervalsOf([{ ...nightRec, bedtime: '23:00', wakeTime: '23:00' }], 'night')[0];
+    check('零长：钟点相同折算 1 分钟（不再放大成 24h 喂 SRI 满分）',
+      (zeroIv.end - zeroIv.start) === 60000, String((zeroIv.end - zeroIv.start) / 60000));
+    // MSFsc 跨午夜：自由日中点 23:55/02:00 → 环形口径 ≈00:58，算术均值会给 ~12:5x
+    const mkCross = (date: string, bed: string, wake: string) => ({ id: 'c' + date + bed, date, bedtime: bed,
+      wakeTime: wake, durationMinutes: 420, sleepScore: 85, sleepEfficiency: 90, latencyMinutes: 10,
+      wakeCount: 0, deepSleepMinutes: 80, lightSleepMinutes: 260, remSleepMinutes: 70, awakeMinutes: 10 } as any);
+    const crossRecs = [
+      // 醒在周六/日（NOW=2026-11-15 周日）。刻意混合【凌晨起睡】（02:30，
+      // startClock<12 → 锚定 +1440 生效）与【深夜起睡】（23:50，不锚定）：
+      // 去掉锚定时 390 与 1620 直接算术平均 → ~16:45 正午伪值被抓住
+      mkCross('2026-11-06', '02:30', '10:30'),   // 醒 11-07 六，中点 06:30（锚定形态）
+      mkCross('2026-10-30', '02:30', '10:30'),   // 醒 10-31 六
+      mkCross('2026-11-13', '23:50', '06:10'),   // 醒 11-14 六，中点 03:00
+      mkCross('2026-11-07', '23:50', '06:10'),   // 醒 11-08 日
+      // 工作日只取醒在周二~周五的夜（11-03/04/05/06 + 11-10/11/12/13）
+      ...[2, 3, 4, 5, 9, 10, 11, 12].map((i) => mkCross(`2026-11-${String(i).padStart(2, '0')}`, '23:00', '07:00')),
+    ];
+    const cross = computeMSFsc(crossRecs, 'night', NOW, 28);
+    const crossMin = cross ? cross.msfMinutes : -1;
+    // 本质性质：自由日中点全在 02:30-06:30（夜/凌晨域），MSFsc 也必须落在
+    // 该域（22:00-07:00）——算术均值/历元均值类缺陷会给 12:xx-16:xx 正午伪值
+    check('MSFsc：跨午夜中点走夜归属锚定连续均值（夜间域，非正午伪值）',
+      cross !== null && cross.freeSamples === 4 && (crossMin >= 1320 || crossMin <= 420),
+      `label=${cross?.label} free=${cross?.freeSamples}`);
+    // 睡债比值：窗口外陈旧记录不得冒充近期
+    const oldRecs = ['2026-08-01', '2026-08-02', '2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07']
+      .map((d) => ({ ...nightRec, id: 'o' + d, date: d, durationMinutes: 300 }));
+    check('睡债比值：3 个月前的记录不算"近 7 夜"（诚实缺省 0.4）',
+      computeSleepDebtRatio(oldRecs, 480, 7) === 0.4,
+      String(computeSleepDebtRatio(oldRecs, 480, 7)));
+    // 昼转夜重归类：直接求权威 nightKeyOfBed（第 135 轮审查 P2-2）——
+    // 常数 -1 会把 23:00 就寝错挪前一天
+    const { reclassifyForChronotype } = await import(new URL('../src/utils/recordFilter.ts', import.meta.url).href);
+    const dayRecs = [
+      { id: 'd1', date: '2026-11-06', bedtime: '23:00', wakeTime: '07:00', durationMinutes: 480, kind: 'night',
+        sleepScore: 85, sleepEfficiency: 90, latencyMinutes: 10, wakeCount: 0, deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 80, awakeMinutes: 10 },
+      { id: 'd2', date: '2026-11-06', bedtime: '02:00', wakeTime: '10:00', durationMinutes: 480, kind: 'night',
+        sleepScore: 85, sleepEfficiency: 90, latencyMinutes: 10, wakeCount: 0, deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 80, awakeMinutes: 10 },
+    ] as any;
+    const out = reclassifyForChronotype(dayRecs, 'night');
+    check('昼转夜：23:00 就寝保持当天（nightKeyOfBed 权威，不再常数 -1）',
+      out[0].date === '2026-11-06', out[0].date);
+    check('昼转夜：02:00 晨觉归前一天（夜归属语义保留）',
+      out[1].date === '2026-11-05', out[1].date);
   }
 }
 

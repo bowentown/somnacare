@@ -142,8 +142,14 @@ export async function syncRecallNotify(records: SleepRecord[], now: Date = new D
     if (localStorage.getItem(RECALL_WEEK_KEY) === weekKey) return 'noop';
     // 先占位再调度（第 124 轮）：StrictMode 双调 effect 时第二次读到占位即
     // noop——否则同一周会排两条召回。调度失败回滚占位，下轮补排。
+    // ★ 权限拒绝也是失败（第 135 轮修正）：ensureChannelAndPerm 返回 false
+    //   是【正常返回值】不走 catch——占位必须同样回滚，否则用户本周授权后
+    //   也不会再补排（实测复现）。
     try { localStorage.setItem(RECALL_WEEK_KEY, weekKey); } catch { /* ignore */ }
-    if (!(await ensureChannelAndPerm())) return 'noop';
+    if (!(await ensureChannelAndPerm())) {
+      try { localStorage.removeItem(RECALL_WEEK_KEY); } catch { /* ignore */ }
+      return 'noop';
+    }
     await pl.schedule?.({
       notifications: [{
         id: RECALL_MIN_ID,

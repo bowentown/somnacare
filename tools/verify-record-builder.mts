@@ -79,7 +79,7 @@ for (const [key, input] of Object.entries(inputs)) {
   const stageSum = built.record.stages.reduce((a: number, s: { durationMinutes: number }) => a + s.durationMinutes, 0);
   check(`边界 ${key}：分期总和 = duration + awake`, stageSum === built.record.durationMinutes + built.record.awakeMinutes,
     `${stageSum} vs ${built.record.durationMinutes + built.record.awakeMinutes}`);
-  check(`边界 ${key}：date = 夜归属（就寝那晚）`, built.record.date === g.date);
+  check(`边界 ${key}：date = 夜归属（夜睡）/ 自然日（小睡，第 135 轮）`, built.record.date === g.date);
 }
 
 // 反向自检：篡改输出（时长 +1）必须被逐字段断言抓出
@@ -130,3 +130,25 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log('\n✓ verify-record-builder：8 组黄金样本逐字段一致，边界行为完整保留');
+
+// ── 短窗不变量与 nap 自然日键（第 135 轮，审查 P2-3/P2-1）──
+{
+  const { buildRecordFromWindow } = await import(new URL('../src/utils/recordBuilder.ts', import.meta.url).href);
+  const wakeMs = new Date(2026, 10, 7, 11, 10).getTime();   // 2026-11-07 11:10 醒
+  const mk = (dur: number, latency?: number) => buildRecordFromWindow({
+    id: 't' + dur + (latency ?? ''),
+    sleepStartMs: wakeMs - dur * 60000, wakeMs, targetDurationHours: 8,
+    ...(latency !== undefined ? { userLatencyMinutes: latency } : {}),
+    chronotype: 'night',
+  } as any).record;
+  const r1 = mk(1), r2 = mk(2), r40 = mk(40, 60), rNap = mk(40);
+  const sum = (r: any) => r.deepSleepMinutes + r.lightSleepMinutes + r.remSleepMinutes + r.awakeMinutes;
+  check('短窗：分期四段之和 == 卧床窗（1/2 分窗不再出现分期和 > 窗长）',
+    sum(r1) === 1 && sum(r2) === 2, `1分:${sum(r1)} 2分:${sum(r2)}`);
+  check('短窗：字段/分期/评分共用钳后潜伏期（60 分不再原样进 40 分窗）',
+    r40.latencyMinutes === 39 && r40.awakeMinutes === 39
+    && r40.stages[0].durationMinutes === 39,
+    `latency=${r40.latencyMinutes} awake=${r40.awakeMinutes}`);
+  check('nap：上午小睡 date = 物理当天（自然日键，不再被 nightKeyOfBed 挪到前一天）',
+    rNap.date === '2026-11-07' && rNap.kind === 'nap', rNap.date);
+}

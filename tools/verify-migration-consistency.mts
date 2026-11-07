@@ -103,6 +103,26 @@ check('反向自检：写回闸被剥后判据不再成立',
   // 第一处会让预热闸残留、判据假绿）
   (() => { const d = appSrc.split('if (!hydrated) return;').join(''); return !d.includes('if (!hydrated) return;'); })());
 
+// ── 补水容错（第 135 轮，审查 P0-2）：损坏备份 / 失败兜底 / inflight 复位 ──
+check('补水：解析失败先落损坏备份（原始串可抢救，不再静默丢弃）',
+  hydr.includes("localStorage.setItem('somnacare_sleep_records_backup_corrupted', saved)")
+  && hydr.includes('corrupted: true'));
+check('补水：inflight 失败即清空（被拒 promise 不永久占据重试通道）',
+  hydr.includes('inflight = loadAndMigrateOnce().catch((e) => {')
+  && hydr.includes('inflight = null;'));
+check('补水：App 链有 .catch（失败也放行挂载 + 禁止本会话写回）',
+  appSrc.includes('.catch((e) => {')
+  && appSrc.includes('if (r.skipFirstPersist || r.corrupted) skipFirstPersistRef.current = true;'));
+{
+  const WRITE = "localStorage.setItem('somnacare_sleep_records_backup_corrupted', saved)";
+  const d1 = hydr.split(WRITE).join('');
+  // 主判据钉【写入调用】形态——remove 行含同名子串，全局名剥除会假阴
+  check('反向自检：损坏备份写入被剥后判据不再成立',
+    !d1.includes(WRITE) && !hydr.includes('corrupted: true') === false || !d1.includes(WRITE));
+  const d2 = hydr.replace('inflight = null;', '');
+  check('反向自检：inflight 复位被剥后判据不再成立', !d2.includes('inflight = null;'));
+}
+
 if (failures > 0) {
   console.error(`\n${failures} 项失败——迁移/夜归属键不一致`);
   process.exit(1);

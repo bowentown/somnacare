@@ -6,8 +6,10 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
 
+# 顶层只读（第 135 轮收紧）：构建 job 执行 npm ci / 第三方规则拉取 / Gradle
+# 等大量外部输入，不应持有写仓库权限；发布 Release 的写权限只授予 release-apk
 permissions:
-  contents: write
+  contents: read
 
 # 推 main 后紧跟推 tag 会触发两个构建，前一个白跑 ~8 分钟；
 # 并发组按 ref 分组：同分支/同标签的新运行取消旧的（单人仓库），但
@@ -348,6 +350,9 @@ jobs:
   release-apk:
     name: Publish Release APK
     needs: build-apk
+    # 只有发 Release 的 job 需要写权限（创建 Release 与上传资产）
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

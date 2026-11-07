@@ -8,6 +8,7 @@
  * 旧数据缺省视为夜睡（isNight），行为与历史版本完全一致。
  */
 import { SleepRecord } from '../types/sleep';
+import { nightKeyOfBed } from './dateUtils';
 
 /** 旧数据无 kind → 视为夜睡 */
 export const isNap = (r: SleepRecord): boolean => r.kind === 'nap';
@@ -79,8 +80,13 @@ export function reclassifyForChronotype(records: SleepRecord[], chronotype: Chro
     }
     // night：按钟点重判
     if (deriveKind(bH, 'night') === 'nap') return r;
-    // day→night：自然日键改夜归属键（恒 −1：bed≥12 的白天觉 bed 日=旧−1，
-    // bed<12 的晨觉 bed 日=旧、夜归属=bed−1）
-    return { ...r, kind: undefined, date: shiftDate(r.date, -1) };
+    // day→night：自然日键改夜归属键（第 135 轮修正）——直接对 (date, bedtime)
+    // 求权威 nightKeyOfBed，不再常数 −1：bed≥12 的夜（23:00 就寝）本就属于
+    // 当天，恒 −1 会把它错挪到前一天（实测复现：23:00 → D−1，应为 D）
+    const bedEpoch = new Date(
+      Number(r.date.slice(0, 4)), Number(r.date.slice(5, 7)) - 1, Number(r.date.slice(8, 10)),
+      bH, Number(r.bedtime.split(':')[1] ?? '0'),
+    ).getTime();
+    return { ...r, kind: undefined, date: nightKeyOfBed(bedEpoch, 'night') };
   });
 }

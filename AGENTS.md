@@ -11,7 +11,7 @@
 npm install --legacy-peer-deps      # 必须带此 flag（React 19 的 peer 冲突）；CI 用 npm ci --legacy-peer-deps
 npm run dev                         # tsx server.ts → http://localhost:3000（Express + Vite 中间件）
 npm run lint                        # tsc --noEmit —— 已在 CI 里（第 91 轮起），改动后本地先跑
-npm run verify                      # 46 条静态护栏（tsx tools/verify-*.mts）
+npm run verify                      # 静态护栏 42 条（另 4 条产物护栏在 verify:css，需先 build）
 npm run mutate                      # 变异测试：注入已知坏实现，对应护栏必须报红
 npm run build                       # vite build → dist/
 npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名（★ 必须先 build）

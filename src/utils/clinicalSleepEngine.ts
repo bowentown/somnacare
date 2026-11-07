@@ -259,7 +259,7 @@ export function generateLocalClinicalAnalysis(
           ? '低于目标，建议逐步提前就寝、周末避免报复性补觉以免打乱时相'
           : '长于目标——过长与过短同样关联更差结局，可适度压缩卧床窗口以提升睡眠密度'
       }。`,
-      deepSleepAssessment: `深睡眠（慢波期N3）平均达 ${avgDeep} 分钟，占总睡眠比 ${deepPct}%（临床推荐健康值为 15%-25%）。脑脊液在此阶段高效冲洗代谢废物，对体力与免疫力恢复至关重要。`,
+      deepSleepAssessment: `深睡眠平均达 ${avgDeep} 分钟，占总睡眠比 ${deepPct}%（常见参考区间约 15%-25%，仅作粗略对照）。这是按生理周期模型估算的值，不是仪器实测，数值请以体感为准。`,
       remSleepAssessment: `快速眼动期(REM)平均 ${avgRem} 分钟，占比 ${remPct}%（参考健康值为 20%-25%）。此阶段脑电活跃，主导白天情绪消磁、记忆长时存储与神经回路重塑。`,
       efficiencyAssessment: `睡眠效率为 ${avgEfficiency}%（临床优良阈值 >85%）${
         avgEfficiency >= 85

@@ -51,10 +51,23 @@ export function sleepIntervalsOf(
   };
   const out: Array<{ start: number; end: number }> = [];
   for (const r of records) {
-    const dayShift = chronotype === 'day' ? 0 : (parseInt(r.bedtime.split(':')[0], 10) < 12 ? 1 : 0);
+    // 小睡不参与夜归属位移（第 135 轮修正）：deriveKind 的小睡域是
+    // 10:00–19:59——10:00–11:59 的小睡会被"bed<12 → +1 天"挪到【次日】，
+    // 与其自然日 date 键错开一天（日历/合并/能量账本全挂错）。小睡 date
+    // 就是物理当天（recordDateMigration 同样豁免 nap），位移恒 0。
+    const isNap = r.kind === 'nap';
+    const dayShift = chronotype === 'day' || isNap
+      ? 0
+      : (parseInt(r.bedtime.split(':')[0], 10) < 12 ? 1 : 0);
     const start = cal(r.date, r.bedtime, dayShift);
     let end = cal(r.date, r.wakeTime, dayShift);
-    if (end <= start) end += 86400000;   // 跨午夜：醒在同日钟点之前 → 次日
+    if (end === start) {
+      // 钟点相同（第 135 轮）：物理上只能理解为零长睡眠，折算最小 1 分钟——
+      // 此前一律 +24h，畸形备份会把"全天睡着"喂进 SRI 顶出满分
+      end = start + 60000;
+    } else if (end < start) {
+      end += 86400000;   // 跨午夜：醒在同日钟点之前 → 次日
+    }
     out.push({ start, end });
   }
   return out;

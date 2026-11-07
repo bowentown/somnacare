@@ -20,15 +20,26 @@ export interface RecordsHydrateResult {
   needsPersist: boolean;
   /** 第 72 轮跳过标记：数据从磁盘读出且未经迁移 → 首挂载不写回 */
   skipFirstPersist?: boolean;
+  /** 磁盘数据不可解析（第 135 轮）：原始串已备份到
+   *  somnacare_sleep_records_backup_corrupted，调用方必须禁止本会话写回
+   *  （空数组覆盖 = 不可逆数据丢失），并以只读空态启动 */
+  corrupted?: boolean;
 }
 
 /** 模块级共享 promise（第 128 轮 StrictMode 修正）：effect 双调时两次必须
  *  拿到同一份结果。否则第一次迁移（写了 marker）被 cancelled 丢弃、第二次
- *  见 marker 跳过迁移 → 未迁移的原始日期胜出（e2e 自检用例实测抓到）。 */
+ *  见 marker 跳过迁移 → 未迁移的原始日期胜出（e2e 自检用例实测抓到）。
+ *  失败即清空（第 135 轮）：拒绝后置 null，下次调用重试——否则被拒绝的
+ *  promise 永久占据 inflight，连手动重试都不可能。 */
 let inflight: Promise<RecordsHydrateResult> | null = null;
 
 export function loadAndMigrateRecords(): Promise<RecordsHydrateResult> {
-  if (!inflight) inflight = loadAndMigrateOnce();
+  if (!inflight) {
+    inflight = loadAndMigrateOnce().catch((e) => {
+      inflight = null;
+      throw e;
+    });
+  }
   return inflight;
 }
 
@@ -59,7 +70,13 @@ async function loadAndMigrateOnce(): Promise<RecordsHydrateResult> {
   } catch (e) {
     console.error('Failed to parse saved records:', e);
   }
-  if (!Array.isArray(parsed)) return { records: [], needsPersist: false };
+  if (!Array.isArray(parsed)) {
+    // 损坏备份（第 135 轮恢复，语义同旧版 af3d371）：解析失败可能是写入中途
+    // 被杀/存储损坏——原始串仍可能可抢救，先落备份再返回空态。调用方据
+    // corrupted 禁止本会话写回（空数组覆盖磁盘 = 不可逆数据丢失）。
+    try { localStorage.setItem('somnacare_sleep_records_backup_corrupted', saved); } catch { /* ignore */ }
+    return { records: [], needsPersist: false, corrupted: true };
+  }
 
   await yieldToUi();
   // 段二：清洗 + 降序排序（records[0] 最近，与导入路径同一契约）

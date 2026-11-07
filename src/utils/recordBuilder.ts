@@ -69,8 +69,13 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
   ).padStart(2, '0')}`;
 
   // 启发式潜伏期：生成与评分必须用同一个值，否则分期图与记录字段互相矛盾；
-  // 用户在结束面板声明的值优先（仍保持"同一值贯穿分期/评分/字段"）
-  const latencyUsed = input.userLatencyMinutes ?? (exactDurationMinutes < 15 ? 2 : 12);
+  // 用户在结束面板声明的值优先（仍保持"同一值贯穿分期/评分/字段"）。
+  // ★ 上界 = 卧床窗 − 1（第 135 轮）：用户给 60 分而窗只有 40 分时，字段/评分
+  //   曾按 60 扣分、分期却画 2 分——三方矛盾。钳进窗内后三方共用同一值。
+  const latencyUsed = Math.max(0, Math.min(
+    input.userLatencyMinutes ?? (exactDurationMinutes < 15 ? 2 : 12),
+    Math.max(0, exactDurationMinutes - 1),
+  ));
   const wakeCountUsed = input.userWakeCount ?? (exactDurationMinutes < 15 ? 0 : 1);
   const generated = generateSleepStages(bedtimeStr, wakeTimeStr, latencyUsed, wakeCountUsed);
 
@@ -80,10 +85,16 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
   let lightMin = generated.lightMinutes;
 
   if (exactDurationMinutes < 90) {
-    // Micro-sleep or brief testing
-    deepMin = Math.max(0, Math.round(exactDurationMinutes * 0.1));
+    // Micro-sleep or brief testing（第 135 轮不变量化）：分期四段之和必须
+    // 恰等于卧床窗——此前 awake 固定 ≤2、light 有保底 1，1-2 分窗出现过
+    // "分期和 > 窗长 / awake > duration"的自相矛盾。awake = 钳后的潜伏期
+    //（与字段/评分同值），deep 让位保证 light ≥ 1。
+    awakeMin = latencyUsed;
+    deepMin = Math.min(
+      Math.max(0, Math.round(exactDurationMinutes * 0.1)),
+      Math.max(0, exactDurationMinutes - awakeMin - 1),
+    );
     remMin = 0;
-    awakeMin = Math.min(2, exactDurationMinutes);
     lightMin = Math.max(1, exactDurationMinutes - deepMin - awakeMin);
   }
 
@@ -120,9 +131,18 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
         ]
       : generated.stages;
 
+  // kind 先于 recordDate 判定（第 135 轮）：小睡不参与夜归属位移——
+  // nightKeyOfBed 会把上午小睡（10:00–11:59）挪到前一天，与
+  // sleepIntervalsOf（nap 位移恒 0）/日历/合并三方错位。小睡 = 物理当天
+  //（自然日键），与 recordDateMigration 的 nap 豁免同一口径。
+  const kind = deriveKind(effectiveStart.getHours(), input.chronotype) === 'nap' ? 'nap' : undefined;
+  const naturalDateKey = (d: Date): string =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   // recordDate = 夜归属（第 51 轮口径统一）：属于"放下手机那晚"——
   // 凌晨放下的夜猫子，昨晚的觉归昨晚，不挂到醒来那天
-  const recordDate = nightKeyOfBed(effectiveStart.getTime(), input.chronotype === 'day' ? 'day' : 'night');
+  const recordDate = kind === 'nap'
+    ? naturalDateKey(effectiveStart)
+    : nightKeyOfBed(effectiveStart.getTime(), input.chronotype === 'day' ? 'day' : 'night');
 
   const record: SleepRecord = {
     id: input.id,
@@ -146,7 +166,7 @@ export function buildRecordFromWindow(input: BuildInput): BuiltRecord {
       ? { soundEvents: input.userSoundEvents.slice(-50) }
       : {}),
     stages: stagesForRecord,
-    kind: deriveKind(effectiveStart.getHours(), input.chronotype) === 'nap' ? 'nap' : undefined,
+    kind,
     ...(input.recordSource ? { recordSource: input.recordSource } : {}),
   } as SleepRecord;
 

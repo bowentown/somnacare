@@ -150,23 +150,26 @@ export function computeMSFsc(
     const wakeDay = new Date(iv.end).getDay();          // 醒来那天的星期
     const isFree = wakeDay === 0 || wakeDay === 6;
     const durMin = (iv.end - iv.start) / 60000;
-    // 中点必须取【本地钟点】分钟（0..1439），绝不能对历元均值（第 134 轮修正）：
-    // 历元均值 = 窗口中心日期 + 钟点——自由日成对（周六+周日）时均值日期落在
-    // 【正午】，3 对（6 个自由日）整体 +12h，建议就寝被钳到错误的域边
-    //（2026-11-06 e2e 实测：MSFsc 18:30 而非 06:30 → 建议 21:00–05:00）。
-    // 钟点空间求均值 = MCTQ 的"自由日睡眠中点取平均"，与日期解耦。
-    // ★ 每个中点各自相对【本地午夜】归一：epoch % 86400000 是 UTC 日界，
-    //   UTC+8 下本地 05:00 会被算成前一天 21:00（第 105 轮护栏锚点抓出的同款坑）。
-    const midDate = new Date(iv.start + (iv.end - iv.start) / 2);
-    const localMid = new Date(midDate.getFullYear(), midDate.getMonth(), midDate.getDate()).getTime();
-    const mid = (midDate.getTime() - localMid) / 60000;
+    // 中点取【夜归属锚定的连续钟点】（第 135 轮，两代缺陷的最终形态）：
+    //  - 历元均值（≤134 前）：均值日期 = 窗口中心——自由日成对时落正午，+12h；
+    //  - 本地钟点算术平均（134）：跨午夜中点（23:55 / 02:00）被拉到正午——
+    //    AGENTS.md 明令时钟不可直接算术平均（clockMath.circularMean 同因）。
+    //  MCTQ 口径：中点以【就寝所在晚】为锚的连续时间轴取平均——凌晨起睡
+    //  （startClock < 12:00）+1440 视作前一晚的延续，均值后再 mod 1440。
+    //  ★ startClock 各自相对【本地午夜】归一：epoch % 86400000 是 UTC 日界，
+    //    UTC+8 下本地 05:00 会被算成前一天 21:00（第 105 轮护栏锚点抓出的坑）。
+    const startDate = new Date(iv.start);
+    const startLocalMid = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate()).getTime();
+    const startClock = (iv.start - startLocalMid) / 60000;
+    const anchor = startClock < 720 ? startClock + 1440 : startClock;
+    const mid = anchor + durMin / 2;
     return { isFree, durMin, mid };
   });
   const free = rows.filter((r) => r.isFree);
   const work = rows.filter((r) => !r.isFree);
   if (free.length < 3 || work.length < 3) return null;
   const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const msfFree = mean(free.map((r) => r.mid));   // 钟点分钟域的算术平均（MCTQ 口径）
+  const msfFree = mean(free.map((r) => r.mid));   // 连续钟点域（可能 >1440）的算术平均
   const msfsc = msfFree - (mean(work.map((r) => r.durMin)) - mean(free.map((r) => r.durMin))) / 2;
   let minutes = Math.round(msfsc);
   minutes = ((minutes % 1440) + 1440) % 1440;   // MCTQ 允许 MSF > 24h
@@ -207,8 +210,19 @@ export function computeSleepDebtRatio(
   targetMinutes: number,
   days = 7,
 ): number {
-  const nights = nightsOnly(records).slice(0, days);
-  if (nights.length === 0) return 0.4;
+  // 近 N 夜必须按【日期窗口】过滤（第 135 轮修正）：此前只 slice 条数——
+  // 停记三个月的用户，池塘天气仍按三个月前的睡眠状态渲染（实测复现）。
+  // 与 computeSleepNeed/computeSleepDebt 同一窗口口径：本地日期界，不含今晚。
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const windowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1)).getTime();
+  const nights = nightsOnly(records)
+    .filter((r) => {
+      const t = new Date(r.date + 'T12:00:00').getTime();
+      return t >= windowStart && t < dayStart;
+    })
+    .slice(0, days);
+  if (nights.length === 0) return 0.4;   // 窗口内无夜 → 诚实缺省（不拿陈旧数据冒充近期）
   const target = Math.max(240, targetMinutes);
   const avg = nights.reduce((a, r) => a + r.durationMinutes, 0) / nights.length;
   return Math.max(0, Math.min(1, 1 - avg / target));
