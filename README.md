@@ -1,5 +1,7 @@
 <div align="center">
 
+[English](README.en.md) | **简体中文**
+
 <img src="native-resources/icon-512.png" width="110" alt="极光睡眠 SomnaCare 图标" />
 
 # 极光睡眠 SomnaCare
