@@ -37,6 +37,7 @@ import { syncRecallNotify } from '../features/sleep/utils/careNotifications';
 import { initProposalNotify } from '../features/sleep/utils/proposalNotify';
 import { applyEyeCare } from '../features/eyecare/utils/eyeCare';
 import { syncPet } from '../features/pet/utils/petOverlay';
+import { syncWidgetsDebounced } from '../features/widgets/syncWidgets';
 
 // 趋势页含 Recharts+D3，独立按需分包以保持首包轻快
 const TrendsTab = lazy(() => import('../features/trends/TrendsTab').then((m) => ({ default: m.TrendsTab })));
@@ -154,6 +155,7 @@ export const App: React.FC = () => {
   );
 
   useEffect(() => { void syncPet(records, userProfile); }, [records, userProfile]);
+  useEffect(() => syncWidgetsDebounced(records, userProfile), [records, userProfile]);
   useEffect(() => { void syncRecallNotify(records); }, [records]);
 
   const eyeCareCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;

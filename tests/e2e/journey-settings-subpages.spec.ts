@@ -477,3 +477,76 @@ test('旅程40 睡前仪式二级子页：4-7-8 呼吸练习、打开音景混�
   await expect(page.getByRole('region', { name: '睡前仪式' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────
+// 旅程 41：桌面小组件中心（Phase 4）——4 款实时卡片 + 原生固定请求 + DeepLink 路由
+// ─────────────────────────────────────────────────────────────
+test('旅程41 桌面小组件矩阵：4 款预览、原生同步/固定请求与冷启动 DeepLink 跳转', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(10, 0, 0, 0);
+  await page.addInitScript(() => {
+    const pinCalls: string[] = [];
+    const syncCalls: any[] = [];
+    let pendingRoute: string | null = 'settings/widgets';
+    (window as any).__pinCalls = pinCalls;
+    (window as any).__syncCalls = syncCalls;
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: {
+        SleepWidgets: {
+          syncSnapshot: async (payload: any) => {
+            syncCalls.push(payload);
+            return { ok: true };
+          },
+          consumePendingRoute: async () => {
+            const r = pendingRoute;
+            pendingRoute = null;
+            return { route: r };
+          },
+          addListener: async () => ({ remove: () => {} }),
+          requestPinWidget: async ({ kind }: { kind: string }) => {
+            pinCalls.push(kind);
+            return { supported: true, requested: true };
+          },
+        },
+        SleepCore: {
+          alarmRingTable: async () => ({ json: '[]' }),
+          bedtimePermission: async () => ({ granted: true }),
+          bedtimeAutoStartConsume: async () => ({ consume: false }),
+          addListener: async () => ({ remove: () => {} }),
+        },
+      },
+    };
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+  });
+  await page.clock.install({ time: fixed });
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 冷启动 consumePendingRoute('settings/widgets') 应直接落到桌面小组件二级子页
+  const region = page.getByRole('region', { name: '桌面小组件' });
+  await expect(region).toBeVisible();
+  await expect(region.getByText('2×1 睡眠速览卡')).toBeVisible();
+  await expect(region.getByText('2×2 睡前快捷操作')).toBeVisible();
+  await expect(region.getByText('4×2 7 晚睡眠节律')).toBeVisible();
+  await expect(region.getByText('2×2 大肥鱼能量卡')).toBeVisible();
+
+  // 独立快照总线应已防抖同步至少一次
+  const synced = await page.evaluate(() => (window as any).__syncCalls);
+  expect(synced.length).toBeGreaterThanOrEqual(1);
+  expect(typeof synced[synced.length - 1].weekDots).toBe('string');
+
+  // 点击 4×2 节律卡的「添加到桌面」应把 kind='rhythm' 送入原生 requestPinWidget
+  await region.getByRole('button', { name: '添加到桌面' }).nth(2).click();
+  const pins = await page.evaluate(() => (window as any).__pinCalls);
+  expect(pins).toContain('rhythm');
+
+  // 点击睡前快捷卡里的「🫧 睡前呼吸」应经 DeepLink 直达睡前仪式子页
+  await region.getByRole('button', { name: /睡前呼吸/ }).click();
+  await expect(page.getByRole('region', { name: '睡前仪式' })).toBeVisible();
+  expect(errors).toEqual([]);
+});

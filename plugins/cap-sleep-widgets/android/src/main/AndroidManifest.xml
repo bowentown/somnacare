@@ -3,6 +3,7 @@
         <!-- 小组件 1：昨晚睡眠评分与连胜（2×1，保留原 FQDN 保证覆盖升级桌面组件不丢失） -->
         <receiver
             android:name="com.somnacare.gemmallm.SleepWidgetProvider"
+            android:label="睡眠评分 (2×1)"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -10,6 +11,45 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/sleep_widget_info" />
+        </receiver>
+
+        <!-- 小组件 2：睡前快捷操作（2×2：一键入睡 / 呼吸放松 / 护眼就地开关） -->
+        <receiver
+            android:name="com.somnacare.gemmallm.BedtimeQuickWidgetProvider"
+            android:label="睡前快捷操作 (2×2)"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_bedtime_quick_info" />
+        </receiver>
+
+        <!-- 小组件 3：近 7 晚睡眠节律与睡眠债（4×2） -->
+        <receiver
+            android:name="com.somnacare.gemmallm.WeekRhythmWidgetProvider"
+            android:label="7 晚睡眠节律 (4×2)"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_week_rhythm_info" />
+        </receiver>
+
+        <!-- 小组件 4：大肥鱼旅行能量卡（2×2） -->
+        <receiver
+            android:name="com.somnacare.gemmallm.PetEnergyWidgetProvider"
+            android:label="大肥鱼能量卡 (2×2)"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pet_energy_info" />
         </receiver>
 
         <!-- 跨插件刷新广播接收器（护眼磁贴/桌宠开关护眼后通知所有小组件即时刷新） -->

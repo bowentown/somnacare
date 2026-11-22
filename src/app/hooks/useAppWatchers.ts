@@ -91,15 +91,16 @@ export function usePetTabLaunch(tabOrder: readonly string[], setActiveTab: (tab:
     let cancelled = false;
     let widgetListenerHandle: { remove?: () => void } | null = null;
     const apply = () => {
+      // 一次性消费的原生路由直接写入全局 uiStore，不因 StrictMode 双挂载 cleanup 丢弃已消费的点击意图
       void consumePendingTab().then((tab) => {
-        if (cancelled || !tab) return;
+        if (!tab) return;
         if (tabOrder.includes(tab)) setActiveTab(tab as NavTab);
         else handleDeepLink(tab);
       });
       void Promise.resolve(nativePlugin('SleepWidgets')?.consumePendingRoute?.())
         .then((res: any) => {
           const route = typeof res?.route === 'string' ? res.route : '';
-          if (cancelled || !route) return;
+          if (!route) return;
           handleDeepLink(route);
         })
         .catch(() => {});

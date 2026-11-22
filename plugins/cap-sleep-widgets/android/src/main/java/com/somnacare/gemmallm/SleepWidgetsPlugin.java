@@ -147,6 +147,15 @@ public class SleepWidgetsPlugin extends Plugin {
     }
 
     private static ComponentName resolveProvider(Context ctx, String kind) {
+        if ("bedtime".equals(kind)) {
+            return new ComponentName(ctx, BedtimeQuickWidgetProvider.class);
+        }
+        if ("rhythm".equals(kind)) {
+            return new ComponentName(ctx, WeekRhythmWidgetProvider.class);
+        }
+        if ("pet".equals(kind)) {
+            return new ComponentName(ctx, PetEnergyWidgetProvider.class);
+        }
         return new ComponentName(ctx, SleepWidgetProvider.class);
     }
 }
