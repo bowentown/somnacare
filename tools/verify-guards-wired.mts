@@ -43,14 +43,15 @@ if (swallowPattern.test(wired)) {
 }
 // 变异自检：注入 `|| true` 的副本必须被同一判定抓住（防检测器自身失效）
 {
+  const sampleTarget = `tsx tools/${guardFiles[0]}`;
   const variants = [
-    '(tsx tools/verify-wiring.mts || true)',
-    'tsx tools/verify-wiring.mts; exit 0',
-    'tsx tools/verify-wiring.mts || exit 0',
-    'tsx tools/verify-wiring.mts || /usr/bin/true',
-    'tsx tools/verify-wiring.mts || :',
+    `(${sampleTarget} || true)`,
+    `${sampleTarget}; exit 0`,
+    `${sampleTarget} || exit 0`,
+    `${sampleTarget} || /usr/bin/true`,
+    `${sampleTarget} || :`,
   ];
-  const missed = variants.filter((v) => !swallowPattern.test(wired.replace('tsx tools/verify-wiring.mts', v)));
+  const missed = variants.filter((v) => !swallowPattern.test(wired.replace(sampleTarget, v)));
   if (missed.length > 0) {
     console.error('✗ verify-guards-wired：吞错检测自检失败——以下旁路未被检出：');
     for (const m of missed) console.error('   ' + m);

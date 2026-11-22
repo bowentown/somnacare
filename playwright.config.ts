@@ -12,6 +12,8 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:3000',
     viewport: { width: 390, height: 844 },
+    // 本机无 Playwright 缓存浏览器时，可通过 PLAYWRIGHT_CHANNEL=chrome 复用系统 Chrome
+    ...(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {}),
   },
   webServer: {
     command: 'npm run dev',

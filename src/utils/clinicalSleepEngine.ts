@@ -153,34 +153,31 @@ export function generateLocalClinicalAnalysis(
   userProfile?: UserProfile
 ): SleepAnalysisResult {
   const count = recentLogs.length;
-  const avgDuration =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.durationMinutes || 0), 0) / count)
-      : 450;
-  const avgDeep =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.deepSleepMinutes || 0), 0) / count)
-      : 95;
-  const avgRem =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.remSleepMinutes || 0), 0) / count)
-      : 90;
-  const avgScore =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.sleepScore || 0), 0) / count)
-      : 82;
-  const avgEfficiency =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.sleepEfficiency || 0), 0) / count)
-      : 88;
-  const avgLatency =
-    count > 0
-      ? Math.round(recentLogs.reduce((acc, r) => acc + (r.latencyMinutes ?? 15), 0) / count)
-      : 16;
-  const avgWake =
-    count > 0
-      ? (recentLogs.reduce((acc, r) => acc + (r.wakeCount || 0), 0) / count).toFixed(1)
-      : '1.0';
+  if (count === 0) {
+    return {
+      chronotype: '待建立（尚无睡眠记录）',
+      chronotypeDescription: '目前尚无睡眠记录，完成至少 1 晚记录后即可根据真实起卧时间识别您的昼夜节律倾向。',
+      overallHealthGrade: '暂无评级',
+      scoreSummary: '尚无睡眠记录，完成至少 1 晚记录后即可生成基于真实作息的评估摘要。',
+      clinicalMetricsAnalysis: {
+        durationAssessment: '尚无睡眠时长数据，请先记录最近一晚作息。',
+        deepSleepAssessment: '尚无记录，无法按模型推算深睡参考占比。',
+        remSleepAssessment: '尚无记录，无法按模型推算 REM 参考占比。',
+        efficiencyAssessment: '尚无睡眠效率记录。',
+        sleepLatencyAssessment: '尚无入睡潜伏期记录。',
+      },
+      identifiedIssues: ['尚未记录睡眠数据，建议今晚通过「一键就寝」或「手动补录」开始第一晚记录'],
+      personalizedRecommendations: [],
+      mindsetAffirmation: '从记录今晚开始，一点一点认识自己的睡眠节律。',
+    };
+  }
+  const avgDuration = Math.round(recentLogs.reduce((acc, r) => acc + (r.durationMinutes || 0), 0) / count);
+  const avgDeep = Math.round(recentLogs.reduce((acc, r) => acc + (r.deepSleepMinutes || 0), 0) / count);
+  const avgRem = Math.round(recentLogs.reduce((acc, r) => acc + (r.remSleepMinutes || 0), 0) / count);
+  const avgScore = Math.round(recentLogs.reduce((acc, r) => acc + (r.sleepScore || 0), 0) / count);
+  const avgEfficiency = Math.round(recentLogs.reduce((acc, r) => acc + (r.sleepEfficiency || 0), 0) / count);
+  const avgLatency = Math.round(recentLogs.reduce((acc, r) => acc + (r.latencyMinutes ?? 15), 0) / count);
+  const avgWake = (recentLogs.reduce((acc, r) => acc + (r.wakeCount || 0), 0) / count).toFixed(1);
 
   const deepPct = avgDuration > 0 ? Math.round((avgDeep / avgDuration) * 100) : 21;
   const remPct = avgDuration > 0 ? Math.round((avgRem / avgDuration) * 100) : 20;

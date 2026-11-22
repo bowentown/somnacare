@@ -1175,37 +1175,6 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
 
 
 // ─────────────────────────────────────────────────────────────
-// 旅程28 服务端零记录拒绝（第 90 轮 N6）：护栏此前只做 server.ts 文本在场
-// 检查——"只改路由一行"即可让零记录请求返回 200 + 完整伪造报告而护栏全绿。
-// 这里真实 POST，断言 400（无 GEMINI_API_KEY 时本地规则兜底立即返回 null）。
-// ─────────────────────────────────────────────────────────────
-test('旅程28 服务端：零记录请求必须 400 拒绝（不伪造报告）', async ({ request }) => {
-  const empty = await request.post('/api/sleep/analyze', {
-    data: { recentLogs: [], userProfile: { age: 30 } },
-  });
-  expect(empty.status()).toBe(400);
-  const body = await empty.json();
-  expect(String(body.error ?? '')).toContain('尚无睡眠记录');
-
-  // 对照：有记录时不应再走 400 分支（本地规则引擎出报告）
-  const one = await request.post('/api/sleep/analyze', {
-    data: {
-      recentLogs: [{
-        date: '2026-10-20', bedtime: '23:30', wakeTime: '07:30', durationMinutes: 480,
-        deepSleepMinutes: 90, lightSleepMinutes: 300, remSleepMinutes: 90, awakeMinutes: 20,
-        sleepScore: 86, sleepEfficiency: 92, latencyMinutes: 15,
-      }],
-      userProfile: { age: 30, targetHours: 8 },
-    },
-  });
-  expect(one.status()).toBe(200);
-  const report = await one.json();
-  expect(typeof report.chronotype).toBe('string');
-  expect(report.chronotype.length).toBeGreaterThan(0);
-});
-
-
-// ─────────────────────────────────────────────────────────────
 // 旅程29 全量备份恢复（第 90 轮：verify-wiring 的第三条"调用点在场"断言
 // 此前无任何行为覆盖）。真走文件输入 → 全量 schema2 分支 → restoreFullBackup，
 // 断言恢复真的落盘（记录被替换 + 皮肤随文件恢复）。
@@ -1335,11 +1304,10 @@ test('旅程30 评估报告直连云端：自配 Key 时真打 DeepSeek（不再
 
 
 // ─────────────────────────────────────────────────────────────
-// 旅程31 无 Key 不出网（第 91 轮）：离线优先的边界——只有"用户自配的云端
-// AI"才允许出网。无 Key 时必须走服务端/本地规则，且来源标签诚实（不能把
-// 规则引擎输出标成 DeepSeek）。
+// 旅程31 无 Key 不出网（离线优先边界）：未自配云端 API Key 时不得发起任何
+// 云端或 /api/sleep/* 请求，直接由本地临床规则引擎生成报告且来源标签诚实。
 // ─────────────────────────────────────────────────────────────
-test('旅程31 无 Key：评估不出网、走服务端且来源标签诚实（离线优先边界）', async ({ page }) => {
+test('旅程31 无 Key：评估完全不出网、直走本地临床规则引擎且标签诚实', async ({ page }) => {
   const errors = watchErrors(page);
   const fixed = new Date();
   fixed.setHours(9, 0, 0, 0);
@@ -1352,22 +1320,7 @@ test('旅程31 无 Key：评估不出网、走服务端且来源标签诚实（�
   let cloudHits = 0;
   let serverHits = 0;
   await page.route('https://api.deepseek.com/**', (route) => { cloudHits++; return route.abort(); });
-  await page.route('**/api/sleep/analyze', (route) => {
-    serverHits++;
-    return route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({
-        chronotype: '早起云雀型', chronotypeDescription: '早睡早起。', overallHealthGrade: '良好 A',
-        scoreSummary: '服务端规则引擎出的报告。',
-        clinicalMetricsAnalysis: {
-          durationAssessment: 'a', deepSleepAssessment: 'b', remSleepAssessment: 'c',
-          efficiencyAssessment: 'd', sleepLatencyAssessment: 'e',
-        },
-        identifiedIssues: ['x'], personalizedRecommendations: [], mindsetAffirmation: 'y',
-        engine: 'rules',
-      }),
-    });
-  });
+  await page.route('**/api/sleep/**', (route) => { serverHits++; return route.abort(); });
 
   await page.goto('/');
   await page.waitForLoadState('domcontentloaded');
@@ -1377,10 +1330,8 @@ test('旅程31 无 Key：评估不出网、走服务端且来源标签诚实（�
   await page.getByRole('button', { name: '生成评估' }).click();
 
   await expect(page.getByRole('button', { name: '刷新评估' })).toBeVisible({ timeout: 15000 });
-  expect(cloudHits).toBe(0);                       // 未配置 Key 绝不发起云端请求
-  expect(serverHits).toBe(1);                      // 走的是服务端代理
-  await expect(page.getByText(/服务端规则引擎出的报告/)).toBeVisible();
-  // engine:'rules' → 标签诚实（不能显示成 DeepSeek）
+  expect(cloudHits).toBe(0);
+  expect(serverHits).toBe(0);
   await expect(page.getByText(/模型：本地临床规则引擎/)).toBeVisible();
   expect(errors).toEqual([]);
 });

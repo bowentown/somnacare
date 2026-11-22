@@ -17,7 +17,6 @@ import { CustomAIConfig, AIProvider } from '../types/sleep';
 import { ThemeConfig } from '../utils/themeStyles';
 import { useModalA11y } from '../utils/modalA11y';
 import {
-  LOCAL_LLM_MODEL,
   NATIVE_LLM_MODEL,
   getActiveModelLabel,
   isNativeLlmAvailable,
@@ -27,7 +26,6 @@ import {
   getLocalLlmCacheState,
   downloadLocalLlm,
   deleteLocalLlm,
-  ensureStoragePersistence,
   consumeLlmCrashFlag,
   type LocalLlmSupport,
   type LocalLlmCacheState,
@@ -105,7 +103,6 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
   const handleDownloadLlm = async () => {
     setLlmError(null);
-    await ensureStoragePersistence();
     setLlmProgress(0);
     const ac = new AbortController();
     llmAbortRef.current = ac;
@@ -115,7 +112,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
       if (!ac.signal.aborted) {
         const detail = e?.message || String(e);
         setLlmError(
-          `下载失败：${detail}。请检查网络能否访问 hf-mirror.com；若持续失败，请换 Chrome 浏览器重试，并把浏览器控制台（F12）里的红色报错发给我。`
+          `下载失败：${detail}。请检查网络能否访问 hf-mirror.com 与 HuggingFace 访问令牌是否有效。`
         );
       }
     }
@@ -344,8 +341,8 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 {isNativeLlmAvailable()
-                  ? 'APK 内使用原生 MediaPipe 引擎在本机推理（Gemma 3 1B int4，约 529 MB，mmap 加载），稳定性优于 WASM 方案。仅接管日常聊天；报告始终由规则引擎完成；危机与用药安全护栏优先于模型。'
-                  : '基于 llama.cpp WASM 在本机推理（Qwen3-0.6B Q4 量化，约 462 MB），生成速度约每秒几个字。仅接管日常聊天；睡眠生理报告始终由规则引擎完成；命中自伤或药物处方疑问时安全护栏优先于模型。'}
+                  ? 'APK 内使用原生 MediaPipe 引擎在本机推理（Gemma 3 1B int4，约 529 MB，mmap 加载）。仅接管日常聊天；睡眠生理报告始终由规则引擎完成；危机与用药安全护栏优先于模型。'
+                  : '端侧小模型（MediaPipe Gemma 3 1B int4）仅在 Android APK 原生环境运行；当前预览环境请使用本地规则引擎或自配云端 API。'}
               </p>
 
               {/* 上次崩溃警告 */}
@@ -453,14 +450,14 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
                     className={`w-full py-2.5 rounded-xl ${theme.accentBg} disabled:opacity-40 disabled:cursor-not-allowed ${theme.accentFg} font-bold flex items-center justify-center gap-1.5 shadow cursor-pointer`}
                   >
                     <Download className="w-4 h-4" />
-                    <span>下载端侧模型（约 {Math.round((isNativeLlmAvailable() ? NATIVE_LLM_MODEL.expectedBytes : LOCAL_LLM_MODEL.expectedBytes) / 1_000_000)} MB）</span>
+                    <span>下载端侧模型（约 {Math.round(NATIVE_LLM_MODEL.expectedBytes / 1_000_000)} MB）</span>
                   </button>
                 )}
               </div>
 
               <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[10px] text-slate-400 leading-relaxed">
-                ⚡ 性能说明：本引擎在 WebView 内以 WASM 单线程运行（未开跨域隔离），生成速度约每秒几个字，适合睡前从容对话；
-                首次对话加载模型需数秒。模型文件缓存在本机私有存储，卸载应用或删除模型即彻底清除。
+                ⚡ 性能说明：APK 原生进程通过 MediaPipe mmap 加载本地模型，完全离线推理、对话隐私不离开本机；
+                首次对话加载模型需数秒，切后台自动释放内存。模型文件保存在本机私有存储，卸载应用或删除模型即彻底清除。
               </div>
             </div>
           )}

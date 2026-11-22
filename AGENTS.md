@@ -9,13 +9,13 @@
 
 ```bash
 npm install --legacy-peer-deps      # 必须带此 flag（React 19 的 peer 冲突）；CI 用 npm ci --legacy-peer-deps
-npm run dev                         # tsx server.ts → http://localhost:3000（Express + Vite 中间件）
-npm run lint                        # tsc --noEmit —— 已在 CI 里（第 91 轮起），改动后本地先跑
-npm run verify                      # 静态护栏 42 条（另 4 条产物护栏在 verify:css，需先 build）
-npm run mutate                      # 变异测试：注入已知坏实现，对应护栏必须报红
+npm run dev                         # 原生 vite → http://localhost:3000（纯前端开发与 e2e 预览）
+npm run lint                        # tsc --noEmit —— 已在 CI 里，改动后本地先跑
+npm test                            # Vitest 并行行为单测（tests/unit/*.test.ts）
+npm run verify                      # 核心静态/安全/原生门禁 12 条（另 4 条产物门禁在 verify:css，需先 build）
 npm run build                       # vite build → dist/
-npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名（★ 必须先 build）
-npx playwright test                 # 68 条浏览器 e2e（自动拉起 :3000 的 dev server）
+npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名、兼容与主包架构（★ 必须先 build）
+npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vite dev server）
 ```
 
 - **顺序有依赖**：`verify:css` 读 `dist/`，所以要先 `npm run build`，否则会误报"类名不存在"。
@@ -29,12 +29,11 @@ npx playwright test                 # 68 条浏览器 e2e（自动拉起 :3000 �
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/` | React 应用。`components/`（五分区 + 弹窗/动画/UI 原子）、`hooks/`（App 壳层的原生/生命周期副作用，`appWatchers.ts`）、`utils/`（睡眠评分与分期、临床规则引擎、洞察、端侧 LLM、提议引擎、护眼、主题）、`types/`、`pond/`（"活的海"池塘引擎）、`services/`、`data/` |
-| `server.ts` | 开发/部署用的 Express 服务：静态托管 + `/api/sleep/analyze`、`/api/sleep/chat` 代理（限流 + 可选 Bearer 鉴权）。**与 APK 运行时无关**（离线应用不依赖它） |
+| `src/` | React 应用。`components/`（五分区 + 弹窗/动画/UI 原子）、`hooks/`（App 壳层的原生/生命周期副作用，`appWatchers.ts`）、`utils/`（睡眠评分与分期、临床规则引擎、洞察、端侧原生 Gemma 引擎、提议引擎、护眼、主题）、`types/`、`pond/`（"活的海"池塘引擎）、`services/`、`data/` |
 | `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
-| `tools/` | `verify-*.mts` 护栏（46 条，`verify-bundle` 读 dist 钉主包架构）、`mutate-guards.mts` 变异测试、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
-| `tests/e2e/` | Playwright：`smoke` / `app` / `proposal` / `moments` / `user-journey` |
+| `tools/` | `verify-*.mts` 静态与产物门禁（16 条，含 `verify-bundle` 读 dist 钉主包架构）、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
+| `tests/` | `tests/unit/`（Vitest 并行领域行为单测）与 `tests/e2e/`（Playwright 端到端回归） |
 | `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（wav）、通知小图标 |
 | `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK；打 `v*` tag 自动发 Release |
 | `docs/screenshots/` | 仅供 README 引用（无架构文档；README 本身就是最完整的说明） |
@@ -63,22 +62,13 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   **main 与 v* 标签永不互杀**（曾因固定组名竞态取消了 tag run，Release 静默未发）。
 - 发布签名来自 GitHub Secrets；仓库内不含密钥，本地原件在 `~/.somnacare-signing/`。
 
-## ★ 护栏文化（本项目最重要的约定）
+## ★ 分层测试与门禁约定
 
-46 条护栏在 `tools/verify-*.mts`，通过 `package.json` 的 `scripts.verify` / `verify:css` 串联：
+测试体系分为三层，避免用脆弱的源码文本正则阻塞重构：
 
-1. **新护栏必须接线**。`verify-guards-wired.mts` 是元护栏：扫描 `tools/verify-*.mts` 并断言每个都被
-   `verify`/`verify:css` 链引用——写了护栏忘接线，它就在这里红。同一护栏还**禁止链上出现吞错旁路**
-   （`|| true`、`; exit 0`、`|| /usr/bin/true`、`|| :` 等），因为那会让失败的护栏被静默吞掉。
-2. **护栏必须能反向自检**：把"坏实现/被破坏的源码"喂进同一条断言路径，必须报红。没有反向自检的护栏
-   等于没有护栏。
-3. **行为护栏 ≫ 文本在场护栏**。历史审计反复证明 `readFileSync` + 正则的"字符串在不在"检查会给
-   假信心（`if (false) void foo()`、三目短路、整行注释掉都能绕过）。给功能链路加保护时，
-   优先在 `tests/e2e/` 写行为用例（真点击、真调桥、真落盘），文本检查只作最弱一档并在注释里说明。
-4. 不要为了让改动通过而放宽护栏；也不要删掉报红的断言——先判断是代码错还是断言错（两者都发生过）。
-5. **护栏全绿不等于护栏在守**。`npm run mutate`（`tools/mutate-guards.mts`）把历史上
-   【手工】做过的变异测试固化成可重复断言：向源码注入已知坏实现，对应护栏必须报红。
-   给关键链路加护栏时，顺手往变异表里加一条——变异表锚点失效（源码漂移）也会报红。
+1. **领域与行为单测（`npm test` → Vitest）**：`tests/unit/*.test.ts` 并行执行，覆盖睡眠模型、SRI/MSFsc/规律度、提议引擎、黄金样本、夜归属迁移全组合、备份与凭据脱敏、分享卡隐私与布局、LLM 提示词隐私、周报连胜等全部核心算法不变量。
+2. **高价值静态/产物门禁（`npm run verify` + `npm run verify:css`，共 16 条）**：保留单测测不到的构建产物、旧 WebView 兼容（`no-oklch` / `transform-compat` / `class-gen` / `bundle`）、WCAG AA 对比度、禁止临床医疗声称、原生桥安全边界与 APK 构建加固门禁。`verify-guards-wired.mts` 确保剩余 `tools/verify-*.mts` 全部接线且无 `|| true` 吞错旁路。
+3. **浏览器 E2E 回归（`npx playwright test`）**：验证真实交互、手势、路由与零控制台错误。
 
 ## 领域规则（最容易改错的地方）
 

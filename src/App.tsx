@@ -1090,8 +1090,12 @@ export const App: React.FC = () => {
         document.body,
       )}
       {toastMessage && (
-        <div role="status" aria-live="polite" className={`fixed top-5 left-0 right-0 mx-auto w-fit z-[350] px-5 py-3 rounded-2xl ${currentTheme.accentBg.split(' ')[0]} ${currentTheme.accentFg} text-xs font-black shadow-2xl flex items-center gap-2.5 animate-bounce border border-white/10`}>
-          <CheckCircle2 className="w-5 h-5 opacity-90" />
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed ${undoDeleted ? 'bottom-36' : 'bottom-24'} left-0 right-0 mx-auto w-fit max-w-[calc(100vw-2rem)] z-[350] px-5 py-3 rounded-2xl ${currentTheme.accentBg.split(' ')[0]} ${currentTheme.accentFg} text-xs font-black shadow-2xl flex items-center gap-2.5 animate-fadeIn border border-white/10`}
+        >
+          <CheckCircle2 className="w-5 h-5 shrink-0 opacity-90" />
           <span>{toastMessage}</span>
         </div>
       )}

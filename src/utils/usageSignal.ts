@@ -181,8 +181,8 @@ export function cachedUsageDays(): UsageDay[] {
 }
 
 // ── 放下手机前的一小时（第 82 轮，取代数字健康台）──
-// 只看与入睡直接相邻的最后一段：系统"屏幕使用时间"给全天 totals，
-// 这里给"放下前 60 分钟你在刷什么"——睡眠 App 的独特视角。
+// 只看与最后一次熄屏直接相邻的最后一段：系统"屏幕使用时间"给全天 totals，
+// 这里给"放下前 60 分钟你在刷什么"——行为信号视角（放下手机 ≠ 生理就寝）。
 
 export interface WindDownApp {
   pkg: string;

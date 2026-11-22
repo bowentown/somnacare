@@ -471,39 +471,13 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
           commit(parsed, isCustom ? `自建 API (${modelToUse})` : `DeepSeek (${modelToUse})`);
           return;
         }
-        // 直连已尝试就不再用另一套 prompt 打服务端代理——两条路径的前缀毫无
-        // 重叠，必然双份 cache miss（与对话路径同口径），交给外层走本地规则
+        // 直连失败不再重试，直接落入本地临床规则引擎
         throw new Error('direct LLM failed');
       }
 
-      // 1. 服务端代理（web 部署；APK 内无此路由 → 落到 catch 走本地规则）
-      // fetchJsonWithTimeout：body 读取也在超时保护内（此前只保护到响应头，
-      // 移动网络中途卡住时 json() 永不 settle → 转圈永不停止）
-      const response = await fetchJsonWithTimeout('/api/sleep/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recentLogs: slimLogsForAI(nightsOnly(records).slice(0, 7)),
-          userProfile,
-          aiConfig: userProfile.aiConfig,
-        }),
-      }, 30000);
-
-      if (!response.ok || !response.data) {
-        throw new Error('API unavailable');
-      }
-
-      // 来源标签跟着服务端实际引擎走（第 51 轮审计）：无上游 key 时服务端
-      // 返回规则兜底，不能让用户误以为在读 DeepSeek/Gemini
-      const engine = (response.data as { engine?: string }).engine;
-      commit(
-        response.data,
-        engine === 'rules' ? '本地临床规则引擎'
-          : engine === 'gemini' ? 'Gemini'
-          : engine === 'deepseek' ? 'DeepSeek'
-          : engine === 'custom' ? '自建 API'
-          : activeProviderName,
-      );
+      // 1. 无云端 Key：纯离线优先，直接走本地临床规则引擎（零出网）
+      const localResult = generateLocalClinicalAnalysis(nightsOnly(records).slice(0, 7), userProfile);
+      commit(localResult, '本地临床规则引擎');
     } catch (_err: any) {
       if (requestFp !== analysisFingerprintRef.current) return;
       // 与云端路径同口径：只喂近 7 晚夜睡（旧实现喂全量含小睡，云/本地两份评估口径不一致）
@@ -753,39 +727,17 @@ const AIAdvicePanelInner: React.FC<AIAdvicePanelProps> = ({ records, userProfile
           }
           console.warn('[chat] 云端返回空内容，转本地规则兜底');
         }
-        // 直连已尝试就不再用另一套 prompt 打服务端代理——两条路径的前缀毫无
-        // 重叠，必然双份 miss 且互相挤占缓存。失败交给外层 catch 走本地规则引擎
+        // 直连失败直接交给外层 catch 走本地临床规则引擎
         throw new Error('direct LLM failed');
       }
 
-      // 3. Fallback to app server proxy
-      const response = await fetchJsonWithTimeout('/api/sleep/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          history: newHistory.slice(-6),
-          recentLogs: slimLogsForAI(nightsOnly(records).slice(0, 3)),
-          userProfile,
-          aiConfig: userProfile.aiConfig,
-        }),
-      }, 30000);
-
-      if (!response.ok || !response.data) {
-        throw new Error('Chat API network error');
-      }
-
-      const data = response.data;
-      if (data.provider) {
-        setActiveProviderName(data.provider);
-      }
-      if (!data || typeof data !== 'object' || !data.result) {
-        throw new Error('服务端响应结构异常');
-      }
+      // 3. 无云端 Key 或未启用原生端侧模型：直接由本地临床规则引擎回复（零出网）
+      setActiveProviderName('本地临床规则引擎');
+      const localReplyText = generateLocalChatReply(text, nightsOnly(records)[0] ?? null, records);
       const aiReply: ChatMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
-        content: data.reply || '（服务端返回了空回复，请重试）',
+        content: localReplyText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setChatMessagesFor(targetId, (prev) => [...prev, aiReply]);

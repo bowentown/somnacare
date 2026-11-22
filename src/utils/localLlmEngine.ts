@@ -1,33 +1,15 @@
-import type { Wllama, CacheManager } from '@wllama/wllama';
 import { nativePlugin } from './nativeBridge';
 
-// wllama 只在 Web/PWA 路径真正生成时才加载（动态 import）：
-// 静态 import 会把整个 WASM 运行时拖进首屏包（实测 306KB，占首屏 JS 40.3%），
-// 而 Android 上这段代码永远不会执行。类型引用用 import type，编译期擦除。
-
-let wasmUrlCache: string | null = null;
-let generateSeq = 0;
-async function loadWasmUrl(): Promise<string> {
-  if (wasmUrlCache == null) {
-    wasmUrlCache = (await import('@wllama/wllama/esm/wasm/wllama.wasm?url')).default;
-  }
-  return wasmUrlCache;
-}
-
 /**
- * 端侧小模型引擎（双运行时自动路由）：
+ * 端侧小模型引擎（纯 Android 原生 MediaPipe Gemma 3 1B）：
  *
  * - Android APK（Capacitor 原生环境）→ 原生插件 cap-gemma-llm：
  *   MediaPipe LLM Inference 跑 Gemma 3 1B int4（.task，mmap 加载，无 MEMFS 双重驻留）。
- *   原生层运行在 App 进程，不受 WebView 渲染进程的内存限制——
- *   此前 WASM 方案在部分设备闪退（OOM 击杀渲染进程）的根因所在。
- * - Web / PWA → wllama（llama.cpp WASM）跑 Qwen3-0.6B GGUF：桌面浏览器内存充裕。
+ * - 浏览器开发/测试预览环境 → 返回不可用提示（聊天走自配云端或本地临床规则引擎）。
  *
- * 两侧共用同一套引擎 API（下载/缓存/流式生成），调用方无感知；
  * 危机/用药安全护栏不在本模块内——由调用方（AIAdvicePanel）在进入本引擎之前拦截。
  */
 
-// ==== Android 原生：Gemma 3 1B (MediaPipe .task) ====
 export const NATIVE_LLM_MODEL = {
   // Gemma 系模型在 HF 为门控资源：需在网页端接受许可协议后生成只读令牌，
   // 于设置页填入一次（存本机）。多源下载：hf-mirror 优先，失败降级官方源。
@@ -39,20 +21,8 @@ export const NATIVE_LLM_MODEL = {
   expectedBytes: 554_000_000, // ~529 MiB，仅作界面展示参考
 };
 
-// ==== Web / PWA：Qwen3-0.6B (GGUF + llama.cpp WASM) ====
-export const LOCAL_LLM_MODEL = {
-  url: 'https://hf-mirror.com/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf',
-  fallbackUrl:
-    'https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf',
-  label: 'Qwen3-0.6B (Q4_K_M)',
-  expectedBytes: 484_220_320,
-  minFreeStorageBytes: 1_200_000_000,
-  minDeviceMemoryGB: 4,
-};
-
-const MODEL_SOURCES: string[] = [LOCAL_LLM_MODEL.url, LOCAL_LLM_MODEL.fallbackUrl];
-const LLM_CACHE_NAME = 'somnacare-llm-model';
 const HF_TOKEN_KEY = 'somnacare_hf_token';
+const LLM_STATE_KEY = 'somnacare_llm_state';
 
 export interface LocalLlmSupport {
   supported: boolean;
@@ -68,11 +38,9 @@ export interface LocalLlmCacheState {
 
 export type LocalLlmStage = 'loading' | 'generating';
 
-let instance: Wllama | null = null;
-let loadedUrl: string | null = null;
+let loadedNative = false;
 let busy = false;
-
-// ==== 原生插件访问 ====
+let generateSeq = 0;
 
 function getNativePlugin(): any | null {
   return nativePlugin('GemmaLLM');
@@ -85,7 +53,7 @@ export function isNativeLlmAvailable(): boolean {
 
 /** 当前环境实际生效的模型标签（供界面展示） */
 export function getActiveModelLabel(): string {
-  return isNativeLlmAvailable() ? NATIVE_LLM_MODEL.label : LOCAL_LLM_MODEL.label;
+  return NATIVE_LLM_MODEL.label;
 }
 
 export function getHfToken(): string {
@@ -105,145 +73,66 @@ export function setHfToken(token: string): void {
   }
 }
 
-// ==== 直通缓存后端（绕过 wllama 对 OPFS 的硬依赖，仅 Web 路径使用） ====
-
-async function createBypassCacheManager(): Promise<CacheManager> {
-  const bypassBackend = { isSupported: () => true } as any;
-  const { CacheManager } = await import('@wllama/wllama');
-  return new CacheManager([bypassBackend]);
-}
-
-async function createWllama(): Promise<Wllama> {
-  const [{ Wllama }, wasmUrl] = await Promise.all([
-    import('@wllama/wllama'),
-    loadWasmUrl(),
-  ]);
-  return new Wllama(
-    { default: wasmUrl },
-    { allowOffline: true, cacheManager: await createBypassCacheManager() }
-  );
-}
-
 // ==== 支持性门控 ====
 
 export async function getLocalLlmSupport(): Promise<LocalLlmSupport> {
   const plugin = getNativePlugin();
-  if (plugin) {
-    // 原生：MediaPipe mmap 加载，内存门槛显著低于 WASM；门控交给下载后的实际加载
-    try {
-      await plugin.isSupported();
-      return { supported: true, deviceMemoryGB: null, freeStorageGB: null };
-    } catch (e) {
-      // 检测失败要如实上报——此前 catch 返回与成功完全相同的值，检测形同虚设
-      console.warn('[localLlm] isSupported 查询失败，按支持处理（门控交给实际加载）:', e);
-      return { supported: true, deviceMemoryGB: null, freeStorageGB: null };
-    }
+  if (!plugin) {
+    return {
+      supported: false,
+      reason: '端侧小模型仅在 Android APK 原生环境运行',
+      deviceMemoryGB: null,
+      freeStorageGB: null,
+    };
   }
-
-  const nav = navigator as any;
-  const deviceMemoryGB: number | null = typeof nav.deviceMemory === 'number' ? nav.deviceMemory : null;
-
-  let freeStorageGB: number | null = null;
-  if (navigator.storage && navigator.storage.estimate) {
-    try {
-      const est = await navigator.storage.estimate();
-      if (typeof est.quota === 'number' && typeof est.usage === 'number') {
-        freeStorageGB = (est.quota - est.usage) / 1024 ** 3;
-      }
-    } catch {
-      // 存储配额不可查询，视为未知
-    }
-  }
-
-  let supported = true;
-  let reason: string | undefined;
-  if (deviceMemoryGB !== null && deviceMemoryGB < LOCAL_LLM_MODEL.minDeviceMemoryGB) {
-    supported = false;
-    reason = `设备可用内存档位不足（${deviceMemoryGB}GB < ${LOCAL_LLM_MODEL.minDeviceMemoryGB}GB）`;
-  } else if (freeStorageGB !== null && freeStorageGB < LOCAL_LLM_MODEL.minFreeStorageBytes / 1024 ** 3) {
-    supported = false;
-    reason = `剩余存储空间不足（${freeStorageGB.toFixed(1)}GB）`;
-  } else if (typeof caches === 'undefined') {
-    supported = false;
-    reason = '当前浏览器内核过旧，缺少模型缓存能力';
-  }
-
-  return { supported, reason, deviceMemoryGB, freeStorageGB };
-}
-
-export async function ensureStoragePersistence(): Promise<boolean> {
   try {
-    if (navigator.storage && navigator.storage.persist) {
-      const already = await navigator.storage.persisted();
-      if (already) return true;
-      return await navigator.storage.persist();
-    }
-  } catch {
-    // 部分环境不支持，忽略
+    await plugin.isSupported();
+    return { supported: true, deviceMemoryGB: null, freeStorageGB: null };
+  } catch (e) {
+    console.warn('[localLlm] isSupported 查询失败，按支持处理（门控交给实际加载）:', e);
+    return { supported: true, deviceMemoryGB: null, freeStorageGB: null };
   }
-  return false;
 }
 
-// ==== 缓存状态（原生：插件文件；Web：Cache API） ====
-
-async function findCachedModelUrl(): Promise<string | null> {
-  if (typeof caches === 'undefined') return null;
-  try {
-    const cache = await caches.open(LLM_CACHE_NAME);
-    for (const url of MODEL_SOURCES) {
-      const hit = await cache.match(url);
-      if (hit) return url;
-    }
-  } catch {
-    // 查询失败按未下载处理
-  }
-  return null;
-}
+// ==== 缓存状态（原生插件本地文件） ====
 
 export async function getLocalLlmCacheState(): Promise<LocalLlmCacheState> {
   const plugin = getNativePlugin();
-  if (plugin) {
-    try {
-      const info = await plugin.isModelDownloaded({ filename: NATIVE_LLM_MODEL.filename });
-      const downloaded = !!info?.downloaded;
-      const bytes = Number(info?.size || 0);
-      return {
-        cached: downloaded,
-        cachedBytes: bytes || (downloaded ? NATIVE_LLM_MODEL.expectedBytes : 0),
-      };
-    } catch {
-      return { cached: false, cachedBytes: 0 };
-    }
-  }
-
-  const cachedUrl = await findCachedModelUrl();
-  if (!cachedUrl) return { cached: false, cachedBytes: 0 };
+  if (!plugin) return { cached: false, cachedBytes: 0 };
   try {
-    const cache = await caches.open(LLM_CACHE_NAME);
-    const hit = await cache.match(cachedUrl);
-    const size = Number(hit?.headers.get('content-length') || 0);
-    return { cached: true, cachedBytes: size > 0 ? size : LOCAL_LLM_MODEL.expectedBytes };
+    const info = await plugin.isModelDownloaded({ filename: NATIVE_LLM_MODEL.filename });
+    const downloaded = !!info?.downloaded;
+    const bytes = Number(info?.size || 0);
+    return {
+      cached: downloaded,
+      cachedBytes: bytes || (downloaded ? NATIVE_LLM_MODEL.expectedBytes : 0),
+    };
   } catch {
-    return { cached: true, cachedBytes: LOCAL_LLM_MODEL.expectedBytes };
+    return { cached: false, cachedBytes: 0 };
   }
 }
 
-// ==== 下载（原生：插件流式落盘 + 断点续传；Web：Cache API 流式） ====
+// ==== 下载（原生流式落盘 + 断点续传） ====
 
 export async function downloadLocalLlm(
   onProgress: (percent: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const plugin = getNativePlugin();
-  if (plugin) {
-    let progressHandle: any = null;
-    let lastError: unknown = null;
-    // 原生侧本就有 downloadCancelled/cancelDownload，只是没人调用——
-    // JS 的 abort 不会让 await downloadModel 落定，必须显式触发原生取消
-    const onAbort = () => {
-      try { void plugin.cancelDownload?.(); } catch { /* ignore */ }
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
+  if (!plugin) {
+    throw new Error('端侧小模型仅在 Android APK 原生环境可用');
+  }
+  let progressHandle: any = null;
+  let lastError: unknown = null;
+  const onAbort = () => {
+    try {
+      void plugin.cancelDownload?.();
+    } catch {
+      /* ignore */
+    }
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
     for (const url of [NATIVE_LLM_MODEL.url, NATIVE_LLM_MODEL.fallbackUrl]) {
       if (signal?.aborted) throw lastError ?? new Error('下载已取消');
       try {
@@ -269,69 +158,8 @@ export async function downloadLocalLlm(
         }
       }
     }
-    const detail = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new Error(detail || '所有下载源均不可用');
-  }
-
-  // Web：Cache API 流式下载
-  if (typeof caches === 'undefined') {
-    throw new Error('当前浏览器内核过旧，缺少模型缓存能力');
-  }
-  let lastError: unknown = null;
-  for (const url of MODEL_SOURCES) {
-    if (signal?.aborted) throw lastError ?? new Error('下载已取消');
-    // 复审 45 轮 D4：停滞看门狗 + 用户取消中继。fetch 只接受一个 signal——
-    // 自建 dlCtrl 把用户 signal 的取消转发过来；每个数据块重置 30s 计时，
-    // 停滞即中止并重试下一源（此前卡死无任何反馈）
-    const dlCtrl = new AbortController();
-    const onUserAbort = () => dlCtrl.abort();
-    signal?.addEventListener('abort', onUserAbort);
-    let stallTimer: ReturnType<typeof setTimeout> | undefined;
-    const armStall = () => {
-      if (stallTimer !== undefined) clearTimeout(stallTimer);
-      stallTimer = setTimeout(() => dlCtrl.abort(), 30000);
-    };
-    try {
-      armStall();
-      const res = await fetch(url, { signal: dlCtrl.signal });
-      if (!res.ok || !res.body) throw new Error(`下载源响应异常 (HTTP ${res.status})`);
-
-      const total = Number(res.headers.get('content-length') || 0);
-      // 大小硬校验（第 120 轮，P2）：expectedBytes 从"界面展示参考"升级——
-      // 源声明与清单偏差 >10% → 源异常，直接换源；expectedBytes 本身是近似值
-      //（不同镜像构建可能差几 MB），所以这里用宽容差，真正精确的校验在流结束
-      if (total > 0 && LOCAL_LLM_MODEL.expectedBytes > 0
-          && Math.abs(total - LOCAL_LLM_MODEL.expectedBytes) > LOCAL_LLM_MODEL.expectedBytes * 0.1) {
-        throw new Error(`模型源声明大小异常（${total}B ≠ ~${LOCAL_LLM_MODEL.expectedBytes}B），换下一源`);
-      }
-      let loaded = 0;
-      const progressStream = new TransformStream({
-        transform(chunk, controller) {
-          armStall();   // 有数据就续命
-          loaded += chunk.byteLength;
-          if (total > 0) onProgress(Math.min(99, Math.round((loaded / total) * 100)));
-          controller.enqueue(chunk);
-        },
-      });
-      const streamedRes = new Response(res.body.pipeThrough(progressStream));
-
-      const cache = await caches.open(LLM_CACHE_NAME);
-      await cache.put(url, streamedRes);
-      // 流完整性：实际落盘字节数 ≠ 源声明 → 截断/代理损坏，清缓存换源重试
-      if (total > 0 && loaded !== total) {
-        await cache.delete(url);
-        throw new Error(`模型文件不完整（${loaded}B ≠ 声明 ${total}B）——已清理缓存`);
-      }
-      onProgress(100);
-      return;
-    } catch (e: any) {
-      if (signal?.aborted) throw e;   // 用户取消：原样上抛
-      lastError = e;                   // 停滞/网络错误：重试下一源
-      onProgress(0);
-    } finally {
-      if (stallTimer !== undefined) clearTimeout(stallTimer);
-      signal?.removeEventListener('abort', onUserAbort);
-    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
   throw new Error(detail || '所有下载源均不可用');
@@ -339,24 +167,13 @@ export async function downloadLocalLlm(
 
 export async function deleteLocalLlm(): Promise<void> {
   const plugin = getNativePlugin();
-  if (plugin) {
-    try {
-      await plugin.deleteModel({ filename: NATIVE_LLM_MODEL.filename });
-    } catch {
-      // ignore
-    }
-    loadedUrl = null;   // 原生引擎已被插件侧卸载，不复位会让重下后的生成直接被拒
-    return;
-  }
-  if (typeof caches === 'undefined') return;
+  if (!plugin) return;
   try {
-    const cache = await caches.open(LLM_CACHE_NAME);
-    for (const url of MODEL_SOURCES) await cache.delete(url);
+    await plugin.deleteModel({ filename: NATIVE_LLM_MODEL.filename });
   } catch {
     // ignore
-  } finally {
-    await unloadLocalLlm();
   }
+  loadedNative = false;
 }
 
 // ==== 流式生成 ====
@@ -367,43 +184,32 @@ export async function generateLocalLlmReply(
     onToken: (token: string) => void;
     onStage?: (stage: LocalLlmStage) => void;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<string> {
   const plugin = getNativePlugin();
-  if (plugin) return generateViaNative(plugin, messages, handlers, signal);
-  return generateViaWasm(messages, handlers, signal);
-}
-
-async function generateViaNative(
-  plugin: any,
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  handlers: {
-    onToken: (token: string) => void;
-    onStage?: (stage: LocalLlmStage) => void;
-  },
-  signal?: AbortSignal
-): Promise<string> {
+  if (!plugin) {
+    throw new Error('端侧小模型仅在 Android APK 原生环境运行');
+  }
   if (busy) throw new Error('端侧模型正在处理中，请稍候');
   busy = true;
   const tokenHandle: any[] = [];
-  // 自增请求号：abort 竞速弃单后原生仍在跑并广播 token——
-  // 带 requestId 过滤，旧回答不会流进下一条提问的气泡
   const requestId = ++generateSeq;
   try {
-    if (!loadedUrl) {
+    if (!loadedNative) {
       handlers.onStage?.('loading');
+      setLlmState('loading');
       const info = await plugin.isModelDownloaded({ filename: NATIVE_LLM_MODEL.filename });
       if (!info?.downloaded) throw new Error('模型尚未下载，请先在设置中下载');
-      // 原生 mmap 加载（应用生命周期内保持，跨轮上下文由插件 session 维持）
       await plugin.loadModel({ filename: NATIVE_LLM_MODEL.filename, maxTokens: 1024 });
-      loadedUrl = 'native';
+      loadedNative = true;
+      setLlmState('ready');
     }
     handlers.onStage?.('generating');
+    setLlmState('generating');
 
     let last = '';
     const handle = await plugin.addListener('llmToken', (p: any) => {
-      if (p?.requestId !== undefined && p.requestId !== requestId) return;   // 旧弃单的迟到 token
-      // MediaPipe 的 ProgressListener 回调为累计文本：换算成增量再转发
+      if (p?.requestId !== undefined && p.requestId !== requestId) return;
       const text: string = p?.text ?? '';
       if (text.length > last.length && text.startsWith(last)) {
         const delta = text.slice(last.length);
@@ -414,17 +220,24 @@ async function generateViaNative(
     tokenHandle.push(handle);
 
     try {
-      // 原生插件没有取消接口；把调用与 abort 信号竞速——UI 立即解锁（busy 在
-      // finally 复位，60s 超时和"停止"不再空操作）。代价：后台那次生成可能
-      // 继续跑完，但结果会被丢弃
       const abortRace = signal
         ? new Promise<never>((_, reject) => {
-            if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-            signal.addEventListener('abort', () => {
-              // 原生真取消（第 120 轮，P3）：先让插件打断底层等待，再竞速上抛
-              try { void (plugin as any).cancelGenerate?.({ requestId }); } catch { /* 旧版插件无此接口 */ }
+            if (signal.aborted) {
               reject(new DOMException('Aborted', 'AbortError'));
-            }, { once: true });
+              return;
+            }
+            signal.addEventListener(
+              'abort',
+              () => {
+                try {
+                  void (plugin as any).cancelGenerate?.({ requestId });
+                } catch {
+                  /* 旧版插件无此接口 */
+                }
+                reject(new DOMException('Aborted', 'AbortError'));
+              },
+              { once: true },
+            );
           })
         : null;
       const genOpts = {
@@ -449,81 +262,17 @@ async function generateViaNative(
       }
     }
     if (!last.trim()) throw new Error('模型无输出');
+    setLlmState('ready');
     return last;
   } catch (e) {
-    setLlmState('idle');   // 失败路径也复位：残留 'generating' 会被取证误读成 OOM
+    setLlmState('idle');
     throw e;
   } finally {
     busy = false;
   }
 }
 
-async function generateViaWasm(
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  handlers: {
-    onToken: (token: string) => void;
-    onStage?: (stage: LocalLlmStage) => void;
-  },
-  signal?: AbortSignal
-): Promise<string> {
-  if (busy) {
-    throw new Error('端侧模型正在处理中，请稍候');
-  }
-  busy = true;
-  try {
-    if (!instance) {
-      instance = await createWllama();
-    }
-    if (!loadedUrl) {
-      handlers.onStage?.('loading');
-      setLlmState('loading');
-      const cachedUrl = await findCachedModelUrl();
-      if (!cachedUrl) {
-        throw new Error('模型尚未下载，请先在设置中下载');
-      }
-      const cache = await caches.open(LLM_CACHE_NAME);
-      const hit = await cache.match(cachedUrl);
-      const blob = await hit?.blob();
-      if (!blob || blob.size === 0) {
-        throw new Error('本地模型缓存读取失败，请删除后重新下载');
-      }
-      // 低内存配置：n_ctx 512 + 小 batch，压制 WASM 峰值内存
-      await instance.loadModel([blob], { n_ctx: 512, n_batch: 128, n_gpu_layers: 0 });
-      loadedUrl = cachedUrl;
-      setLlmState('ready');
-    }
-    handlers.onStage?.('generating');
-    setLlmState('generating');
-
-    let full = '';
-    await instance.createChatCompletion({
-      messages: messages as any,
-      stream: true,
-      onData: (chunk: any) => {
-        const token: string = chunk?.choices?.[0]?.delta?.content ?? '';
-        if (token) {
-          full += token;
-          handlers.onToken(token);
-        }
-      },
-      max_tokens: 220,
-      temperature: 0.7,
-      cache_prompt: true,
-      abortSignal: signal,
-    } as any);
-    setLlmState('ready');
-    return full;
-  } catch (e) {
-    setLlmState('idle');   // 与原生路径一致：失败也复位，取证不再把主动停止误读成 OOM
-    throw e;
-  } finally {
-    busy = false;
-  }
-}
-
-// ==== 崩溃取证（Web 路径；原生路径由插件 SharedPreferences 记录） ====
-
-const LLM_STATE_KEY = 'somnacare_llm_state';
+// ==== 崩溃取证 ====
 
 function setLlmState(state: 'idle' | 'loading' | 'generating' | 'ready') {
   try {
@@ -550,34 +299,23 @@ export function consumeLlmCrashFlag(): 'loading' | 'generating' | null {
   return null;
 }
 
-/** 显式卸载（Web 释放 WASM 内存；原生释放 mmap 资源） */
+/** 显式卸载（原生释放 mmap 资源） */
 export async function unloadLocalLlm(): Promise<void> {
   const plugin = getNativePlugin();
-  if (plugin) {
-    try {
-      await plugin.unload();
-    } catch {
-      // ignore
-    }
-    loadedUrl = null;
-    return;
+  if (!plugin) return;
+  try {
+    await plugin.unload();
+  } catch {
+    // ignore
   }
-  if (instance) {
-    try {
-      await instance.exit();
-    } catch {
-      // ignore
-    }
-    instance = null;
-    loadedUrl = null;
-  }
+  loadedNative = false;
 }
 
 // 应用切后台时卸载模型，释放内存（下次对话从缓存数秒内重载）
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && !busy) {
-      unloadLocalLlm();
+      void unloadLocalLlm();
     }
   });
 }

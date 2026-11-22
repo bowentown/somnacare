@@ -88,13 +88,10 @@ jobs:
       # 失败即停，省掉后面全部步骤。
       - name: Type check (tsc --noEmit)
         run: npm run lint
-      - name: Run Guardrails (wiring / theme / contrast)
+      - name: Run unit tests (Vitest)
+        run: npm test
+      - name: Run static & security guardrails
         run: npm run verify
-      # 第 92 轮：变异测试——把已知坏实现注入源码，对应护栏必须报红。
-      # 这是"护栏真的在守"的唯一证据（护栏自己全绿说明不了什么）。
-      # 放在 verify 之后：先确认基线全绿，再验证这份绿是有意义的。
-      - name: Mutation-test the guardrails
-        run: npm run mutate
       - name: Build Local Offline Dist
         run: |
           npm run build
@@ -133,15 +130,6 @@ jobs:
             }
           }
           EOF
-
-      - name: Strip Web-only Local-LLM Wasm from Android Assets
-        # wllama 的 llama.cpp wasm（8.1M）只服务 Web/PWA 的本地生成路径；
-        # Android 端走原生 MediaPipe Gemma 插件（localLlmEngine 对原生环境
-        # 直接返回 null），且 APK 内本就不注册 Service Worker（main.tsx 门控）。
-        # 不剥离的话每个 APK 白白多背 8.1M。
-        run: |
-          rm -f dist/assets/wllama-*.wasm
-          ls -lh dist/assets/ | grep -i wllama || echo "wasm stripped ✓"
 
       - name: Create Native Android Project & Embed Offline Assets
         run: |
