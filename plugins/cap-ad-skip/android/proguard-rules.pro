@@ -1,0 +1,2 @@
+-keep class com.somnacare.gemmallm.AdSkipPlugin { *; }
+-keep class rikka.shizuku.** { *; }

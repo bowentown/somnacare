@@ -112,7 +112,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     const validAlarms = alarms.filter((a) => a.enabled && /^([01]\d|2[0-3]):[0-5]\d$/.test(a.time || ''));
     const invalidCount = alarms.filter((a) => a.enabled).length - validAlarms.length;
     if (validAlarms.length === 0) {
-      try { await nativePlugin('GemmaLLM')?.alarmRingCancel?.(); } catch { /* ignore */ }
+      try { await nativePlugin('SleepCore')?.alarmRingCancel?.(); } catch { /* ignore */ }
       return { success: true, nativeScheduledCount: 0, invalidCount };
     }
 
@@ -173,7 +173,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     // 持续响铃排程：熄屏循环铃声+振动直到用户关闭（最长 5 分钟）——
     // Capacitor 通知只有渠道 30 秒铃声，播完即止，这就是"响一声就没"的根因
     try {
-      await nativePlugin('GemmaLLM')?.alarmRingSchedule?.({
+      await nativePlugin('SleepCore')?.alarmRingSchedule?.({
         alarmsJson: JSON.stringify(
           validAlarms.map((a) => ({
             id: a.id,

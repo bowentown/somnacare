@@ -32,10 +32,13 @@ const js = read('src/features/updates/utils/appUpdate.ts');
 const card = read('src/features/updates/AppUpdateCard.tsx');
 const settings = read('src/settings/subpages/DataSubpage.tsx');
 const app = read('src/app/App.tsx');
-const manager = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AppUpdateManager.java');
-const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
-const pluginManifest = read('plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml');
-const gradle = read('plugins/cap-gemma-llm/android/build.gradle');
+const manager = read('plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/AppUpdateManager.java');
+const plugin = read('plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/SleepCorePlugin.java');
+const pluginManifest = read('plugins/cap-sleep-core/android/src/main/AndroidManifest.xml');
+const adSkipManifest = read('plugins/cap-ad-skip/android/src/main/AndroidManifest.xml');
+const gradle = read('plugins/cap-sleep-core/android/build.gradle');
+const adSkipGradle = read('plugins/cap-ad-skip/android/build.gradle');
+const hostPatch = read('tools/patch-android-host.mts');
 const workflow = read('.github/workflows/build-apk.yml');
 
 // ── 版本比较（真实函数，不是文本扫描） ──
@@ -116,16 +119,18 @@ ok('原生：SHA-256 不匹配时删除安装包并拒绝',
 ok('清单：模板 FileProvider 复用 + 下载目录注入 + ShizukuProvider',
   pluginManifest.includes('REQUEST_INSTALL_PACKAGES')
   && pluginManifest.includes('REQUEST_IGNORE_BATTERY_OPTIMIZATIONS')
-  && pluginManifest.includes('rikka.shizuku.ShizukuProvider')
+  && adSkipManifest.includes('rikka.shizuku.ShizukuProvider')
   // 插件不得重复声明 FileProvider：模板已有同 authority 的 provider，
   // 重复声明会在 manifest merge 时因 meta-data resource 不同而失败
   && !pluginManifest.includes('androidx.core.content.FileProvider')
   && manager.includes('.fileprovider')
+  && hostPatch.includes('somnacare_updates')
+  && hostPatch.includes('res/xml/file_paths.xml')
   && workflow.includes('somnacare_updates')
   && workflow.includes('res/xml/file_paths.xml'));
 ok('Gradle：Shizuku api/provider + AndroidX core（FileProvider 编译类路径）',
-  gradle.includes('dev.rikka.shizuku:api:13.1.5')
-  && gradle.includes('dev.rikka.shizuku:provider:13.1.5')
+  adSkipGradle.includes('dev.rikka.shizuku:api:13.1.5')
+  && adSkipGradle.includes('dev.rikka.shizuku:provider:13.1.5')
   && gradle.includes('androidx.core:core:1.17.0'));
 ok('桥接：版本 / 下载 / 状态 / 安装 / 待安装',
   plugin.includes('public void appUpdateVersion')
@@ -133,10 +138,10 @@ ok('桥接：版本 / 下载 / 状态 / 安装 / 待安装',
   && plugin.includes('public void appUpdateDownloadStatus')
   && plugin.includes('public void appUpdateInstall')
   && plugin.includes('public void appUpdatePending'));
-ok('CI：安装权限注入 + 命中断言',
-  workflow.includes('REQUEST_INSTALL_PACKAGES')
-  && workflow.includes('REQUEST_IGNORE_BATTERY_OPTIMIZATIONS')
+ok('CI：安装权限检查 + 命中断言',
+  workflow.includes('tools/patch-android-host.mts')
   && workflow.includes("grep -q 'REQUEST_INSTALL_PACKAGES'")
+  && workflow.includes("grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'")
   && workflow.includes("grep -q 'androidx.core.content.FileProvider'"));
 
 // 反向自检：移除签名比较后，判据必须消失

@@ -8,7 +8,7 @@ import { nativePlugin } from '../../shared/native/nativeBridge';
 /** 主题切换时同步切换桌面图标（原生 activity-alias 启停；Web 环境跳过） */
 function switchLauncherIcon(themeId: string) {
   try {
-    const g = nativePlugin('GemmaLLM');
+    const g = nativePlugin('SleepCore');
     if (g) g.setLauncherIcon({ theme: themeId });
   } catch {
     // 图标切换失败不影响主题应用

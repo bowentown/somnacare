@@ -525,7 +525,7 @@ const TodayTabInner: React.FC = () => {
                 // 打开即检查两条投递路径的权限：通知（兜底路径）+ 悬浮窗（主路径）
                 void requestAlarmPermissions();
                 try {
-                  const plugin = nativePlugin('GemmaLLM');
+                  const plugin = nativePlugin('SleepCore');
                   if (plugin?.bedtimePermission) {
                     void plugin.bedtimePermission().then((res: any) => setBedtimePerm(!!res?.granted));
                   }
@@ -584,7 +584,7 @@ const TodayTabInner: React.FC = () => {
             onClick={(e) => {
               e.stopPropagation();
               try {
-                void nativePlugin('GemmaLLM')?.bedtimeOpenPermission?.();
+                void nativePlugin('SleepCore')?.bedtimeOpenPermission?.();
               } catch { /* ignore */ }
             }}
             className="w-full mt-2.5 py-2.5 rounded-xl bg-orange-500/20 border border-orange-400 text-orange-200 text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform"

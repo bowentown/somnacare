@@ -104,7 +104,7 @@ export const ANIM_LABEL: Record<string, string> = {
 
 export async function petAnimNow(): Promise<string | null> {
   try {
-    const g = nativePlugin('GemmaLLM');
+    const g = nativePlugin('PetOverlay');
     const res = await g?.getPetState?.();
     return typeof res?.anim === 'string' && res.anim ? res.anim : null;
   } catch {

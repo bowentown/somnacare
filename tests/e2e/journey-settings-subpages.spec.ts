@@ -200,7 +200,7 @@ test('旅程22 广告跳过：偏好页开关默认关闭，开启走原生 + �
       isNativePlatform: () => true,
       getPlatform: () => 'android',
       Plugins: {
-        GemmaLLM: {
+        AdSkip: {
           adSkipStatus: async () => ({ enabled: false, serviceEnabled: false, hits: 0 }),
           adSkipSetEnabled: async ({ enabled }: { enabled: boolean }) => {
             (window as any).__adSkipCalls = (window as any).__adSkipCalls || [];
@@ -316,7 +316,7 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
     // 里读不到 → isNativePlatform() 恒 false（第 90 轮 G 实测）
     (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).androidBridge = {};
-    (window as any).Capacitor.Plugins.GemmaLLM = {
+    (window as any).Capacitor.Plugins.EyeCare = {
       eyeCareRestGet: async () => ({ enabled: false, serviceAlive: true, maxTodayRaw: '{"maxMin":12,"date":"2026-10-26"}' }),
       eyeCareRestSet: async (args: { enabled: boolean }) => {
         restCalls.push({ enabled: args?.enabled === true });
@@ -326,6 +326,8 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
       eyeCareStatus: async () => ({ started: true, granted: true }),
       eyeCareSetEnabled: async () => ({ ok: true }),
       eyeCareOpenPermissionSettings: async () => ({}),
+    };
+    (window as any).Capacitor.Plugins.SleepCore = {
       bedtimePermission: async () => ({ granted: true }),
       alarmRingTable: async () => ({ json: '[]' }),
     };

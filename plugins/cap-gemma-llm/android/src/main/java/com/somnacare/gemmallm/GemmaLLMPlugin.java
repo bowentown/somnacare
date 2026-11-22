@@ -1,15 +1,7 @@
 package com.somnacare.gemmallm;
 
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.ActivityManager;
-import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Build;
-import android.provider.Settings;
-import android.view.accessibility.AccessibilityManager;
-import java.util.List;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -30,14 +22,12 @@ import java.net.URI;
 import java.net.URL;
 import java.util.concurrent.Future;
 
-import rikka.shizuku.Shizuku;
-
 /**
  * 原生端侧大模型插件：MediaPipe LLM Inference (Gemma .task)。
  *
  * 与 WebView/WASM 方案的本质区别：
  * - 模型文件经 mmap 直接映射（无 MEMFS 双重驻留），峰值内存约为模型体积 + KV 缓存；
- * - 运行在 App 进程的原生层，不受 WebView 渲染进程的内存限制（此前 WASM 方案闪退的根因）；
+ * - 运行在 App 进程的原生层，不受 WebView 渲染进程的内存限制；
  * - 下载支持 Bearer 令牌（Gemma 门控模型需要一次性 HF 授权）与断点续传。
  *
  * API 对齐 tasks-genai 0.10.32（经 AAR 反编译核对）：
@@ -64,1115 +54,7 @@ public class GemmaLLMPlugin extends Plugin {
     private static final java.util.concurrent.ExecutorService BACKGROUND =
             java.util.concurrent.Executors.newSingleThreadExecutor();
 
-    /** Shizuku 授权结果监听（第 61 轮）：仅用于把结果广播给 JS，不做任何自动修复。 */
-    private Shizuku.OnRequestPermissionResultListener shizukuPermissionListener;
-
-    @Override
-    public void load() {
-        super.load();
-        try {
-            shizukuPermissionListener = (requestCode, grantResult) -> {
-                if (requestCode == ShizukuGuard.REQUEST_CODE) {
-                    JSObject ret = ShizukuGuard.status(getContext());
-                    ret.put("granted", grantResult == PackageManager.PERMISSION_GRANTED);
-                    notifyListeners("shizukuPermission", ret);
-                }
-            };
-            Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
-        } catch (Throwable ignored) {
-            // 未安装 Shizuku / Shizuku 版本过旧：状态接口会如实返回 running=false
-        }
-    }
-
-    // ==== 通知动作冷启动读取（第 56 轮） ====
-
-    /**
-     * 冷启动读取提议通知的动作。
-     *
-     * @capacitor/local-notifications 只在 onNewIntent 里派发
-     * localNotificationActionPerformed——进程被杀后从通知栏启动时，
-     * 这条事件会丢。通知的 PendingIntent 把动作与通知 JSON 放在
-     * Activity 的启动 Intent 里（键名是插件的固定常量），这里直接读出来，
-     * 交给 JS 待办链路；读完即清，避免下次冷启动重复确认。
-     */
-    @PluginMethod
-    public void proposalNotificationAction(PluginCall call) {
-        JSObject ret = new JSObject();
-        try {
-            // 走 getContext() 再转 Activity：getActivity() 的返回类型是
-            // AppCompatActivity，而插件模块的编译类路径没有 androidx.appcompat
-            // （CI 实测 cannot access AppCompatActivity）
-            android.content.Context ctx = getContext();
-            Intent intent = ctx instanceof android.app.Activity
-                    ? ((android.app.Activity) ctx).getIntent() : null;
-            if (intent != null) {
-                String action = intent.getStringExtra("LocalNotificationUserAction");
-                String raw = intent.getStringExtra("LocalNotficationObject");   // 插件常量拼写如此
-                if (("confirm".equals(action) || "edit".equals(action)) && raw != null) {
-                    org.json.JSONObject obj = new org.json.JSONObject(raw);
-                    org.json.JSONObject extra = obj.optJSONObject("extra");
-                    String date = extra != null ? extra.optString("proposalDate", "") : "";
-                    if (!date.isEmpty()) {
-                        ret.put("actionId", action);
-                        ret.put("date", date);
-                    }
-                }
-                intent.removeExtra("LocalNotificationUserAction");
-                intent.removeExtra("LocalNotficationObject");
-            }
-        } catch (Exception ignored) {
-            // 畸形通知 JSON / 无启动 Intent：当作没有动作，不影响正常启动
-        }
-        call.resolve(ret);
-    }
-
     // ==== 能力探测与内存门控 ====
-
-    // ==== 摇一摇/开屏广告跳过（第 59 轮） ====
-
-    /**
-     * 无障碍点击服务是独立的长驻服务；这里只负责开关与状态，
-     * 真正扫描/点击在 AdSkipService 里（事件驱动，默认关闭）。
-     */
-    @PluginMethod
-    public void adSkipStatus(PluginCall call) {
-        JSObject ret = new JSObject();
-        Context ctx = getContext();
-        ret.put("enabled", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(AdSkipService.KEY_ENABLED, false));
-        ret.put("serviceEnabled", isAdSkipServiceEnabled());
-        ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(AdSkipService.KEY_HITS, 0));
-        // 运行时诊断（最近的包切换/扫描/命中/点击记录）：某应用跳不过去时据此定位
-        com.getcapacitor.JSArray diag = new com.getcapacitor.JSArray();
-        for (String line : AdSkipService.diagSnapshot()) diag.put(line);
-        ret.put("diag", diag);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void adSkipSetEnabled(PluginCall call) {
-        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
-        Context ctx = getContext();
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(AdSkipService.KEY_ENABLED, enabled).apply();
-        JSObject ret = new JSObject();
-        ret.put("enabled", enabled);
-        ret.put("serviceEnabled", isAdSkipServiceEnabled());
-        call.resolve(ret);
-    }
-
-    /** 按应用命中统计（第 74 轮）：包名映射成应用名，按次数降序，最多 20 条 */
-    @PluginMethod
-    public void adSkipStats(PluginCall call) {
-        Context ctx = getContext();
-        JSArray apps = new JSArray();
-        java.util.Map<String, Integer> hits = AdSkipService.hitsByPackage(ctx);
-        java.util.List<String> sorted = new java.util.ArrayList<>(hits.keySet());
-        sorted.sort((a, b) -> hits.get(b) - hits.get(a));
-        PackageManager pm = ctx.getPackageManager();
-        int shown = 0;
-        for (String pkg : sorted) {
-            if (shown >= 20) break;
-            shown++;
-            JSObject item = new JSObject();
-            item.put("pkg", pkg);
-            String label = pkg;
-            try {
-                CharSequence cs = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
-                if (cs != null && cs.length() > 0) label = cs.toString();
-            } catch (Exception ignored) {
-                // 应用已卸载：显示包名
-            }
-            item.put("label", label);
-            item.put("hits", hits.get(pkg));
-            apps.put(item);
-        }
-        JSObject ret = new JSObject();
-        ret.put("apps", apps);
-        ret.put("total", AdSkipService.hitsByPackage(ctx).values().stream().mapToInt(Integer::intValue).sum());
-        call.resolve(ret);
-    }
-
-    /** 一键复制诊断（第 74 轮）：版本/服务状态/命中/最近日志/按应用统计 → 剪贴板 */
-    @PluginMethod
-    public void adSkipCopyDiag(PluginCall call) {
-        JSObject ret = new JSObject();
-        try {
-            Context ctx = getContext();
-            StringBuilder sb = new StringBuilder();
-            sb.append("SomnaCare 广告跳过诊断\n");
-            try {
-                android.content.pm.PackageInfo info = ctx.getPackageManager()
-                        .getPackageInfo(ctx.getPackageName(), 0);
-                sb.append("版本: ").append(info.versionName)
-                        .append(" (").append(android.os.Build.VERSION.SDK_INT >= 28
-                                ? info.getLongVersionCode() : info.versionCode).append(")\n");
-            } catch (Exception ignored) {
-            }
-            sb.append("开关: ").append(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getBoolean(AdSkipService.KEY_ENABLED, false))
-                    .append(" / 服务: ").append(isAdSkipServiceEnabled()).append('\n');
-            sb.append("累计点击: ").append(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getInt(AdSkipService.KEY_HITS, 0)).append('\n');
-            sb.append("\n最近日志:\n");
-            for (String line : AdSkipService.diagSnapshot()) sb.append(line).append('\n');
-            sb.append("\n按应用命中:\n");
-            java.util.Map<String, Integer> hits = AdSkipService.hitsByPackage(ctx);
-            java.util.List<String> sorted = new java.util.ArrayList<>(hits.keySet());
-            sorted.sort((a, b) -> hits.get(b) - hits.get(a));
-            for (String pkg : sorted) sb.append(pkg).append(' ').append(hits.get(pkg)).append('\n');
-
-            android.content.ClipboardManager cm = (android.content.ClipboardManager)
-                    ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm == null) {
-                ret.put("ok", false);
-                ret.put("reason", "剪贴板服务不可用");
-                call.resolve(ret);
-                return;
-            }
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("somnacare-ad-skip-diag", sb.toString()));
-            ret.put("ok", true);
-        } catch (Exception e) {
-            ret.put("ok", false);
-            ret.put("reason", e.getMessage());
-        }
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void adSkipOpenSettings(PluginCall call) {
-        try {
-            Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-        } catch (Exception ignored) {
-            // 部分 ROM 无此页：UI 侧提示手动前往
-        }
-        call.resolve();
-    }
-
-    private boolean isAdSkipServiceEnabled() {
-        return AdSkipService.isAccessibilityEnabled(getContext());
-    }
-
-    // ==== 应用更新（第 61 轮） ====
-
-    @PluginMethod
-    public void appUpdateVersion(PluginCall call) {
-        call.resolve(AppUpdateManager.versionInfo(getContext()));
-    }
-
-    @PluginMethod
-    public void appUpdateCanInstall(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("allowed", AppUpdateManager.canInstall(getContext()));
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void appUpdateOpenUnknownSources(PluginCall call) {
-        AppUpdateManager.openUnknownSourcesSettings(getContext());
-        call.resolve();
-    }
-
-    @PluginMethod
-    public void appUpdateDownload(PluginCall call) {
-        String url = call.getData().optString("url", "");
-        String sha256 = call.getData().optString("sha256", "");
-        boolean allowMetered = call.getData().optBoolean("allowMetered", false);
-        call.resolve(AppUpdateManager.enqueue(getContext(), url, sha256, allowMetered));
-    }
-
-    @PluginMethod
-    public void appUpdateDownloadStatus(PluginCall call) {
-        long id = call.getData().optLong("downloadId", -1L);
-        call.resolve(AppUpdateManager.status(getContext(), id));
-    }
-
-    @PluginMethod
-    public void appUpdatePending(PluginCall call) {
-        call.resolve(AppUpdateManager.pending(getContext()));
-    }
-
-    @PluginMethod
-    public void appUpdateInstall(PluginCall call) {
-        long id = call.getData().optLong("downloadId", -1L);
-        call.resolve(AppUpdateManager.install(getContext(), id));
-    }
-
-    @PluginMethod
-    public void appUpdateOpenRelease(PluginCall call) {
-        String url = call.getData().optString("url", "");
-        try {
-            AppUpdateManager.openReleasePage(getContext(), url);
-            call.resolve();
-        } catch (Exception e) {
-            call.reject(e.getMessage() == null ? "无法打开链接" : e.getMessage());
-        }
-    }
-
-    // ==== 电池优化白名单（第 61 轮） ====
-
-    @PluginMethod
-    public void batteryOptimizationStatus(PluginCall call) {
-        call.resolve(AppUpdateManager.batteryStatus(getContext()));
-    }
-
-    @PluginMethod
-    public void batteryOptimizationRequest(PluginCall call) {
-        call.resolve(AppUpdateManager.requestBatteryExemption(getContext()));
-    }
-
-    // ==== Shizuku 守护（第 61 轮，可选） ====
-
-    @PluginMethod
-    public void shizukuStatus(PluginCall call) {
-        call.resolve(ShizukuGuard.status(getContext()));
-    }
-
-    @PluginMethod
-    public void shizukuRequestPermission(PluginCall call) {
-        JSObject ret = ShizukuGuard.status(getContext());
-        boolean requested = false;
-        if (ret.optBoolean("running", false) && !ret.optBoolean("granted", false)) {
-            Context ctx = getContext();
-            Runnable request = () -> ShizukuGuard.requestPermission();
-            if (ctx instanceof android.app.Activity) {
-                ((android.app.Activity) ctx).runOnUiThread(request);
-            } else {
-                request.run();
-            }
-            requested = true;
-        }
-        ret.put("requested", requested);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void shizukuRepairAccessibility(PluginCall call) {
-        final Context ctx = getContext();
-        new Thread(() -> call.resolve(ShizukuGuard.repairAccessibility(ctx)), "shizuku-repair").start();
-    }
-
-    @PluginMethod
-    public void shizukuOpenApp(PluginCall call) {
-        ShizukuGuard.openApp(getContext());
-        call.resolve();
-    }
-
-    // ==== 主题联动桌面图标（activity-alias） ====
-
-    static final String PREFS = "somnacare_prefs";   // 包内可见：Bedtime/Pet/NightRescue 共用同一偏好文件
-    private static final String KEY_PENDING_ICON = "pending_launcher_icon";
-    private volatile String pendingIconTheme;
-
-    /**
-     * 主题色切换时请求换图标。注意：绝不能在前台立即改 activity-alias——
-     * 禁用"正在运行的 Activity 所属的 alias"会让部分 ROM 强杀进程（每次切主题必闪退）。
-     * 这里只记录待应用主题，真正切换延迟到 App 退后台（handleOnPause）时执行，
-     * 用户回到桌面时图标已是新主题，即使系统杀进程也发生在后台、无感知。
-     */
-    @PluginMethod
-    public void setLauncherIcon(PluginCall call) {
-        String theme = call.getString("theme", "midnight");
-        try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString(KEY_PENDING_ICON, theme).apply();
-        } catch (Exception ignored) {
-        }
-        pendingIconTheme = theme;
-        JSObject ret = new JSObject();
-        ret.put("ok", true);
-        ret.put("deferred", true);
-        call.resolve(ret);
-    }
-
-    private void applyLauncherIconNow(String theme) {
-        String pkg = getContext().getPackageName();
-        PackageManager pm = getContext().getPackageManager();
-        String[] themes = {"midnight", "pure_dark", "warm_amber", "serene_blue"};
-        String suffix;
-        switch (theme) {
-            case "pure_dark": suffix = "PureDark"; break;
-            case "warm_amber": suffix = "WarmAmber"; break;
-            case "serene_blue": suffix = "SereneBlue"; break;
-            default: suffix = "Midnight";
-        }
-        try {
-            pm.setComponentEnabledSetting(
-                    new ComponentName(pkg, pkg + ".MainActivity" + suffix),
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP);
-            for (String t : themes) {
-                if (t.equals(theme)) continue;
-                String sfx;
-                switch (t) {
-                    case "pure_dark": sfx = "PureDark"; break;
-                    case "warm_amber": sfx = "WarmAmber"; break;
-                    case "serene_blue": sfx = "SereneBlue"; break;
-                    default: sfx = "Midnight";
-                }
-                pm.setComponentEnabledSetting(
-                        new ComponentName(pkg, pkg + ".MainActivity" + sfx),
-                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                        PackageManager.DONT_KILL_APP);
-            }
-        } catch (Exception ignored) {
-            // 别名缺失等场景静默跳过，绝不影响前台体验
-        }
-    }
-
-    /** App 退到后台：此时切换 alias 最安全（即使 ROM 杀进程，用户已在桌面，无感） */
-    @Override
-    protected void handleOnPause() {
-        super.handleOnPause();
-        try {
-            String t = pendingIconTheme;
-            if (t == null) {
-                t = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                        .getString(KEY_PENDING_ICON, null);
-            }
-            if (t != null) {
-                applyLauncherIconNow(t);
-                pendingIconTheme = null;
-                getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                        .edit().remove(KEY_PENDING_ICON).apply();
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    // ==== 护眼滤镜（全局悬浮窗，需"显示在其他应用上层"权限） ====
-
-    /** 查询悬浮窗权限是否已授予。 */
-    @PluginMethod
-    public void eyeCarePermission(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("granted", android.provider.Settings.canDrawOverlays(getContext()));
-        ret.put("sdkInt", android.os.Build.VERSION.SDK_INT);
-        call.resolve(ret);
-    }
-
-    /** 电池优化白名单引导（第 52 轮）：MIUI/EMUI 的"后台广播砍杀"会让
-     *  深夜救援/精确闹钟在进程已死时失效——跳系统电池优化设置让用户把
-     *  本应用加白名单。用 ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
-     *  （免 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 权限，商店政策友好）。 */
-    @PluginMethod
-    public void openBatteryOptimizationSettings(PluginCall call) {
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        } catch (Exception e) {
-            try {
-                // 极少数 ROM 无此页：回退应用详情页（手动进电池选项）
-                android.content.Intent fallback = new android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.parse("package:" + getContext().getPackageName()));
-                fallback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(fallback);
-                call.resolve();
-            } catch (Exception ignored) {
-                call.reject("无法打开电池设置");
-            }
-        }
-    }
-
-    /** 跳转系统"显示在其他应用上层"授权页（直接定位到本应用）。 */
-    @PluginMethod
-    public void eyeCareOpenPermission(PluginCall call) {
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:" + getContext().getPackageName()));
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        } catch (Exception e) {
-            // 个别 ROM 不支持带 package Uri 的授权页，回退到通用设置页
-            try {
-                android.content.Intent fallback = new android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.parse("package:" + getContext().getPackageName()));
-                fallback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(fallback);
-                call.resolve();
-            } catch (Exception e2) {
-                call.reject("无法打开授权页: " + e2.getMessage());
-            }
-        }
-    }
-
-    /** 启动/更新护眼滤镜（幂等：服务已运行则原地更新参数，不重建窗口）。 */
-    @PluginMethod
-    public void eyeCareStart(PluginCall call) {
-        String warmColor = call.getString("warmColor", "#FFB26B");
-        double warmAlphaIn = call.getDouble("warmAlpha", 0.2);
-        double dimAlphaIn = call.getDouble("dimAlpha", 0.0);
-        float warmAlpha = (float) Math.min(1.0, Math.max(0.0, warmAlphaIn));
-        float dimAlpha = (float) Math.min(1.0, Math.max(0.0, dimAlphaIn));
-        if (!android.provider.Settings.canDrawOverlays(getContext())) {
-            call.reject("OVERLAY_PERMISSION_REQUIRED");
-            return;
-        }
-        try {
-            android.content.Intent intent = new android.content.Intent(getContext(), EyeCareService.class)
-                    .setAction(EyeCareService.ACTION_APPLY)
-                    .putExtra(EyeCareService.EXTRA_WARM_COLOR, warmColor)
-                    .putExtra(EyeCareService.EXTRA_WARM_ALPHA, warmAlpha)
-                    .putExtra(EyeCareService.EXTRA_DIM_ALPHA, dimAlpha)
-                    .putExtra(EyeCareService.EXTRA_REST_ENABLED,
-                            getContext().getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                                    .getBoolean(EyeCareService.KEY_REST_ENABLED, false));
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
-            JSObject ret = new JSObject();
-            ret.put("ok", true);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("启动护眼滤镜失败: " + e.getMessage());
-        }
-    }
-
-    /** 20-20-20 远眺提醒开关状态 */
-    @PluginMethod
-    public void eyeCareRestGet(PluginCall call) {
-        JSObject ret = new JSObject();
-        Context ctx = getContext();
-        ret.put("enabled", ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                .getBoolean(EyeCareService.KEY_REST_ENABLED, false));
-        ret.put("serviceAlive", EyeCareService.isActive()
-                || ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                        .getBoolean("eyecare_on", false));
-        String maxRaw = ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                .getString(EyeCareService.KEY_EYE_MAX_TODAY, "");
-        ret.put("maxTodayRaw", maxRaw == null ? "" : maxRaw);
-        call.resolve(ret);
-    }
-
-    /** 20-20-20 开关：写偏好 + 通知运行中的服务即时生效；关滤镜时也要把服务拉起 */
-    @PluginMethod
-    public void eyeCareRestSet(PluginCall call) {
-        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
-        JSObject ret = new JSObject();
-        try {
-            Context ctx = getContext();
-            EyeCareService.setRestEnabled(ctx, enabled);
-            boolean filterOn = ctx.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                    .getBoolean("eyecare_on", false);
-            if (enabled && !filterOn) {
-                // 滤镜关着也要跑服务：零透明度窗口保活，只做 20-20-20
-                android.content.Intent intent = new android.content.Intent(ctx, EyeCareService.class)
-                        .setAction(EyeCareService.ACTION_APPLY)
-                        .putExtra(EyeCareService.EXTRA_WARM_COLOR, "#FFB26B")
-                        .putExtra(EyeCareService.EXTRA_WARM_ALPHA, 0f)
-                        .putExtra(EyeCareService.EXTRA_DIM_ALPHA, 0f)
-                        .putExtra(EyeCareService.EXTRA_REST_ENABLED, true);
-                if (android.os.Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(intent);
-                else ctx.startService(intent);
-            }
-            ret.put("ok", true);
-            ret.put("enabled", enabled);
-        } catch (Exception e) {
-            ret.put("ok", false);
-            ret.put("reason", e.getMessage());
-        }
-        call.resolve(ret);
-    }
-
-    /**
-     * 保存用户在 App 里选的滤镜参数（颜色/暖色强度/减光）。
-     * 悬浮窗与快捷磁贴就地开关时读这份 prefs——用户选过就用用户的，没选才落默认暖黄。
-     */
-    @PluginMethod
-    public void eyeCareSaveParams(PluginCall call) {
-        try {
-            String color = safe(call, "color", "#FFB26B");
-            // 这个 Capacitor 版本的 PluginCall 没有 getNumber(String)，走 getData() 取
-            Object wv = call.getData().get("warm");
-            Object dv = call.getData().get("dim");
-            float warm = wv instanceof Number ? (float) Math.max(0, Math.min(1, ((Number) wv).doubleValue())) : 0.22f;
-            float dim = dv instanceof Number ? (float) Math.max(0, Math.min(1, ((Number) dv).doubleValue())) : 0f;
-            EyeCareService.persistState(getContext(), EyeCareService.isActive(), color, warm, dim);
-        } catch (Exception ignored) {
-        }
-        call.resolve();
-    }
-
-    /** 停止护眼滤镜：先无条件同步移除滤镜层（保险丝，即使服务路径失败也立刻清屏），再停服务。 */
-    @PluginMethod
-    public void eyeCareStop(PluginCall call) {
-        try {
-            EyeCareService.removeOverlay(getContext());
-            getContext().getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                    .edit().putBoolean("eyecare_on", false).apply();
-        } catch (Exception ignored) {
-        }
-        try {
-            android.content.Intent intent = new android.content.Intent(getContext(), EyeCareService.class)
-                    .setAction(EyeCareService.ACTION_STOP);
-            getContext().startService(intent);
-        } catch (Exception ignored) {
-        }
-        JSObject ret = new JSObject();
-        ret.put("ok", true);
-        call.resolve(ret);
-    }
-
-    // ==== 鲸鱼娘桌宠悬浮窗 ====
-
-    /** 悬浮窗权限状态（与护眼滤镜共用同一项系统授权）。 */
-    /** 睡前提醒的悬浮窗权限状态（BedtimeOverlayService 的主投递路径） */
-    @PluginMethod
-    public void bedtimePermission(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("granted", android.provider.Settings.canDrawOverlays(getContext()));
-        call.resolve(ret);
-    }
-
-    /** 睡前提醒：直接带用户去悬浮窗授权页（此前唯独这个功能漏了申请链路） */
-    @PluginMethod
-    public void bedtimeOpenPermission(PluginCall call) {
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:" + getContext().getPackageName()));
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        } catch (Exception e) {
-            try {
-                android.content.Intent fallback = new android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.parse("package:" + getContext().getPackageName()));
-                fallback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(fallback);
-                call.resolve();
-            } catch (Exception e2) {
-                call.reject("无法打开授权页: " + e2.getMessage());
-            }
-        }
-    }
-
-    @PluginMethod
-    public void petPermission(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("granted", android.provider.Settings.canDrawOverlays(getContext()));
-        ret.put("sdkInt", Build.VERSION.SDK_INT);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void petOpenPermission(PluginCall call) {
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:" + getContext().getPackageName()));
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        } catch (Exception e) {
-            try {
-                android.content.Intent fallback = new android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.parse("package:" + getContext().getPackageName()));
-                fallback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(fallback);
-                call.resolve();
-            } catch (Exception e2) {
-                call.reject("无法打开授权页: " + e2.getMessage());
-            }
-        }
-    }
-
-    /**
-     * 启动桌宠，并把 Web 侧算好的文案快照一并写入 SharedPreferences。
-     * 原生只读这几行字符串，不解析任何业务数据——睡眠记录仍只活在 WebView 的 localStorage。
-     */
-    @PluginMethod
-    public void petStart(PluginCall call) {
-        if (!android.provider.Settings.canDrawOverlays(getContext())) {
-            call.reject("OVERLAY_PERMISSION_REQUIRED");
-            return;
-        }
-        try {
-            writePetSnapshot(call);
-            android.content.Intent intent = new android.content.Intent(getContext(), PetOverlayService.class)
-                    .setAction(PetOverlayService.ACTION_START);
-            if (Build.VERSION.SDK_INT >= 26) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
-            call.resolve();
-        } catch (Exception e) {
-            call.reject("启动桌宠失败: " + e.getMessage());
-        }
-    }
-
-    /** 仅刷新文案快照（服务已在运行时调用，不重建窗口）。 */
-    @PluginMethod
-    public void petSync(PluginCall call) {
-        try {
-            writePetSnapshot(call);
-            android.content.Intent intent = new android.content.Intent(getContext(), PetOverlayService.class)
-                    .setAction(PetOverlayService.ACTION_START);
-            getContext().startService(intent);
-            call.resolve();
-        } catch (Exception e) {
-            call.reject("同步桌宠文案失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 桌宠此刻的动作（第 42 轮动作↔文案一致性，行为方案 §4.4 反向通路）：
-     * 朋友圈文案生成前查询，她在打盹就别写庆祝。服务没在跑返回 running=false。
-     */
-    @PluginMethod
-    public void getPetState(PluginCall call) {
-        JSObject ret = new JSObject();
-        WhaleGirlView v = PetOverlayService.sActiveView;
-        String anim = v != null ? v.currentAnimName() : null;
-        ret.put("running", anim != null);
-        ret.put("anim", anim == null ? "" : anim);
-        call.resolve(ret);
-    }
-
-    /** 文案快照 + 播报频率 + 记录感知上下文一次性落盘（petStart/petSync 共用）。 */
-    private void writePetSnapshot(PluginCall call) {
-        int every = 8;
-        try {
-            Integer e = call.getInt("bubbleEvery");
-            if (e != null && e >= 1 && e <= 50) every = e;
-        } catch (Exception ignored) {
-        }
-        Integer ctxScore = call.getInt("lastScore");
-        Integer ctxMissed = call.getInt("missedDays");
-        Integer ctxStreak = call.getInt("streak");
-        Integer widgetScore = call.getInt("lastScore");
-        Integer widgetStreak = call.getInt("streak");
-        String widgetBed = call.getString("targetBedtime");
-        getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(PetOverlayService.K_PET_SAY, safe(call, "say", ""))
-                .putInt(PetOverlayService.K_BUBBLE_EVERY, every)
-                .putString("pet_skin", call.getString("skin", "default"))
-                .putInt(PetOverlayService.K_CTX_SCORE, ctxScore != null ? ctxScore : -1)
-                .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
-                .putBoolean(PetOverlayService.K_CTX_LAST_NIGHT, Boolean.TRUE.equals(call.getBoolean("lastNightRecorded")))
-                .putInt(PetOverlayService.K_CTX_STREAK, ctxStreak != null ? ctxStreak : 0)
-                // 桌面小组件三键（第 126–127 轮）：与 petSync 同通道落盘
-                .putInt(SleepWidgetProvider.K_WIDGET_SCORE, widgetScore != null ? widgetScore : -1)
-                .putInt(SleepWidgetProvider.K_WIDGET_STREAK, widgetStreak != null ? widgetStreak : 0)
-                .putString(SleepWidgetProvider.K_WIDGET_BED, widgetBed != null ? widgetBed : "23:30")
-                .apply();
-        // 快照变化即刷新已放置的小组件（无实例安全空操作）
-        try {
-            SleepWidgetProvider.updateAll(getContext());
-        } catch (Exception ignored) {
-        }
-    }
-
-    @PluginMethod
-    public void petStop(PluginCall call) {
-        try {
-            // 关闭桌宠即回到完整形态：下次开启不再是最小化的小鲸鱼
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().remove("pet_minimized").apply();
-            android.content.Intent intent = new android.content.Intent(getContext(), PetOverlayService.class)
-                    .setAction(PetOverlayService.ACTION_STOP);
-            getContext().startService(intent);
-        } catch (Exception ignored) {
-        }
-        call.resolve();
-    }
-
-    /** 全屏弹窗打开/关闭时临时隐藏桌宠悬浮窗（不改变开关状态）。 */
-    @PluginMethod
-    public void petSetVisible(PluginCall call) {
-        boolean visible = !Boolean.FALSE.equals(call.getBoolean("visible", true));
-        PetOverlayService.setAppVisible(visible);
-        call.resolve();
-    }
-
-    /** 读取 App 上次退出前留在 SharedPreferences 的目标分区（桌宠点击行时写入）。 */
-    @PluginMethod
-    public void petConsumePendingTab(PluginCall call) {
-        JSObject ret = new JSObject();
-        try {
-            android.content.SharedPreferences sp =
-                    getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String tab = sp.getString(PetOverlayService.K_PENDING_TAB, null);
-            if (tab != null) {
-                sp.edit().remove(PetOverlayService.K_PENDING_TAB).apply();
-            }
-            ret.put("tab", tab);
-        } catch (Exception ignored) {
-            ret.put("tab", (String) null);
-        }
-        call.resolve(ret);
-    }
-
-    private static String safe(PluginCall call, String key, String fallback) {
-        String v = call.getString(key, fallback);
-        return v == null ? fallback : v;
-    }
-
-    /** 使用情况访问授权（救援/自动记录共用的数据源口径）。 */
-    public static boolean hasUsageAccess(Context context) {
-        try {
-            android.app.AppOpsManager ops =
-                    (android.app.AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
-            if (ops == null) return false;
-            return ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                    android.os.Process.myUid(), context.getPackageName())
-                    == android.app.AppOpsManager.MODE_ALLOWED;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /** 深夜救援开关与醒来目标（NightRescueReceiver 每次亮屏解锁都会读）。 */
-    @PluginMethod
-    public void nightRescueSet(PluginCall call) {
-        try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean("night_rescue_enabled", call.getBoolean("enabled", true))
-                    .putString("wake_target", safe(call, "wake", "07:00"))
-                    .apply();
-            JSObject ret = new JSObject();
-            ret.put("ok", true);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("写入失败: " + e.getMessage());
-        }
-    }
-
-    // ==== 作息目标到点提醒（原生精确闹钟 + 全屏悬浮提醒） ====
-
-    /** 重排下一次目标就寝时刻的精确闹钟（触发时由 BedtimeAlarmReceiver 再排明天）。 */
-    public static void scheduleBedtimeAlarm(Context context) {
-        try {
-            android.app.AlarmManager am = (android.app.AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (am == null) return;
-            android.content.SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String[] hm = sp.getString("bedtime_target", "23:30").split(":");
-            java.util.Calendar cal = java.util.Calendar.getInstance();
-            cal.set(java.util.Calendar.HOUR_OF_DAY, Integer.parseInt(hm[0]));
-            cal.set(java.util.Calendar.MINUTE, hm.length > 1 ? Integer.parseInt(hm[1]) : 0);
-            cal.set(java.util.Calendar.SECOND, 0);
-            if (cal.getTimeInMillis() <= System.currentTimeMillis()) {
-                cal.add(java.util.Calendar.DAY_OF_YEAR, 1);
-            }
-            android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(context, 3001,
-                    new Intent(context, BedtimeAlarmReceiver.class),
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-            boolean exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
-            if (exact) {
-                am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pi);
-            } else {
-                am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pi);
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    // ================= 闹钟持续响铃（AlarmRingService） =================
-
-    /** 稳定请求码：同一条闹钟重复调度时 FLAG_UPDATE_CURRENT 原地替换 */
-    private static int ringRequestCode(String id, int isoDay) {
-        // 纯函数（取消/重排必得同码）+ 大码空间：此前 100 万空间在
-        // "30 条闹钟 × 7 天"的规模下约 2% 哈希碰撞，碰撞即静默顶掉先调度
-        // 的那条闹钟（某天不响）。扩大到 1000 万并加一轮整数混淆
-        int h = (id + ":" + isoDay).hashCode();
-        h ^= h >>> 16;
-        h *= 0x7feb352d;
-        h ^= h >>> 15;
-        h *= 0x846ca68b;
-        h ^= h >>> 16;
-        return 2_000_000 + (h & 0x7fffffff) % 10_000_000;
-    }
-
-    /** 按闹钟表重排响铃闹钟；json 为空/格式坏时视为全取消。Boot 重排复用。 */
-    public static void rescheduleRingAlarms(Context context, String alarmsJson) {
-        rescheduleRingAlarms(context, alarmsJson, null);
-    }
-
-    /**
-     * @param firedId 非空 = 由某条闹钟到点响铃触发（AlarmRingReceiver 传入）。
-     * "仅一次"条目此刻必须自我终结：此前响后无条件按"今天已过则明天"续排，
-     * 而唯一能停用它的 App 层逻辑又要求 App 恰在那一分钟存活（闹钟场景
-     * App 早被系统杀掉）——一次性闹钟于是变成永久每日闹钟。响后把它从
-     * 持久化表里剔掉，App 冷启动的 enabled 全量同步才不会把它带回来。
-     */
-    public static void rescheduleRingAlarms(Context context, String alarmsJson, String firedId) {
-        android.app.AlarmManager am = (android.app.AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (am == null) return;
-        android.content.SharedPreferences sp =
-                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (alarmsJson == null || alarmsJson.isEmpty()) return;
-        org.json.JSONArray arr;
-        try {
-            arr = new org.json.JSONArray(alarmsJson);
-        } catch (Exception e) {
-            // prefs 损坏：解析必须发生在取消旧闹钟【之前】——否则旧码已取消、
-            // 新表排不出来 = 全部闹钟静默消失（第 51 轮审计 P1）
-            android.util.Log.w("AlarmRing", "闹钟表解析失败，保留现有闹钟", e);
-            return;
-        }
-        // 表解析成功后再取消旧表（存下的请求码集合），避免已删除的闹钟残留继续响
-        try {
-            org.json.JSONArray oldCodes = new org.json.JSONArray(sp.getString("alarm_ring_codes", "[]"));
-            for (int i = 0; i < oldCodes.length(); i++) {
-                am.cancel(android.app.PendingIntent.getBroadcast(context, oldCodes.getInt(i),
-                        new Intent(context, AlarmRingReceiver.class),
-                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE));
-            }
-        } catch (Exception ignored) {
-        }
-        sp.edit().remove("alarm_ring_codes").apply();
-        try {
-            if (firedId != null) {
-                // 剔除已消费的一次性条目：到点这条（旧版持久化广播无 id 时按时刻兜底），
-                // 以及所有时刻已过的一次性条目（错过即消费，不应改排到明天）
-                org.json.JSONArray kept = new org.json.JSONArray();
-                java.util.Calendar fireNow = java.util.Calendar.getInstance();
-                for (int i = 0; i < arr.length(); i++) {
-                    org.json.JSONObject a = arr.optJSONObject(i);
-                    if (a == null) continue;
-                    org.json.JSONArray d = a.optJSONArray("repeatDays");
-                    if (d != null && d.length() == 0 && isConsumedOneShot(a, firedId, fireNow)) continue;
-                    kept.put(a);
-                }
-                sp.edit().putString("alarm_ring_alarms", kept.toString()).apply();
-                arr = kept;
-            }
-            org.json.JSONArray codes = new org.json.JSONArray();
-            java.util.Calendar now = java.util.Calendar.getInstance();
-            for (int i = 0; i < arr.length(); i++) {
-                // 逐条容错：此前一条 time 坏值抛异常会跳出整段——
-                // 旧请求码已取消、新码表未写入 = 所有闹钟全部消失
-                try {
-                org.json.JSONObject a = arr.getJSONObject(i);
-                String id = a.optString("id", "alarm-" + i);
-                String[] hm = a.optString("time", "07:30").split(":");
-                int hour = Integer.parseInt(hm[0]);
-                int minute = hm.length > 1 ? Integer.parseInt(hm[1]) : 0;
-                if (hour < 0 || hour > 23 || minute < 0 || minute > 59) continue;
-                String tone = a.optString("tone", "gentle_chime");
-                org.json.JSONArray days = a.optJSONArray("repeatDays");
-                if (days != null && days.length() == 0) {
-                    // 单次：下一个匹配时刻（今天已过则明天）
-                    java.util.Calendar cal = (java.util.Calendar) now.clone();
-                    cal.set(java.util.Calendar.HOUR_OF_DAY, hour);
-                    cal.set(java.util.Calendar.MINUTE, minute);
-                    cal.set(java.util.Calendar.SECOND, 0);
-                    if (cal.getTimeInMillis() <= now.getTimeInMillis()) cal.add(java.util.Calendar.DAY_OF_YEAR, 1);
-                    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) throw new IllegalArgumentException("bad time");
-                    scheduleOneRingAlarm(context, am, sp, codes, id, 0, tone,
-                            a.optString("label", ""), a.optString("time", ""), cal.getTimeInMillis());
-                } else if (days != null) {
-                    for (int d = 0; d < days.length(); d++) {
-                        int isoDay = days.optInt(d, 1);
-                        // 距该星期几的下一次出现（1=周一…7=周日）
-                        // Calendar.DAY_OF_WEEK 恒为 1=周日…7=周六，先转 ISO（1=周一…7=周日）
-                        // 再算差值——此前直接相减 49/49 组全错配（横幅响的日子响铃不响）
-                        int isoToday = ((now.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7) + 1;
-                        int delta = (isoDay - isoToday + 7) % 7;
-                        java.util.Calendar cal = (java.util.Calendar) now.clone();
-                        cal.add(java.util.Calendar.DAY_OF_YEAR, delta);
-                        cal.set(java.util.Calendar.HOUR_OF_DAY, hour);
-                        cal.set(java.util.Calendar.MINUTE, minute);
-                        cal.set(java.util.Calendar.SECOND, 0);
-                        // 同日但时刻已过 → 推到下周同日（首次创建当天就该响）
-                        if (cal.getTimeInMillis() <= now.getTimeInMillis()) {
-                            cal.add(java.util.Calendar.DAY_OF_YEAR, 7);
-                        }
-                        scheduleOneRingAlarm(context, am, sp, codes, id, isoDay, tone,
-                                a.optString("label", ""), a.optString("time", ""), cal.getTimeInMillis());
-                    }
-                }
-                } catch (Exception alarmErr) {
-                    android.util.Log.w("GemmaLLM", "跳过一条无法解析的闹钟", alarmErr);
-                }
-            }
-            sp.edit().putString("alarm_ring_codes", codes.toString()).apply();
-        } catch (Exception ignored) {
-        }
-    }
-
-    /** 一次性条目是否已被本次响铃消费：id 精确命中，或时刻已过（错过即消费）。 */
-    private static boolean isConsumedOneShot(org.json.JSONObject a, String firedId, java.util.Calendar now) {
-        if (firedId != null && firedId.equals(a.optString("id", ""))) return true;
-        try {
-            String[] hm = a.optString("time", "").split(":");
-            if (hm.length != 2) return false;
-            java.util.Calendar t = (java.util.Calendar) now.clone();
-            t.set(java.util.Calendar.HOUR_OF_DAY, Integer.parseInt(hm[0]));
-            t.set(java.util.Calendar.MINUTE, Integer.parseInt(hm[1]));
-            t.set(java.util.Calendar.SECOND, 0);
-            t.set(java.util.Calendar.MILLISECOND, 0);
-            return t.getTimeInMillis() <= now.getTimeInMillis();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private static void scheduleOneRingAlarm(Context context, android.app.AlarmManager am,
-            android.content.SharedPreferences sp, org.json.JSONArray codes,
-            String id, int isoDay, String tone, String label, String time, long at) {
-        int code = ringRequestCode(id, isoDay);
-        Intent i = new Intent(context, AlarmRingReceiver.class);
-        // id 随广播带出：响铃触发重排时才能精确剔除"仅一次"条目
-        i.putExtra("id", id);
-        i.putExtra("label", label);
-        i.putExtra("time", time);
-        i.putExtra("tone", tone);
-        android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(context, code, i,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-        boolean exact = android.os.Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
-        if (exact) {
-            am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pi);
-        } else {
-            am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pi);
-        }
-        codes.put(code);
-    }
-
-    @PluginMethod
-    public void alarmRingSchedule(PluginCall call) {
-        try {
-            // JS 侧 JSON.stringify 后传字符串：Capacitor JSArray 的 toString 不是合法 JSON
-            String json = call.getString("alarmsJson", "[]");
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString("alarm_ring_alarms", json).apply();
-            rescheduleRingAlarms(getContext(), json);
-        } catch (Exception e) {
-            call.reject("闹钟响铃排程失败: " + e.getMessage());
-            return;
-        }
-        JSObject ret = new JSObject();
-        ret.put("ok", true);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void alarmRingCancel(PluginCall call) {
-        try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString("alarm_ring_alarms", "[]").apply();
-            rescheduleRingAlarms(getContext(), "");
-        } catch (Exception ignored) {
-        }
-        JSObject ret = new JSObject();
-        ret.put("ok", true);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void alarmRingStop(PluginCall call) {
-        try {
-            Intent stop = new Intent(getContext(), AlarmRingService.class)
-                    .setAction(AlarmRingService.ACTION_STOP);
-            getContext().startService(stop);
-        } catch (Exception ignored) {
-        }
-        JSObject ret = new JSObject();
-        ret.put("ok", true);
-        call.resolve(ret);
-    }
-
-    /** 查询原生是否正在响铃：App 打开时横幅对表用（错过响铃那一分钟也有停止入口） */
-    @PluginMethod
-    public void alarmRingStatus(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("ringing", AlarmRingService.ringing);
-        ret.put("time", AlarmRingService.ringTime != null ? AlarmRingService.ringTime : "");
-        ret.put("label", AlarmRingService.ringLabel != null ? AlarmRingService.ringLabel : "");
-        call.resolve(ret);
-    }
-
-    /** 读原生侧当前响铃闹钟表（JSON 字符串）：App 冷启动判断"仅一次"闹钟是否已被消费 */
-    @PluginMethod
-    public void alarmRingTable(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("json", getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString("alarm_ring_alarms", "[]"));
-        call.resolve(ret);
-    }
-
-    /** 设定/更新提醒时间（'HH:MM'），并立即重排闹钟。 */
-    @PluginMethod
-    public void bedtimeReminderSchedule(PluginCall call) {
-        String time = call.getString("time", "23:30");
-        try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString("bedtime_target", time)
-                    .putBoolean("bedtime_reminder_on", true)   // BootReceiver 的启用标志
-                    .apply();
-            scheduleBedtimeAlarm(getContext());
-            JSObject ret = new JSObject();
-            ret.put("ok", true);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("排程失败: " + e.getMessage());
-        }
-    }
-
-    /** 取消到点提醒闹钟（用户关闭"到点提醒我"时调用）。 */
-    @PluginMethod
-    public void bedtimeReminderCancel(PluginCall call) {
-        try {
-            android.app.AlarmManager am = (android.app.AlarmManager) getContext().getSystemService(Context.ALARM_SERVICE);
-            if (am != null) {
-                android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(getContext(), 3001,
-                        new Intent(getContext(), BedtimeAlarmReceiver.class),
-                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-                am.cancel(pi);
-                getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                        .edit().putBoolean("bedtime_reminder_on", false).apply();
-            }
-            JSObject ret = new JSObject();
-            ret.put("ok", true);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("取消失败: " + e.getMessage());
-        }
-    }
-
-    /** 消费冷启动自动开始监测标记（悬浮提醒"好的"后冷启动应用时为 true）。 */
-    @PluginMethod
-    public void bedtimeAutoStartConsume(PluginCall call) {
-        android.content.SharedPreferences sp = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        boolean v = sp.getBoolean("auto_start_sleep", false);
-        if (v) {
-            sp.edit().putBoolean("auto_start_sleep", false).apply();
-        }
-        JSObject ret = new JSObject();
-        ret.put("consume", v);
-        call.resolve(ret);
-    }
-
-    /** 热启动路径：悬浮提醒"好的"拉起应用时经 onNewIntent 广播给 JS。 */
-    @Override
-    protected void handleOnNewIntent(Intent intent) {
-        super.handleOnNewIntent(intent);
-        try {
-            if (intent != null && intent.getBooleanExtra("somnacare_auto_start_sleep", false)) {
-                getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                        .edit().putBoolean("auto_start_sleep", true).apply();
-                notifyListeners("bedtimeGood", new JSObject());
-            }
-        } catch (Exception ignored) {
-        }
-    }
 
     @PluginMethod
     public void isSupported(PluginCall call) {
@@ -1220,8 +102,7 @@ public class GemmaLLMPlugin extends Plugin {
      * 模型源可借原生插件访问任意主机（内网 / 云元数据 169.254.169.254）并把
      * 响应写入应用私有目录。JS 侧的 isSafeHttpsUrl 管不到这条原生路径，
      * 桥接层必须独立校验：仅 HTTPS + 域名后缀白名单（HF / hf-mirror 主域及
-     * 其 CDN 子域，默认拒绝）。JS 侧合法调用只发 huggingface.co / hf-mirror.com
-     * 两个固定 URL（见 localLlmEngine.ts），白名单不影响任何现有功能。
+     * 其 CDN 子域，默认拒绝）。
      */
     private static final String[] ALLOWED_MODEL_HOST_SUFFIXES = {
             "huggingface.co", "hf.co", "hf-mirror.com",
@@ -1251,8 +132,7 @@ public class GemmaLLMPlugin extends Plugin {
         if (uri.getPort() != -1 && uri.getPort() != 443) {
             throw new Exception("不安全的模型下载地址（仅允许 443 端口）");
         }
-        // 复审 N5：用校验过的同一个 URI 建连（uri.toURL()）——此前 URI 校验完
-        // 再用 new URL(url) 二次解析，两个解析器存在理论差异缝
+        // 复审 N5：用校验过的同一个 URI 建连（uri.toURL()）
         HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
         conn.setConnectTimeout(20000);
         conn.setReadTimeout(30000);
@@ -1277,8 +157,6 @@ public class GemmaLLMPlugin extends Plugin {
             File tempFile;
             try {
                 finalFile = safeResolveFile(filename);
-                // 复核残留统一：.part 临时文件走同一个解析函数，
-                // 避免将来重构时出现绕过校验的缺口
                 tempFile = safeResolveFile(filename + ".part");
             } catch (Exception pathErr) {
                 call.reject(pathErr.getMessage());
@@ -1288,17 +166,8 @@ public class GemmaLLMPlugin extends Plugin {
 
             try {
                 for (int attempt = 0; ; attempt++) {
-                    // 安全审计 A4：起点即 HTTPS + 白名单校验
                     HttpURLConnection conn = openAllowedConnection(url);
-                    // 完整性锚点（第 54 轮修正）：真实 sha256 在 HF resolve 的
-                    // 302 响应头 X-Linked-Etag 上；最终 CDN 的裸 ETag 可能是
-                    // Xet 内容 ID（同为 64 位 hex）——绝不能当 sha256 用，
-                    // 否则每次下载都会被误判"篡改"并删除。逐跳捕获、
-                    // 只认 X-Linked-Etag。
                     String expectedHash = null;
-                    // 安全审计 V15 + A4：禁自动跟随重定向，但 HF resolve→CDN 的 302
-                    // 必须支持——改为手动逐跳跟随，每一跳都重新过白名单校验，
-                    // Bearer 只会发往白名单内的域。跳数封顶防重定向循环
                     String currentUrl = url;
                     int redirects = 0;
                     int code;
@@ -1324,8 +193,6 @@ public class GemmaLLMPlugin extends Plugin {
                     }
                     if (code == 416) {
                         conn.disconnect();
-                        // 残留 .part 与远端不一致（或已下完但缺哈希锚点）：
-                        // 丢弃残留完整重下一次；只允许重试一次防死循环
                         tempFile.delete();
                         existing = 0;
                         if (attempt >= 1) throw new IOException("断点续传状态异常，请重试");
@@ -1340,7 +207,6 @@ public class GemmaLLMPlugin extends Plugin {
                     long contentLen = conn.getContentLengthLong();
                     boolean resume = code == 206 && existing > 0;
                     long base = resume ? existing : 0;
-                    // 206 的 Content-Length 只是剩余字节：进度分母必须加回已有部分
                     long total = contentLen > 0 ? base + contentLen : contentLen;
                     if (!resume && tempFile.exists()) tempFile.delete();
 
@@ -1383,12 +249,8 @@ public class GemmaLLMPlugin extends Plugin {
                         call.reject("下载已取消");
                         return;
                     }
-                    // 先校验临时文件、通过后再替换正式文件——校验失败不会
-                    // 毁掉上一份可用的模型（旧实现先删再验）
                     verifyFileIntegrity(tempFile, expectedHash);
 
-                    // 原子替换：旧文件先改名备份，新文件落位成功后才删备份；
-                    // rename 失败时回滚旧模型（第 54 轮自审）
                     File backup = new File(finalFile.getAbsolutePath() + ".bak");
                     if (backup.exists()) backup.delete();
                     if (finalFile.exists() && !finalFile.renameTo(backup)) {
@@ -1431,7 +293,6 @@ public class GemmaLLMPlugin extends Plugin {
     /** 对下载完成的文件重算 SHA-256 并与源端哈希比对；不一致删除文件并拒绝。 */
     private static void verifyFileIntegrity(File f, String expected) throws IOException {
         if (expected == null) {
-            // 源站未提供哈希（部分镜像裁剪了 ETag 头）：无法比对，留痕但不误杀
             android.util.Log.w("GemmaLLM", "下载源未提供 SHA-256，跳过完整性比对: " + f.getName());
             return;
         }
@@ -1513,9 +374,7 @@ public class GemmaLLMPlugin extends Plugin {
             call.reject(pathErr.getMessage());
             return;
         }
-        // 安全审计 A8：maxTokens 决定 KV cache 预留，桥接层不能假设调用方是
-        // 自家代码——极端值（如 Integer.MAX_VALUE）会让推理引擎内存爆炸。
-        // JS 侧合法调用只传 1024，钳制到 [1, 2048] 仍有余量
+        // 安全审计 A8：maxTokens 钳制到 [1, 2048]
         int maxTokens = Math.max(1, Math.min(call.getInt("maxTokens", 1024), 2048));
         if (!f.exists() || f.length() == 0) {
             call.reject("模型文件不存在，请先下载");
@@ -1536,8 +395,6 @@ public class GemmaLLMPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             unloadInternal();
-            // 模型文件损坏自愈（第 120 轮，P2）：加载失败大概率是文件损坏/截断
-            // ——尽力删除让用户重新下载（删除失败不阻断报错）
             try {
                 if (f.exists() && !f.delete()) {
                     java.io.File[] siblings = f.getParentFile() == null ? new java.io.File[0] : f.getParentFile().listFiles();
@@ -1564,9 +421,7 @@ public class GemmaLLMPlugin extends Plugin {
             call.reject("messages 必填");
             return;
         }
-        // 安全审计 A8：桥接层独立设限——条数与总字符超限直接拒绝，防注入路径
-        // 借原生推理引擎把内存打爆。JS 侧合法调用最多送 8 条历史（AIAdvicePanel
-        // 历史窗口截断），64 条 / 24k 字符远在合法用量之上
+        // 安全审计 A8：桥接层独立设限
         if (messages.length() > 64) {
             call.reject("messages 条数超限");
             return;
@@ -1587,17 +442,13 @@ public class GemmaLLMPlugin extends Plugin {
             call.reject("messages 总长度超限");
             return;
         }
-        // 局部捕获 + 先计数：期间 unloadInternal 只会把它登记待关，不会就地 close
         final LlmInference inf = llmInference;
         activeGens.incrementAndGet();
         BACKGROUND.execute(() -> {
             StringBuilder full = new StringBuilder();
             LlmInferenceSession session = null;
-            // requestId 提升到 try 外（第 114–121 轮修正）：finally 里的
-            // activeFutures.remove 需要它——原来声明在 try 内，finally 不可见
             final int requestId = call.getData().has("requestId") ? call.getData().optInt("requestId", 0) : 0;
             try {
-                // 每轮生成使用全新 session（JS 侧每次都传完整历史，避免原生上下文无界增长）
                 LlmInferenceSession.LlmInferenceSessionOptions sessionOptions =
                         LlmInferenceSession.LlmInferenceSessionOptions.builder()
                                 .setTemperature(0.7f)
@@ -1634,7 +485,6 @@ public class GemmaLLMPlugin extends Plugin {
                 } catch (Exception ignored) {
                 }
                 activeGens.decrementAndGet();
-                // 生成期间被 unload/delete 登记的实例：此刻才真正能关
                 java.util.List<LlmInference> toClose = null;
                 synchronized (unloadLock) {
                     if (activeGens.get() == 0 && !pendingCloses.isEmpty()) {
@@ -1651,11 +501,6 @@ public class GemmaLLMPlugin extends Plugin {
         });
     }
 
-    /**
-     * 原生生成真取消（第 120 轮，P3）：此前 JS 只能竞速弃单——后台那次生成
-     * 会继续跑完烧电。future.cancel(true) 中断底层等待并触发会话清理
-     * （finally 里 close），LiteRT 侧的取消语义到 Future 粒度为止。
-     */
     @PluginMethod
     public void cancelGenerate(PluginCall call) {
         int requestId = call.getData().has("requestId") ? call.getData().optInt("requestId", 0) : 0;
@@ -1676,7 +521,6 @@ public class GemmaLLMPlugin extends Plugin {
         if (old == null) return;
         synchronized (unloadLock) {
             if (activeGens.get() > 0) {
-                // 该实例正被 BACKGROUND 上的生成使用：登记待关，生成结束时关闭
                 pendingCloses.add(old);
             } else {
                 try { old.close(); } catch (Exception ignored) { }
@@ -1686,15 +530,7 @@ public class GemmaLLMPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
-        // 应用销毁时释放原生资源
         unloadInternal();
-        try {
-            if (shizukuPermissionListener != null) {
-                Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
-                shizukuPermissionListener = null;
-            }
-        } catch (Throwable ignored) {
-        }
         super.handleOnDestroy();
     }
 }

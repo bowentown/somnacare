@@ -1,0 +1,14 @@
+{
+  "name": "cap-ad-skip",
+  "version": "1.0.0",
+  "description": "Optional AccessibilityService splash-ad skipper and Shizuku guard for SomnaCare",
+  "main": "index.js",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=5.0.0"
+  }
+}

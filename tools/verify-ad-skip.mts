@@ -18,17 +18,18 @@ const ok = (name: string, condition: boolean, detail = ''): void => {
   if (!condition) failures++;
 };
 
-const service = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java');
-const xml = read('plugins/cap-gemma-llm/android/src/main/res/xml/ad_skip_accessibility.xml');
-const strings = read('plugins/cap-gemma-llm/android/src/main/res/values/ad_skip_strings.xml');
-const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
-const shizuku = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/ShizukuGuard.java');
-const boot = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BootReceiver.java');
+const service = read('plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java');
+const xml = read('plugins/cap-ad-skip/android/src/main/res/xml/ad_skip_accessibility.xml');
+const strings = read('plugins/cap-ad-skip/android/src/main/res/values/ad_skip_strings.xml');
+const plugin = read('plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipPlugin.java');
+const pluginManifest = read('plugins/cap-ad-skip/android/src/main/AndroidManifest.xml');
+const shizuku = read('plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/ShizukuGuard.java');
+const boot = read('plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipBootReceiver.java');
 const js = read('src/features/extensions/ad-skip/adSkip.ts');
 const settings = read('src/features/extensions/ad-skip/AdSkipSubpage.tsx');
 const workflow = read('.github/workflows/build-apk.yml');
-const ruleStore = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AdSkipRuleStore.java');
-const ruleJson = read('plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json');
+const ruleStore = read('plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipRuleStore.java');
+const ruleJson = read('plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json');
 const generator = read('tools/import-gkd-splash.mts');
 
 type RulePredicate = {
@@ -277,7 +278,7 @@ ok('按应用命中统计 + 一键复制诊断（原生记账 → 插件回传 �
   && settings.includes('复制诊断'));
 ok('CI 构建期自动刷新 GKD 规则（失败回退已提交版本，规则可以旧构建不能挂）',
   workflow.includes('tools/refresh-gkd-rules.mts')
-  && workflow.includes('git checkout -- plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json')
+  && workflow.includes('git checkout -- plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json')
   && generator.includes('export function runImport')
   && generator.includes('invokedDirectly'));
 ok('JS：状态 / 开关 / 设置页封装',
@@ -305,11 +306,12 @@ ok('保持开启：开机/时间变更时若服务被关闭 → 通知可点回'
   boot.includes('postAdSkipReminder')
   && boot.includes('ad_skip_enabled')
   && boot.includes('AdSkipService.isAccessibilityEnabled'));
-ok('CI：服务注入 + 权限/配置 meta-data + 命中断言',
-  workflow.includes('com.somnacare.gemmallm.AdSkipService')
-  && workflow.includes('BIND_ACCESSIBILITY_SERVICE')
-  && workflow.includes('@xml/ad_skip_accessibility')
-  && workflow.includes('AdSkipService" android:exported="true"')
+ok('清单与 CI：插件 Manifest 声明无障碍服务 + 权限/配置 meta-data + CI 命中断言',
+  pluginManifest.includes('com.somnacare.gemmallm.AdSkipService')
+  && pluginManifest.includes('BIND_ACCESSIBILITY_SERVICE')
+  && pluginManifest.includes('@xml/ad_skip_accessibility')
+  && pluginManifest.includes('android:exported="true"')
+  && workflow.includes('./plugins/cap-ad-skip')
   && workflow.includes("grep -q 'com.somnacare.gemmallm.AdSkipService'"));
 
 // 反向自检：去掉"排除自身"这一行，护栏必须能识别出缺失

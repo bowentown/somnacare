@@ -26,7 +26,7 @@ import JSON5 from 'json5';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = join(
   ROOT,
-  'plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json',
+  'plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json',
 );
 
 type Json = any;

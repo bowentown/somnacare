@@ -1,0 +1,80 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 核心闹钟、通知与进程级息屏唤醒权限 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 床头环境声级采样（WebView getUserMedia） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 到点提醒与深夜救援悬浮提醒 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 应用内更新与电池优化白名单 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application>
+        <!-- FileProvider 由 Capacitor 模板提供（authority=${applicationId}.fileprovider）；
+             更新下载目录由 tools/patch-android-host.mts 写入模板 res/xml/file_paths.xml。 -->
+
+        <!-- 作息到点提醒 -->
+        <service
+            android:name="com.somnacare.gemmallm.BedtimeOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="bedtime_reminder_overlay" />
+        </service>
+        <receiver
+            android:name="com.somnacare.gemmallm.BedtimeAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 深夜救援 -->
+        <receiver
+            android:name="com.somnacare.gemmallm.NightRescueReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.USER_PRESENT" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.somnacare.gemmallm.NightRescueService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="night_rescue_overlay" />
+        </service>
+
+        <!-- 闹钟持续响铃 -->
+        <receiver
+            android:name="com.somnacare.gemmallm.AlarmRingReceiver"
+            android:exported="false" />
+        <service
+            android:name="com.somnacare.gemmallm.AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm_ring_loop" />
+        </service>
+
+        <!-- 开机/时间变更重排闹钟 -->
+        <receiver
+            android:name="com.somnacare.gemmallm.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

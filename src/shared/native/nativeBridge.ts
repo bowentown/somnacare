@@ -30,6 +30,21 @@ export function isNativePlatform(): boolean {
   return !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
 }
 
+/** SomnaCare 原生 Capacitor 插件名（Phase 3 拆分为 7 个独立领域插件 + Capacitor 官方插件）。 */
+export type NativePluginName =
+  | 'GemmaLLM'
+  | 'SleepCore'
+  | 'SleepWidgets'
+  | 'EyeCare'
+  | 'PetOverlay'
+  | 'AdSkip'
+  | 'UsageSignal'
+  | 'LocalNotifications'
+  | 'Filesystem'
+  | 'Share'
+  | 'App'
+  | (string & {});
+
 /**
  * 取原生插件实例。非原生平台、或插件未注册时返回 null。
  *
@@ -37,7 +52,7 @@ export function isNativePlatform(): boolean {
  * 若这里在 web 上漏出实例，原生专用逻辑（悬浮窗/无障碍/精确闹钟）会被当
  * 作可用而静默失效。
  */
-export function nativePlugin<T = any>(name: string): T | null {
+export function nativePlugin<T = any>(name: NativePluginName): T | null {
   if (!isNativePlatform()) return null;
   try {
     return ((capacitor()?.Plugins ?? {})[name] ?? null) as T | null;

@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- 小组件 1：昨晚睡眠评分与连胜（2×1，保留原 FQDN 保证覆盖升级桌面组件不丢失） -->
+        <receiver
+            android:name="com.somnacare.gemmallm.SleepWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sleep_widget_info" />
+        </receiver>
+
+        <!-- 跨插件刷新广播接收器（护眼磁贴/桌宠开关护眼后通知所有小组件即时刷新） -->
+        <receiver
+            android:name="com.somnacare.gemmallm.WidgetRefreshReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.somnacare.ACTION_WIDGET_REFRESH" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

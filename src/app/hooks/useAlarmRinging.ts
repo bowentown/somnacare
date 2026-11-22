@@ -56,7 +56,7 @@ export function useAlarmRinging(alarms: CustomAlarmSetting[] | undefined) {
         void (async () => {
           try {
             const queryStartedAt = Date.now();
-            const st = await nativePlugin('GemmaLLM')?.alarmRingStatus?.();
+            const st = await nativePlugin('SleepCore')?.alarmRingStatus?.();
             if (!st) return;
             if (st.ringing) {
               if (Date.now() - justStoppedRef.current < 3000) return;
@@ -98,7 +98,7 @@ export function useAlarmRinging(alarms: CustomAlarmSetting[] | undefined) {
     justStoppedRef.current = Date.now();
     sleepAudio.stop();
     try {
-      void nativePlugin('GemmaLLM')?.alarmRingStop?.();
+      void nativePlugin('SleepCore')?.alarmRingStop?.();
     } catch {
       /* ignore */
     }

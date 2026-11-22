@@ -1,0 +1,14 @@
+{
+  "name": "cap-pet-overlay",
+  "version": "1.0.0",
+  "description": "Floating desktop whale pet overlay service and SurfaceView renderer for SomnaCare",
+  "main": "index.js",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=5.0.0"
+  }
+}

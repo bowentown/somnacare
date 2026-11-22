@@ -21,14 +21,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const view = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java'), 'utf-8');
-const service = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java'), 'utf-8');
-const plugin = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java'), 'utf-8');
+const view = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java'), 'utf-8');
+const service = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java'), 'utf-8');
+const plugin = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayPlugin.java'), 'utf-8');
+const gemmaPlugin = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java'), 'utf-8');
 const overlay = readFileSync(join(ROOT, 'src/features/pet/utils/petOverlay.ts'), 'utf-8');
 const moments = readFileSync(join(ROOT, 'src/features/pet/utils/petMoments.ts'), 'utf-8');
 // 桥接调用在 LLM 传输层（第 95 轮从 petMoments 拆出）
 const momentsLlm = readFileSync(join(ROOT, 'src/features/pet/utils/momentsLlm.ts'), 'utf-8');
-const bedtime = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BedtimeOverlayService.java'), 'utf-8');
+const bedtime = readFileSync(join(ROOT, 'plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/BedtimeOverlayService.java'), 'utf-8');
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = ''): void => {
@@ -155,8 +156,8 @@ check('自动授权时不写 auto_start_sleep 标记（门控内才写）',
 check('气泡文案：晚安💤 / 随便你🙄', bedtime.includes('晚安💤') && bedtime.includes('随便你🙄'));
 
 // ── 7) 下载校验（复审 N5）──
-check('下载建连与校验同源解析（uri.toURL，无双解析器差异缝）', plugin.includes('uri.toURL().openConnection()'));
-check('下载端口限定 443', plugin.includes('uri.getPort() != -1 && uri.getPort() != 443'));
+check('下载建连与校验同源解析（uri.toURL，无双解析器差异缝）', gemmaPlugin.includes('uri.toURL().openConnection()'));
+check('下载端口限定 443', gemmaPlugin.includes('uri.getPort() != -1 && uri.getPort() != 443'));
 
 // ── 反向自检：坏实现喂进与正向相同的谓词必须报红 ──
 {
@@ -187,7 +188,7 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
 //    0.5px 在 3×/4× 屏等效 0.17/0.13dp，重绘率被密度悄悄拉回 14-19fps
 //    （"−73%" 只在 2× 密度待机态成立）。改为 0.5dp × density。──
 {
-  const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  const view = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
   // 判据 = 阈值由 density 换算而来（写成绝对 px 即失去密度无关性）
   const thresholdDensityAware =
     (/float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(view)
@@ -203,7 +204,7 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
     ['桌宠：onDraw 与判定共用位移函数（防两处公式漂移）',
       /motionShiftPx\(a, now, side\)/.test(view) && /private float motionShiftPx\(/.test(view)],
     ['桌宠：熄屏停 tick 仍保留（SCREEN_OFF → stop）',
-      /ACTION_SCREEN_OFF/.test(readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8'))],
+      /ACTION_SCREEN_OFF/.test(readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8'))],
   ];
   for (const [name, ok] of checks) {
     console.log(`${ok ? '✓' : '✗'} ${name}`);
@@ -232,8 +233,8 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
 //  ② pet 在 App 弹窗下是 GONE：窗口不绘制但 33ms 自循环此前照转。
 //     三处入口（setAppVisible / 屏幕亮灭 / showPet 创建）必须同为"可见才转"。
 {
-  const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
-  const svc = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
+  const view = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  const svc = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
   const hwGate =
     /opts\.inPreferredConfig = Bitmap\.Config\.HARDWARE;/.test(view)
     // 闸门行必须在场（第 133 轮收紧）：只查指纹挡不住"整行换成 if(true)"
@@ -272,9 +273,9 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
 //    与 AdSkip 400ms 整树扫描、WebView 回调同 Looper 串行，丢拍=跳帧，溶解
 //    180ms 里丢拍=渐变跳没（闪）。三处一起治：动画不再受主线程忙闲影响。
 {
-  const view = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
-  const svc = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
-  const adskip = readFileSync(new URL('../plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java', import.meta.url), 'utf8');
+  const view = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
+  const svc = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
+  const adskip = readFileSync(new URL('../plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java', import.meta.url), 'utf8');
 
   const checks: Array<[string, boolean]> = [
     ['桌宠：SurfaceView + SurfaceHolder.Callback（脱离主线程 invalidate 管线）',

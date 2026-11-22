@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const wf = readFileSync(join(ROOT, '.github', 'workflows', 'build-apk.yml'), 'utf-8');
+const hostPatch = readFileSync(join(ROOT, 'tools', 'patch-android-host.mts'), 'utf-8');
 
 function fail(msg: string): never {
   console.error('✗ verify-apk-build-hardening：' + msg);
@@ -32,10 +33,17 @@ if (!signingStep.includes('refs/tags/v*') || !signingStep.includes('exit 1'))
 if (!wf.includes('find apk -path "*apk/release/*.apk"') || !wf.includes('未找到 release 变体 APK'))
   fail('A1：release-apk job 未收紧为只接受 release 变体 APK');
 
-// A2：allowBackup / usesCleartextTraffic 注入与断言成对出现（各 ≥2 处）
+// A2：allowBackup / usesCleartextTraffic 由 patch-android-host.mts 结构化注入，
+// 并在脚本与 workflow 内成对断言（缺一不可，避免静默产出可被 adb backup 的 APK）
+if (!wf.includes('npx tsx tools/patch-android-host.mts android')) {
+  fail('A2：workflow 未调用结构化宿主补丁 tools/patch-android-host.mts');
+}
 for (const attr of ['android:allowBackup="false"', 'android:usesCleartextTraffic="false"']) {
-  const hits = wf.split('\n').filter((l) => l.includes(attr)).length;
-  if (hits < 2) fail(`A2：${attr} 需要同时出现 sed 注入与 grep 断言（实际 ${hits} 处）`);
+  const patchHits = hostPatch.split('\n').filter((l) => l.includes(attr)).length;
+  const wfHits = wf.split('\n').filter((l) => l.includes(attr)).length;
+  if (patchHits < 2 || wfHits < 1) {
+    fail(`A2：${attr} 需要同时在 patch-android-host.mts 注入+校验（实际 ${patchHits} 处）与 workflow 断言（实际 ${wfHits} 处）`);
+  }
 }
 
 // A10：npm ci 优先（锁文件精确解析）

@@ -38,7 +38,7 @@ export function useStartupAlarmSync(
       // 被按"今天已过则明天"续排——一次性闹钟变相成为永久每日闹钟
       let nativeIds: Set<string> | null = null;
       try {
-        const tbl = await nativePlugin('GemmaLLM')?.alarmRingTable?.();
+        const tbl = await nativePlugin('SleepCore')?.alarmRingTable?.();
         nativeIds = new Set<string>((JSON.parse(tbl?.json || '[]') as Array<{ id?: string }>).map((x) => x.id || ''));
       } catch { /* 读不到原生表时不动档案，只做常规同步 */ }
       let alarms = userProfile.alarms || [];
@@ -89,15 +89,38 @@ export function usePetTabLaunch(tabOrder: readonly string[], setActiveTab: (tab:
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;
+    let widgetListenerHandle: { remove?: () => void } | null = null;
     const apply = () => {
       void consumePendingTab().then((tab) => {
         if (cancelled || !tab) return;
         if (tabOrder.includes(tab)) setActiveTab(tab as NavTab);
         else handleDeepLink(tab);
       });
+      void Promise.resolve(nativePlugin('SleepWidgets')?.consumePendingRoute?.())
+        .then((res: any) => {
+          const route = typeof res?.route === 'string' ? res.route : '';
+          if (cancelled || !route) return;
+          handleDeepLink(route);
+        })
+        .catch(() => {});
     };
     apply();
-    // 从后台被桌宠拉起时 App 不重新挂载，靠 visibilitychange 补一次
+    // 热启动路径：点击桌面小组件拉起已有主界面时，经原生 handleOnNewIntent 派发事件
+    void Promise.resolve(
+      nativePlugin('SleepWidgets')?.addListener?.('widgetDeepLink', (payload: any) => {
+        const route = typeof payload?.route === 'string' ? payload.route : '';
+        if (!cancelled && route) handleDeepLink(route);
+      }),
+    )
+      .then((h: any) => {
+        if (cancelled) {
+          try { h?.remove?.(); } catch { /* ignore */ }
+          return;
+        }
+        widgetListenerHandle = h;
+      })
+      .catch(() => {});
+    // 从后台被桌宠或小组件拉起时 App 不重新挂载，靠 visibilitychange 补一次
     const onVisible = () => {
       if (document.visibilityState === 'visible') apply();
     };
@@ -105,6 +128,7 @@ export function usePetTabLaunch(tabOrder: readonly string[], setActiveTab: (tab:
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisible);
+      try { widgetListenerHandle?.remove?.(); } catch { /* ignore */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -288,23 +312,23 @@ export function useBedtimeNativeSync(
     let listenerHandle: any = null;
     try {
       if (reminderEnabled) {
-        nativePlugin('GemmaLLM')?.bedtimeReminderSchedule?.({ time: targetBedtime });
+        nativePlugin('SleepCore')?.bedtimeReminderSchedule?.({ time: targetBedtime });
       } else {
-        nativePlugin('GemmaLLM')?.bedtimeReminderCancel?.();
+        nativePlugin('SleepCore')?.bedtimeReminderCancel?.();
       }
       // 深夜救援开关 + 醒来目标（夜间窗口用；默认开启，!== false 语义）
-      nativePlugin('GemmaLLM')?.nightRescueSet?.({
+      nativePlugin('SleepCore')?.nightRescueSet?.({
         enabled: nightRescueEnabled !== false,
         wake: targetWakeTime,
       });
-      nativePlugin('GemmaLLM')?.bedtimeAutoStartConsume?.().then((res: any) => {
+      nativePlugin('SleepCore')?.bedtimeAutoStartConsume?.().then((res: any) => {
         if (res?.consume) goodPathRef.current();
       });
       // addListener 返回句柄，卸载/依赖变化时必须移除（否则每次改目标都叠加
       // 一个监听器）。句柄经 Promise 异步到达：cleanup 先到时置 cancelled，
       // resolve 回调里补移除——否则旧监听器永久泄漏，一次"好的"触发多次
       let cancelled = false;
-      Promise.resolve(nativePlugin('GemmaLLM')?.addListener?.('bedtimeGood', () => goodPathRef.current()))
+      Promise.resolve(nativePlugin('SleepCore')?.addListener?.('bedtimeGood', () => goodPathRef.current()))
         .then((h: any) => {
           if (cancelled) { try { h?.remove?.(); } catch { /* ignore */ } return; }
           listenerHandle = h;

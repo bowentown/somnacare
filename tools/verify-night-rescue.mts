@@ -31,9 +31,10 @@ const ok = (cond: boolean, name: string): void => {
   }
 };
 
-const receiver = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/NightRescueReceiver.java');
-const service = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/NightRescueService.java');
-const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
+const receiver = read('plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/NightRescueReceiver.java');
+const service = read('plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/NightRescueService.java');
+const plugin = read('plugins/cap-sleep-core/android/src/main/java/com/somnacare/gemmallm/SleepCorePlugin.java');
+const pluginManifest = read('plugins/cap-sleep-core/android/src/main/AndroidManifest.xml');
 const workflow = read('.github/workflows/build-apk.yml');
 const card = read('src/features/sleep/components/PondCard.tsx'); // 占位读校验工具可用性
 void card;
@@ -86,13 +87,14 @@ ok(service.includes('OverlayGuard.apply'), '安全：卡片过 OverlayGuard 点�
 ok(service.includes('AUTO_DISMISS_MS = 40_000'), '克制：40 秒自动收场');
 ok(service.includes(' Gravity.BOTTOM'), '克制：底部窄卡，深夜不做全屏接管');
 
-// ③ CI 注入（漏注册 = 静默不触发）
-ok(workflow.includes('com.somnacare.gemmallm.NightRescueReceiver')
-  && workflow.includes('"android.intent.action.USER_PRESENT"'),
-  'CI：receiver 进 manifest 注入 sed（USER_PRESENT intent-filter）');
-ok(workflow.includes('com.somnacare.gemmallm.NightRescueService')
-  && workflow.includes('night_rescue_overlay'),
-  'CI：service 进 manifest 注入 sed（specialUse 子类型）');
+// ③ 插件清单与 CI 接入（漏注册 = 静默不触发）
+ok(pluginManifest.includes('com.somnacare.gemmallm.NightRescueReceiver')
+  && pluginManifest.includes('"android.intent.action.USER_PRESENT"')
+  && workflow.includes('./plugins/cap-sleep-core'),
+  '清单与 CI：receiver 在 cap-sleep-core manifest 声明（USER_PRESENT intent-filter）');
+ok(pluginManifest.includes('com.somnacare.gemmallm.NightRescueService')
+  && pluginManifest.includes('night_rescue_overlay'),
+  '清单与 CI：service 在 cap-sleep-core manifest 声明（specialUse 子类型）');
 
 // ④ Web 接线
 const types = read('src/shared/types/sleep.ts');

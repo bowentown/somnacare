@@ -5,8 +5,8 @@
 import { EyeCareConfig } from '../../../shared/types/sleep';
 import { nativePlugin } from '../../../shared/native/nativeBridge';
 
-/** 护眼滤镜原生插件（统一走 nativeBridge，第 94 轮） */
-const gemma = (): any | null => nativePlugin('GemmaLLM');
+/** 护眼滤镜原生插件（Phase 3 拆分为独立 EyeCare 插件） */
+const gemma = (): any | null => nativePlugin('EyeCare');
 
 export const isEyeCareNative = (): boolean => gemma() != null;
 

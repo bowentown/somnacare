@@ -1,0 +1,50 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.2'
+    }
+}
+
+apply plugin: 'com.android.library'
+
+def safeExt(name, fallback) {
+    try {
+        return rootProject.ext.has(name) ? rootProject.ext.get(name) : fallback
+    } catch (Exception e) {
+        return fallback
+    }
+}
+
+android {
+    namespace "com.somnacare.sleepcore"
+    compileSdk safeExt('compileSdkVersion', 35)
+    defaultConfig {
+        minSdkVersion safeExt('minSdkVersion', 24)
+        targetSdkVersion safeExt('targetSdkVersion', 35)
+        versionCode 1
+        versionName "1.0"
+    }
+    lintOptions {
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation project(':capacitor-android')
+    // FileProvider（APK 安装授权）：Capacitor 以 implementation 引入 AndroidX，
+    // 不会传递到插件编译类路径，这里必须显式声明
+    implementation 'androidx.core:core:1.17.0'
+}

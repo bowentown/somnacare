@@ -14,8 +14,8 @@ import { generatePetSayLinesLlm, getCachedLlmSay, petSayFingerprint } from './pe
 import { nativePlugin } from '../../../shared/native/nativeBridge';
 export { getCachedLlmSay };
 
-/** 桌宠原生插件（统一走 nativeBridge，第 94 轮） */
-const gemma = (): any | null => nativePlugin('GemmaLLM');
+/** 桌宠原生插件（Phase 3 拆分为独立 PetOverlay 插件） */
+const gemma = (): any | null => nativePlugin('PetOverlay');
 
 export const isPetNative = (): boolean => gemma() != null;
 

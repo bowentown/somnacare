@@ -80,7 +80,7 @@ jobs:
             echo "规则已刷新到订阅最新版并通过安全审计"
           else
             echo "::warning::GKD 规则刷新失败或未通过审计，回退仓库已提交版本"
-            git checkout -- plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json || true
+            git checkout -- plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json || true
           fi
 
       # 第 91 轮：类型检查此前不在 CI 里——vite build 走 esbuild 只剥类型不查
@@ -111,8 +111,15 @@ jobs:
           # Capacitor 出新版本后模板漂移会让下面所有 sed 静默失配
           # （A10：^8 收成精确版本，升级一律走显式提交而非 CI 静默漂移）
           npm install --legacy-peer-deps --save-dev @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/android@8.5.2
-          # 本地原生插件：MediaPipe LLM Inference（Gemma .task 端侧推理）+ 使用行为信号
-          npm install --legacy-peer-deps --save-dev ./plugins/cap-gemma-llm ./plugins/cap-usage-signal
+          # 7 个领域化本地原生插件（按领域解耦，各自独立管理 Manifest 与 Gradle 依赖）
+          npm install --legacy-peer-deps --save-dev \
+            ./plugins/cap-gemma-llm \
+            ./plugins/cap-sleep-core \
+            ./plugins/cap-sleep-widgets \
+            ./plugins/cap-eye-care \
+            ./plugins/cap-pet-overlay \
+            ./plugins/cap-ad-skip \
+            ./plugins/cap-usage-signal
 
       - name: Configure Capacitor for 100% Local Offline App
         run: |
@@ -141,91 +148,28 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-          # 应用内更新：模板已声明 FileProvider（authority=${applicationId}.fileprovider），
-          # 但不能在插件里重复声明（元数据冲突会让 mergeReleaseResources 失败）。
-          # 这里把下载目录追加到模板自己的 res/xml/file_paths.xml，保留原有
-          # external/cache 路径，避免影响 Filesystem/Share。
-          sed -i 's|</paths>|    <external-files-path name="somnacare_updates" path="Download/" />\n</paths>|' android/app/src/main/res/xml/file_paths.xml
-          grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
+          # Phase 3：所有插件权限、服务与接收器均由各自插件 AndroidManifest.xml 声明并由
+          # AGP Manifest Merger 自动合并；宿主级修补统一收口到可单测的 patch-android-host.mts
+          npx tsx tools/patch-android-host.mts android
 
-          # 注入 AndroidManifest 核心闹钟与通知权限 (Android 12/13/14 必需，进程级息屏唤醒)
-          # RECORD_AUDIO 供 WebView getUserMedia 做枕边环境声级采样（Capacitor 桥接运行时授权）
-          sed -i '/<application/i \
-          <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\
-          <uses-permission android:name="android.permission.USE_EXACT_ALARM" />\
-          <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\
-          <uses-permission android:name="android.permission.WAKE_LOCK" />\
-          <uses-permission android:name="android.permission.RECORD_AUDIO" />\
-          <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
-          <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\
-          <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\
-          <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\
-          <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\
-          <uses-permission android:name="android.permission.INTERNET" />\
-          <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\
-          <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\
-          <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\
-          <uses-permission android:name="android.permission.VIBRATE" />' android/app/src/main/AndroidManifest.xml
-
-          # 摇一摇/开屏广告跳过：无障碍服务（第 59 轮）；配置 XML 在插件 res/xml 合并。
-          # exported 必须为 true：无障碍服务由 system_server 跨进程绑定；targetSdk 35
-          # 下设为 false 在部分 OEM 的权限页会被过滤/无法重绑（第 61 轮对照“自动点击宝”）。
-          sed -i 's|</application>|<service android:name="com.somnacare.gemmallm.AdSkipService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"><intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter><meta-data android:name="android.accessibilityservice" android:resource="@xml/ad_skip_accessibility" /></service></application>|' android/app/src/main/AndroidManifest.xml
-
-          # 护眼滤镜前台服务 + 作息到点提醒 + 鲸鱼娘桌宠悬浮窗（服务/接收器，specialUse 类型 API 34+ 需属性）
-          sed -i 's|</application>|<service android:name="com.somnacare.gemmallm.EyeCareService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="eye_care_overlay_filter"/></service><service android:name="com.somnacare.gemmallm.BedtimeOverlayService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="bedtime_reminder_overlay"/></service><service android:name="com.somnacare.gemmallm.PetOverlayService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="desktop_pet_overlay"/></service><receiver android:name="com.somnacare.gemmallm.NightRescueReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.USER_PRESENT" /></intent-filter></receiver><receiver android:name="com.somnacare.gemmallm.BedtimeAlarmReceiver" android:exported="false" /><service android:name="com.somnacare.gemmallm.NightRescueService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="night_rescue_overlay"/></service><receiver android:name="com.somnacare.gemmallm.AlarmRingReceiver" android:exported="false" /><service android:name="com.somnacare.gemmallm.AlarmRingService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="alarm_ring_loop"/></service><receiver android:name="com.somnacare.gemmallm.BootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.TIME_SET" /><action android:name="android.intent.action.TIMEZONE_CHANGED" /></intent-filter></receiver><receiver android:name="com.somnacare.gemmallm.SleepWidgetProvider" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/sleep_widget_info" /></receiver><service android:name="com.somnacare.gemmallm.EyeCareTileService" android:label="护眼滤镜" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true"><intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter></service></application>|' android/app/src/main/AndroidManifest.xml
-
-
-          # MediaPipe 要求 minSdk ≥ 24。只升不降：模板默认值将来可能高于 24，
-          # 无条件 sed 会把 26 降回 24，而"== 24"断言恰好确认被降级的值
-          cur_minSdk=$(grep -oE 'minSdkVersion = [0-9]+' android/variables.gradle | grep -oE '[0-9]+$' | head -1)
-          if [ -z "$cur_minSdk" ] || [ "$cur_minSdk" -lt 24 ]; then
-            sed -i 's/minSdkVersion = [0-9]*/minSdkVersion = 24/' android/variables.gradle
-          fi
-
-          # 安全审计 A2/A13：关闭系统备份与迁移通道——Android 默认 allowBackup=true，
-          # adb backup 可整体导出 WebView localStorage（睡眠记录、聊天历史、API Key）
-          # 与 SharedPreferences（闹钟表），与"数据仅存本机"的产品承诺直接冲突；
-          # 同时显式禁明文流量。★ Capacitor 8.5.x 模板的 <application 标签后是
-          # 【换行】而非空格（CI 实测踩坑），s|<application | 不命中——
-          # 所以先替换独立成行的 allowBackup，再用它当锚点追加 usesCleartextTraffic；
-          # 并给"模板将来不再声明 allowBackup"留整段插入兜底
-          sed -i 's|android:allowBackup="true"|android:allowBackup="false"|' android/app/src/main/AndroidManifest.xml
-          if ! grep -q 'android:usesCleartextTraffic=' android/app/src/main/AndroidManifest.xml; then
-            sed -i 's|android:allowBackup="false"|android:allowBackup="false" android:usesCleartextTraffic="false"|' android/app/src/main/AndroidManifest.xml
-          fi
-          if ! grep -q 'android:allowBackup=' android/app/src/main/AndroidManifest.xml; then
-            sed -i 's|<application$|<application\n        android:allowBackup="false"\n        android:usesCleartextTraffic="false"|' android/app/src/main/AndroidManifest.xml
-            sed -i 's|<application |<application android:allowBackup="false" android:usesCleartextTraffic="false" |' android/app/src/main/AndroidManifest.xml
-          fi
-
-          # sed 注入必须命中断言：模板结构变化导致静默不命中时，权限/服务缺失
-          # 只会在运行期表现为"闹钟不响/滤镜打不开"——必须在 CI 就拦住
-          grep -q 'SCHEDULE_EXACT_ALARM' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.somnacare.gemmallm.PetOverlayService' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.somnacare.gemmallm.AlarmRingService' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.somnacare.gemmallm.BootReceiver' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.somnacare.gemmallm.AdSkipService' android/app/src/main/AndroidManifest.xml
-          grep -q 'com.somnacare.gemmallm.AdSkipService" android:exported="true"' android/app/src/main/AndroidManifest.xml
-          grep -q 'android.intent.action.TIME_SET' android/app/src/main/AndroidManifest.xml
-          # 第 61 轮：应用内更新 + 电池白名单 + Shizuku 守护的清单入口
-          grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
-          grep -q 'REQUEST_INSTALL_PACKAGES' android/app/src/main/AndroidManifest.xml
-          grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' android/app/src/main/AndroidManifest.xml
-          # 第 81 轮：包可见性——缺了它应用名查询对第三方应用一律失败、只能显示包名尾段（mm/sgame）
-          grep -q 'QUERY_ALL_PACKAGES' android/app/src/main/AndroidManifest.xml
-          grep -q 'QUERY_ALL_PACKAGES' plugins/cap-usage-signal/android/src/main/AndroidManifest.xml
-          grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml
-          grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
-          grep -q 'rikka.shizuku.ShizukuProvider' plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml
-          # 开屏规则表必须随插件 assets 打进 APK；缺失时服务会静默退回通用规则
-          test -s plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json
-          grep -q 'GKD_subscription' plugins/cap-gemma-llm/android/src/main/assets/ad_skip_rules.json
-          # A2 断言：备份通道必须确实关闭，静默失配 = 产出可被 adb backup 的 APK
+          # 配对落地断言（验证宿主安全加固 + 各插件清单与规则资产在场）
           grep -q 'android:allowBackup="false"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
-          # 断言 ≥ 24（而非 == 24：相等断言会"确认"被降级后的值）
+          grep -q 'androidx.core.content.FileProvider' android/app/src/main/AndroidManifest.xml
+          grep -q 'somnacare_updates' android/app/src/main/res/xml/file_paths.xml
           grep -qE 'minSdkVersion = (2[4-9]|[3-9][0-9])' android/variables.gradle
+          grep -q 'SCHEDULE_EXACT_ALARM' plugins/cap-sleep-core/android/src/main/AndroidManifest.xml
+          grep -q 'REQUEST_INSTALL_PACKAGES' plugins/cap-sleep-core/android/src/main/AndroidManifest.xml
+          grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' plugins/cap-sleep-core/android/src/main/AndroidManifest.xml
+          grep -q 'com.somnacare.gemmallm.AlarmRingService' plugins/cap-sleep-core/android/src/main/AndroidManifest.xml
+          grep -q 'com.somnacare.gemmallm.BootReceiver' plugins/cap-sleep-core/android/src/main/AndroidManifest.xml
+          grep -q 'com.somnacare.gemmallm.PetOverlayService' plugins/cap-pet-overlay/android/src/main/AndroidManifest.xml
+          grep -q 'com.somnacare.gemmallm.AdSkipService' plugins/cap-ad-skip/android/src/main/AndroidManifest.xml
+          grep -q 'rikka.shizuku.ShizukuProvider' plugins/cap-ad-skip/android/src/main/AndroidManifest.xml
+          grep -q 'QUERY_ALL_PACKAGES' plugins/cap-usage-signal/android/src/main/AndroidManifest.xml
+          # 开屏规则表必须随 cap-ad-skip assets 打进 APK；缺失时服务会静默退回通用规则
+          test -s plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json
+          grep -q 'GKD_subscription' plugins/cap-ad-skip/android/src/main/assets/ad_skip_rules.json
 
           # 注入闹钟铃声资源（30 秒渐弱钟声，通知通道用；息屏响铃依赖它）
           # 注入启动屏（深色，消灭白屏闪现）与通知栏白色月亮小图标
@@ -268,8 +212,19 @@ jobs:
           # 主入口 LAUNCHER 意图移至 4 个 activity-alias（主题换图标机制）
           python3 tools/inject-aliases.py android/app/src/main/AndroidManifest.xml
 
-          echo "android.useAndroidX=true" >> android/gradle.properties
-          echo "android.enableJetifier=true" >> android/gradle.properties
+      - name: Pre-compile All 7 Native Plugin Modules (Fast Fail)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew \
+            :cap-gemma-llm:compileDebugJavaWithJavac \
+            :cap-sleep-core:compileDebugJavaWithJavac \
+            :cap-sleep-widgets:compileDebugJavaWithJavac \
+            :cap-eye-care:compileDebugJavaWithJavac \
+            :cap-pet-overlay:compileDebugJavaWithJavac \
+            :cap-ad-skip:compileDebugJavaWithJavac \
+            :cap-usage-signal:compileDebugJavaWithJavac \
+            --no-daemon
 
       - name: Apply Fixed Signing Config (from GitHub Secrets)
         env:

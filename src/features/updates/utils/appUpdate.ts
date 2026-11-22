@@ -63,7 +63,7 @@ export interface DownloadStatus {
 }
 
 function plugin(): any {
-  return nativePlugin('GemmaLLM');
+  return nativePlugin('SleepCore');
 }
 
 function toInt(value: unknown): number {

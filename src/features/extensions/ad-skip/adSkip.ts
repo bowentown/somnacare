@@ -19,7 +19,11 @@ export interface AdSkipStatus {
 const EMPTY: AdSkipStatus = { enabled: false, serviceEnabled: false, hits: 0, diag: [] };
 
 function plugin(): any {
-  return nativePlugin('GemmaLLM');
+  return nativePlugin('AdSkip');
+}
+
+function sleepCorePlugin(): any {
+  return nativePlugin('SleepCore');
 }
 
 function parseStatus(res: any): AdSkipStatus {
@@ -180,7 +184,7 @@ export async function openShizukuApp(): Promise<void> {
 // 这里优先弹系统"允许后台运行"对话框，失败再退回电池优化列表。
 
 export async function isBatteryOptimizationIgnored(): Promise<boolean | null> {
-  const pl = plugin();
+  const pl = sleepCorePlugin();
   if (!pl?.batteryOptimizationStatus) return null;
   try {
     const res = await pl.batteryOptimizationStatus();
@@ -191,11 +195,11 @@ export async function isBatteryOptimizationIgnored(): Promise<boolean | null> {
 }
 
 export async function requestBatteryOptimizationExemption(): Promise<boolean | null> {
-  const pl = plugin();
+  const pl = sleepCorePlugin();
   if (!pl?.batteryOptimizationRequest) {
     // 旧 APK 没有新方法：退回原有的电池优化列表入口，状态未知
     try {
-      await nativePlugin('GemmaLLM')?.openBatteryOptimizationSettings?.();
+      await sleepCorePlugin()?.openBatteryOptimizationSettings?.();
     } catch {
       /* ignore */
     }

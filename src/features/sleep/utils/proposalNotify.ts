@@ -90,7 +90,7 @@ export function subscribeProposalAction(fn: Subscriber): () => void {
 /** 冷启动：直接从 Activity 启动 Intent 读取通知动作（插件事件会丢的场景）。 */
 async function readLaunchAction(): Promise<ProposalAction | null> {
   try {
-    const res = await nativePlugin('GemmaLLM')?.proposalNotificationAction?.();
+    const res = await nativePlugin('SleepCore')?.proposalNotificationAction?.();
     if (res?.date && (res.actionId === 'confirm' || res.actionId === 'edit')) {
       return { type: res.actionId, date: res.date, at: Date.now() };
     }

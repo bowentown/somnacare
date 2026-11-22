@@ -281,7 +281,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                 type="button"
                 onClick={() => {
                   tapTick();
-                  void nativePlugin('GemmaLLM')?.openBatteryOptimizationSettings?.();
+                  void nativePlugin('SleepCore')?.openBatteryOptimizationSettings?.();
                 }}
                 className={`text-[10px] font-bold ${theme?.accentText ?? "text-slate-300"} underline underline-offset-2 cursor-pointer whitespace-nowrap`}
               >

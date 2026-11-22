@@ -1,0 +1,14 @@
+{
+  "name": "cap-eye-care",
+  "version": "1.0.0",
+  "description": "Global warm/dim eye-care overlay filter, 20-20-20 rest reminder, and Quick Settings Tile for SomnaCare",
+  "main": "index.js",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=5.0.0"
+  }
+}
