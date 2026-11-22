@@ -1,0 +1,798 @@
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useMinuteTick } from '../../../shared/hooks/useMinuteTick';
+import { createPortal } from 'react-dom';
+import { Moon, Sun, AlertTriangle, Zap, Coffee } from 'lucide-react';
+import { toLocalDateString, localDateOffset } from '../../../shared/utils/dateUtils';
+import { SleepRecord, UserProfile } from '../../../shared/types/sleep';
+import { formatDurationChinese } from '../utils/sleepScore';
+import { buildRecordFromWindow } from '../utils/recordBuilder';
+import { Smartphone } from 'lucide-react';
+import { computeProposal, computeModelProposal, type Proposal } from '../utils/proposal';
+import { recordEngineRun, recordOutcome, recordAdjustment, recordNegativeLabel } from '../utils/modelShadow';
+import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
+import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
+import { clearProposalUnlock, getProposalUnlock, initProposalUnlockFromStorage, subscribeProposalUnlock } from '../utils/proposalUnlock';
+import { recordResumeOutcome, subscribeAppResume } from '../../../shared/utils/appResume';
+import {
+  cancelProposalNotification,
+  consumeProposalAction,
+  scheduleProposalNotification,
+  subscribeProposalAction,
+  type ProposalAction,
+} from '../utils/proposalNotify';
+import { isNativePlatform } from '../utils/nativeAlarmScheduler';
+import { ThemeConfig } from '../../../shared/theme/themeStyles';
+import { useModalA11y } from '../../../shared/utils/modalA11y';
+import { hapticConfirm, hapticNegate, hapticStep, tapTick } from '../../../shared/utils/haptics';
+import { getDayPhase } from '../../../shared/utils/dayPhase';
+
+
+interface OneTapSleepTrackerProps {
+  /** 到点提醒'好的'后的开始监测信号（时间戳 ms，变化即开始记录） */
+  startSignal?: number;
+  onSaveRecord: (record: SleepRecord) => void;
+  theme: ThemeConfig;
+  targetDurationHours?: number;
+  /** 规律度/提议引擎需要完整记录（同晚已有记录/置信度判据） */
+  records?: SleepRecord[];
+  userProfile?: UserProfile;
+  /** "改一下"通路：请求打开预填好的手动补录弹窗 */
+  onOpenManualLogPrefilled?: (p: { date: string; bedtime: string; wakeTime: string }) => void;
+  /** 监测开始回调（第 124 轮）：App 用来排晨间确认通知 */
+  onMonitoringStart?: () => void;
+  /** 记录方式（手动/自动）等卡片内偏好持久化 */
+  onUpdateProfile?: (updated: Partial<UserProfile>) => void;
+  /** 提议卡是否在场（首页自救助手据此避让） */
+  onProposalPresenceChange?: (visible: boolean) => void;
+}
+
+export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(function OneTapSleepTracker({ onSaveRecord, startSignal, theme, targetDurationHours, records = [], onOpenManualLogPrefilled, onMonitoringStart, userProfile, onUpdateProfile, onProposalPresenceChange }) {
+  const [sleepStartTime, setSleepStartTime] = useState<number | null>(() => {
+    const saved = localStorage.getItem('somnacare_bedtime_start');
+    if (!saved) return null;
+    const start = Number(saved);
+    // 存储损坏（非数字）直接清掉，否则 NaN 会卡死会话卡并污染记录构建
+    if (!Number.isFinite(start)) {
+      try { localStorage.removeItem('somnacare_bedtime_start'); } catch { /* ignore */ }
+      return null;
+    }
+    // 遗留会话保留到 24h（第 81 轮审计 P1）：此前 14h 即静默丢弃——用户
+    // 忘了结束、次日傍晚才打开时，整晚监测无影无踪。现在保留会话卡，
+    // 由用户点「已醒来」按 16h 上限结算（截断有提示横幅）或显式取消；
+    // 超过 24h 的一夜之外的死会话仍清掉（继续挂着只会压制自动提议）
+    if (Date.now() - start > 24 * 3600000) {
+      try { localStorage.removeItem('somnacare_bedtime_start'); } catch { /* ignore */ }
+      return null;
+    }
+    return start;
+  });
+
+  const [elapsedMinutes, setElapsedMinutes] = useState(0);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [completedRecord, setCompletedRecord] = useState<SleepRecord | null>(null);
+  const summaryModalA11y = useModalA11y(!!showSummaryModal, () => setShowSummaryModal(false), '睡眠完成小结');
+  const [sessionTruncated, setSessionTruncated] = useState(false);
+
+  // ── 提议式记录（P3）：昨晚的手机使用 → 一条待确认的睡眠记录 ──
+  const [usageDays, setUsageDays] = useState(() => getCachedUsageDays());
+  // 记录方式（第 38 轮，用户要求）：手动=按按钮开始监测；自动=依靠使用信号的
+  // 自动提议，主按钮换成权限引导/已开启状态。自动档在真机依赖"使用情况访问"
+  const recordMode = userProfile?.sleepRecordMode ?? 'manual';
+  const setRecordMode = (m: 'manual' | 'auto') => onUpdateProfile?.({ sleepRecordMode: m });
+  // 时段自适应（第 56 轮）：早上主按钮是补昨晚，午后是小睡，晚上才是开始监测
+  const phaseNow = useMinuteTick();   // 共享分钟滴答（第 129 轮）
+  const dayPhase = getDayPhase(phaseNow);
+  // 时段自适应只对夜间作息成立：白天主睡者的"午后"是主睡不是小睡，
+  // 维持原按钮语义（开始监测），避免用错的时段标签误导
+  const isNightChronotype = (userProfile?.chronotype ?? 'night') === 'night';
+  const manualHeading = !isNightChronotype
+    ? '今晚准备入睡'
+    : dayPhase === 'morning' ? '早安'
+      : dayPhase === 'afternoon' ? '午后小睡'
+        : dayPhase === 'evening' ? '今晚准备入睡' : '该睡了';
+  const manualCta = !isNightChronotype
+    ? '开始夜间监测'
+    : dayPhase === 'morning' ? '补录昨晚睡眠'
+      : dayPhase === 'afternoon' ? '记录一次小睡' : '开始夜间监测';
+  const manualUsesMonitor = !isNightChronotype || dayPhase === 'evening' || dayPhase === 'late';
+  const [usagePerm, setUsagePerm] = useState<'checking' | 'granted' | 'denied'>('checking');
+  const permTimerRef = useRef<number | null>(null);
+  const [handledDate, setHandledDate] = useState<string | null>(() => {
+    try { return localStorage.getItem('somnacare_proposal_handled'); } catch { return null; }
+  });
+  // 用户显式解锁（第 50 轮）：偏好页"自检链路"点下去 = 用户在要卡。自检
+  // 发现模型证据型拒绝但启发式有合格候选时写入解锁标记（targetDate）；
+  // 本组件订阅它放行当次提议——卡片仍是预填+确认，用户裁决对错。
+  // 时效天然受控：标记只对 targetDate 匹配的那一晚有效，确认/改一下/忽略
+  // 即清除（markHandled），隔天 targetDate 对不上自然失效。
+  // ★ 必须订阅而非 useState 初始化读盘：自检发生在偏好页，而本组件常驻
+  // 滑动轨道（切换分区不卸载），初始化读到的永远是进 App 时的旧值；
+  // storage 事件同文档不触发，轮询被 e2e 假时钟 runFor 放大成风暴
+  // （10800 次同步 tick，测试超时）。订阅式写入即广播，读侧零轮询。
+  const [unlockedDate, setUnlockedDate] = useState<string | null>(() => {
+    initProposalUnlockFromStorage();
+    return getProposalUnlock();
+  });
+  useEffect(() => subscribeProposalUnlock(setUnlockedDate), []);
+  // 通知动作待办（第 56 轮）：冷启动先读盘，运行中由订阅即时送达
+  const [pendingAction, setPendingAction] = useState<ProposalAction | null>(() => consumeProposalAction());
+  useEffect(() => subscribeProposalAction(setPendingAction), []);
+
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    const stop = subscribeUsage(setUsageDays);
+    // 授权即时生效（第 42 轮）：从系统设置授权返回后 usagePerm 变 granted，
+    // 此前本 effect 只依赖 chronotype——不重跑，usageDays 停留在授权前的
+    // 空态，启发式永远"没有手机使用数据"，直到手动切分区重挂载
+    void ensureUsageLoaded(2, userProfile?.chronotype ?? 'night');
+    return stop;
+  }, [userProfile?.chronotype, usagePerm]);
+
+  // ── 模型化提议（第 26 轮）：SensibleSleep 贝叶斯模型优先，旧启发式作回退 ──
+  // 三态：pending（拟合中）→ 不渲染任何提议——此前 decided=false 期间旧启发式
+  // 的提议卡先闪现且可点，用户会在"模型明确拒绝（如通宵用机）"的窗口期内
+  // 写入错误记录；failed（跑不了：非 native/查询失败/数据不足）→ 回退旧启发式；
+  // decided → 模型拍板（含"拒绝"=null，绝不回退）
+  const chronotype = userProfile?.chronotype ?? 'night';
+  const sessionActive = sleepStartTime !== null;
+  const [modelResult, setModelResult] = useState<{ phase: 'pending' | 'decided' | 'failed'; proposal: Proposal | null }>({
+    phase: 'pending',
+    proposal: null,
+  });
+
+  // 前台恢复的独立触发（第 53 轮）：不依赖 usageDays 聚合查询 emit——
+  // 恢复信号一到就强制绕缓存重查事件并重跑引擎（双通道见 App.tsx）
+  const [resumeTick, setResumeTick] = useState(0);
+  // 强制查询的"消费"用 tick 比较而不是一次性 ref（第 54 轮修正）：
+  // 恢复触发的强制链若被 usageDays emit 的重跑取消，ref 已被清零 → 后继
+  // 链不再强制、重试也失效。现在同一个 tick 的所有后继重跑都保持强制，
+  // 直到某条链真正跑完（成功或最终失败）才标记消费。
+  const consumedResumeTickRef = useRef(0);
+  const lastHandledRef = useRef(handledDate);
+  const lastRecordsRef = useRef(records);
+  useEffect(() => subscribeAppResume(() => setResumeTick((t) => t + 1)), []);
+
+  useEffect(() => {
+    if (!isNativePlatform() || chronotype === 'irregular') {
+      setModelResult({ phase: 'failed', proposal: null });
+      // 不规律作息下也要消费恢复信号，避免遗留 tick 让之后的重跑误判 forced
+      consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
+      return;
+    }
+    const forced = resumeTick > consumedResumeTickRef.current;
+    // forced 只豁免"纯恢复"的重跑；若本次重跑同时伴随用户交互
+    // （handledDate 变化/记录增删），旧卡必须立即归位 pending——
+    // 否则已忽略/已采纳的卡在慢查询期间仍可点（第 54 轮自审）
+    const interacted = handledDate !== lastHandledRef.current || records !== lastRecordsRef.current;
+    lastHandledRef.current = handledDate;
+    lastRecordsRef.current = records;
+    if (!forced || interacted) setModelResult({ phase: 'pending', proposal: null });
+    let cancelled = false;
+    void (async () => {
+      // 恢复触发的查询强制绕 30min TTL：起床信号可能就在缓存写入之后
+      let ev = await queryScreenOnEvents(14, forced);
+      // 恢复瞬间桥接可能尚未就绪（返回 null 或抛错）——1.5s 后重试一次
+      if (!ev && forced && !cancelled) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelled) return;
+        ev = await queryScreenOnEvents(14, true);
+      }
+      if (cancelled) return;
+      if (!ev) {
+        setModelResult({ phase: 'failed', proposal: null });   // 查询失败：回退态
+        if (forced) recordResumeOutcome('事件查询失败（桥接未就绪或权限被回收，已重试一次）');
+        consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
+        return;
+      }
+      const res = computeModelProposal({
+        events: ev.events,
+        observedUntil: ev.observedUntil,
+        chronotype,
+        records,
+        sessionActive,
+        handledDate,
+      });
+      if (!cancelled) {
+        setModelResult(res.fallbackAllowed
+          ? { phase: 'failed', proposal: null }
+          : { phase: 'decided', proposal: res.proposal });
+        if (forced) {
+          recordResumeOutcome(
+            res.proposal
+              ? `出卡 ${res.proposal.bedtime}→${res.proposal.wakeTime}（事件 ${ev.events.length} 条）`
+              : `未出卡：${res.fit?.reason ?? res.block ?? '模型拒绝'}（事件 ${ev.events.length} 条）`,
+          );
+        }
+        consumedResumeTickRef.current = Math.max(consumedResumeTickRef.current, resumeTick);
+      }
+    })();
+    return () => { cancelled = true; };
+    // usagePerm 入依赖：授权返回后无需重开页面，引擎立即重跑（第 42 轮）
+    // resumeTick 入依赖（第 53 轮）：恢复前台的强制重跑通道
+  }, [usageDays, records, handledDate, chronotype, sessionActive, usagePerm, resumeTick]);
+
+  const heuristicProposal = useMemo(
+    () => computeProposal({
+      usageDays,
+      records,
+      sessionActive: sleepStartTime !== null,
+      handledDate,
+      chronotype: userProfile?.chronotype ?? 'night',
+    }),
+    [usageDays, records, sleepStartTime, handledDate, userProfile?.chronotype]
+  );
+  const proposal = modelResult.phase === 'failed'
+    ? heuristicProposal
+    : modelResult.proposal
+      ?? (modelResult.phase === 'decided' && heuristicProposal && heuristicProposal.targetDate === unlockedDate
+        ? heuristicProposal   // 用户点自检解锁：模型拒绝但用户显式要卡 → 启发式候选上桌
+        : null);
+
+  // 自动档权限检查：仅在真机 + 自动档时有意义；从系统设置返回后
+  // 轮询 30s 捕捉"刚授予"的时机（用户在设置页停留时长不可控）
+  useEffect(() => {
+    if (!isNativePlatform() || recordMode !== 'auto') return;
+    let cancelled = false;
+    void (async () => {
+      const g = await usageHasPermission();
+      if (!cancelled) setUsagePerm(g ? 'granted' : 'denied');
+    })();
+    return () => { cancelled = true; };
+  }, [recordMode]);
+  useEffect(() => () => {
+    if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+  }, []);
+  const handleOpenAutoSettings = () => {
+    void usageOpenSettings();
+    if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+    let tries = 0;
+    permTimerRef.current = window.setInterval(async () => {
+      tries += 1;
+      const g = await usageHasPermission();
+      if (g || tries >= 15) {
+        if (permTimerRef.current !== null) window.clearInterval(permTimerRef.current);
+        permTimerRef.current = null;
+        setUsagePerm(g ? 'granted' : 'denied');
+      }
+    }, 2000);
+  };
+
+  // 影子诊断（第 37 轮）：引擎每次产出提议都存档——用户的最终记录回填后
+  // 在偏好页算 MAE/命中率。模型参数至今只用公开数据集标定，这是唯一的
+  // 真机数据积累通道。recordEngineRun 按目标夜合并，重复计算幂等
+  useEffect(() => {
+    if (!proposal) return;
+    recordEngineRun({
+      date: proposal.targetDate,
+      model: modelResult.phase === 'decided' && modelResult.proposal
+        ? { bed: modelResult.proposal.bedtime, wake: modelResult.proposal.wakeTime }
+        : undefined,
+      heuristic: modelResult.phase !== 'decided' && heuristicProposal
+        ? { bed: heuristicProposal.bedtime, wake: heuristicProposal.wakeTime }
+        : undefined,
+    });
+  }, [proposal, modelResult.phase, heuristicProposal]);
+
+  // 提议只在"需要的时候"在场（第 28 轮）：醒来后 12 小时内有效，过后自动隐去
+  //（昨晚的提议挂到晚上就变成干扰）；次日由新的目标夜重新产生。
+  // 交互（确认/改一下/忽略）即刻隐去（handledDate）——两套机制互补
+  const PROPOSAL_FRESH_MS = 12 * 3600000;
+  const visibleProposal =
+    proposal && Date.now() - proposal.wakeMs <= PROPOSAL_FRESH_MS ? proposal : null;
+  const proposalVisible = !!visibleProposal;
+  useEffect(() => {
+    onProposalPresenceChange?.(proposalVisible);
+  }, [proposalVisible, onProposalPresenceChange]);
+
+  // 卡上 ±15 分钟微调（第 56 轮）：晨间只想挪一刻钟时不该打开整张补录表单。
+  // 位移在换夜（targetDate 变化）时归零；确认/改一下都用调整后的窗口
+  const [bedShift, setBedShift] = useState(0);    // 分钟，15 的倍数
+  const [wakeShift, setWakeShift] = useState(0);
+  const proposalKey = visibleProposal?.targetDate ?? '';
+  useEffect(() => { setBedShift(0); setWakeShift(0); }, [proposalKey]);
+  const STEP = 15;
+  const SHIFT_MAX = 120;
+  const adjustedProposal = useMemo(() => {
+    if (!visibleProposal) return null;
+    const b = visibleProposal.bedtimeMs + bedShift * 60000;
+    const w = visibleProposal.wakeMs + wakeShift * 60000;
+    if (w - b < 60 * 60000 || w - b > 16 * 3600000) return visibleProposal;   // 微调不产生荒谬窗口
+    const fmt = (ms: number) => {
+      const d = new Date(ms);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    };
+    return {
+      ...visibleProposal,
+      bedtimeMs: b,
+      wakeMs: w,
+      bedtime: fmt(b),
+      wakeTime: fmt(w),
+      windowMinutes: Math.round((w - b) / 60000),
+    };
+  }, [visibleProposal, bedShift, wakeShift]);
+
+  const markHandled = () => {
+    if (!visibleProposal) return;
+    try { localStorage.setItem('somnacare_proposal_handled', visibleProposal.targetDate); } catch { /* ignore */ }
+    // 解锁标记一次性：处理完（确认/改一下/否定）即清，防残留误放行
+    clearProposalUnlock();
+    // 通知栏里的动作已处理，撤掉提醒
+    cancelProposalNotification(visibleProposal.targetDate);
+    setHandledDate(visibleProposal.targetDate);
+  };
+
+  // 确认：用共享构建器落库（recordSource: 'usage'），完成小结与一键就寝同款
+  const handleAcceptProposal = () => {
+    hapticConfirm();
+    if (!adjustedProposal) return;
+    const built = buildRecordFromWindow({
+      sleepStartMs: adjustedProposal.bedtimeMs,
+      wakeMs: adjustedProposal.wakeMs,
+      targetDurationHours,
+      priorRecords: records,
+      id: `usage-${Date.now()}`,
+      recordSource: 'usage',
+      chronotype: userProfile?.chronotype ?? 'night',
+    });
+    // 人工微调留痕（第 56 轮）：系统性偏差是改进模型的真值信号。
+    // 只在微调真的生效时记录——窗口被钳回原值时不能留下假的方向标签
+    const shiftApplied =
+      adjustedProposal.bedtime !== visibleProposal?.bedtime ||
+      adjustedProposal.wakeTime !== visibleProposal?.wakeTime;
+    if (shiftApplied && (bedShift !== 0 || wakeShift !== 0)) {
+      recordAdjustment(adjustedProposal.targetDate, bedShift, wakeShift);
+    }
+    markHandled();
+    recordOutcome(adjustedProposal.targetDate, built.record.bedtime, built.record.wakeTime, 'confirmed');
+    setCompletedRecord(built.record);
+    setSessionTruncated(built.truncated);
+    setShowSummaryModal(true);
+    onSaveRecord(built.record);
+  };
+
+  const handleEditProposal = () => {
+    if (!adjustedProposal) return;
+    onOpenManualLogPrefilled?.({
+      date: adjustedProposal.targetDate,
+      bedtime: adjustedProposal.bedtime,
+      wakeTime: adjustedProposal.wakeTime,
+    });
+    markHandled();
+  };
+
+  // 「不是我的睡眠」= 否定标注（第 56 轮）：该夜进负样本统计，不再只是静默隐藏
+  const handleNegativeLabel = () => {
+    if (!visibleProposal) return;
+    hapticNegate();
+    recordNegativeLabel(visibleProposal.targetDate);
+    markHandled();
+  };
+
+  // 通知（第 56 轮）：自动档的卡在场时挂一条带动作的通知，每夜最多一条。
+  // 用户不动 App 也能在通知栏点「确认记录」，动作随冷启动/前台恢复回来落库
+  useEffect(() => {
+    if (!visibleProposal || recordMode !== 'auto' || sessionActive) return;
+    void scheduleProposalNotification({
+      date: visibleProposal.targetDate,
+      bedtime: visibleProposal.bedtime,
+      wakeTime: visibleProposal.wakeTime,
+    });
+  }, [visibleProposal?.targetDate, visibleProposal?.bedtime, visibleProposal?.wakeTime, recordMode, sessionActive]);
+
+  // 消费通知动作：确认/改一下只在目标夜匹配时执行（隔夜残留自然失效）
+  useEffect(() => {
+    if (!pendingAction || !visibleProposal) return;
+    if (pendingAction.date !== visibleProposal.targetDate) return;
+    if (pendingAction.type === 'confirm') handleAcceptProposal();
+    else handleEditProposal();
+    setPendingAction(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAction, visibleProposal]);
+
+  useEffect(() => {
+    if (!sleepStartTime) {
+      setElapsedMinutes(0);
+      return;
+    }
+
+    const updateTime = () => {
+      const diffMin = Math.max(0, Math.floor((Date.now() - sleepStartTime) / 60000));
+      setElapsedMinutes(diffMin);
+    };
+
+    updateTime();
+    const interval = window.setInterval(updateTime, 5000);
+    return () => window.clearInterval(interval);
+  }, [sleepStartTime]);
+
+  // 到点提醒'好的'触发：与手点 CTA 等效的开始记录
+  useEffect(() => {
+    if (!startSignal) return;
+    const now = Date.now();
+    setSleepStartTime(now);
+    // 复审 45 轮 F3：配额满时 setItem 会抛——按全仓惯例包住，内存态仍生效
+    try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
+  }, [startSignal]);
+
+  const startGuardRef = useRef(0);
+  const handleStartSleep = () => {
+    // 双击防抖（第 51 轮审计 P1）：第二击落在重渲染后的新控件上会"秒开
+    // 秒关"并落一条 1 分钟垃圾记录——300ms 内的重复点击一律忽略
+    if (Date.now() - startGuardRef.current < 300) return;
+    startGuardRef.current = Date.now();
+    tapTick();
+    const now = Date.now();
+    setSleepStartTime(now);
+    try { localStorage.setItem('somnacare_bedtime_start', String(now)); } catch { /* 持久化丢失可接受 */ }
+    onMonitoringStart?.();   // 晨间确认提醒随监测开始排定（第 124 轮）
+  };
+
+  // 早/午后主按钮：直接打开预填好的补录（没有预填通路时退回开始监测）
+  const handleQuickLog = () => {
+    tapTick();
+    if (!onOpenManualLogPrefilled) { handleStartSleep(); return; }
+    if (dayPhase === 'morning') {
+      // 醒来时间不能预填到未来：目标起床时刻晚于此刻时，用此刻
+      const now = new Date();
+      const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const targetWake = userProfile?.targetWakeTime ?? '07:30';
+      onOpenManualLogPrefilled({
+        date: localDateOffset(-1),
+        bedtime: userProfile?.targetBedtime ?? '23:30',
+        wakeTime: targetWake <= nowHm ? targetWake : nowHm,
+      });
+      return;
+    }
+    const now = new Date();
+    const wake = new Date(now);
+    wake.setSeconds(0, 0);
+    wake.setMinutes(wake.getMinutes() - (wake.getMinutes() % 5));
+    const bed = new Date(Math.max(wake.getTime() - 40 * 60000, now.getTime() - 3 * 3600000));
+    const hhmm = (d: Date) =>
+      `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    onOpenManualLogPrefilled({
+      date: toLocalDateString(),
+      bedtime: hhmm(bed),
+      wakeTime: hhmm(wake),
+    });
+  };
+
+  const handleWakeUp = () => {
+    if (!sleepStartTime) return;
+    tapTick();
+
+    // 记录构建已抽取为共享 recordBuilder（一键就寝与手机使用提议共用，
+    // 黄金样本护栏保证行为一致）；wake=now 与原实现相同
+    const built = buildRecordFromWindow({
+      sleepStartMs: sleepStartTime,
+      wakeMs: Date.now(),
+      targetDurationHours,
+      priorRecords: records,
+      id: `onetap-${Date.now()}`,
+      recordSource: 'onetap',
+      chronotype: userProfile?.chronotype ?? 'night',
+    });
+    const newRecord = built.record;
+    const sessionTruncated = built.truncated;
+
+    localStorage.removeItem('somnacare_bedtime_start');
+    setSleepStartTime(null);
+    setCompletedRecord(newRecord);
+    setSessionTruncated(sessionTruncated);
+    setShowSummaryModal(true);
+    onSaveRecord(newRecord);
+  };
+
+  const handleCancelSession = () => {
+    // 进行中的整夜会话一键丢弃不可恢复——破坏性与删除记录同防护级
+    if (!window.confirm('取消本次夜间监测？已记录的时长不会保存。')) return;
+    localStorage.removeItem('somnacare_bedtime_start');
+    setSleepStartTime(null);
+  };
+
+  const formatElapsed = (mins: number) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h === 0) return `${m} 分钟`;
+    return `${h} 小时 ${m} 分钟`;
+  };
+
+  return (
+    <>
+      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-lg transition-all relative overflow-hidden`}>
+        {!sleepStartTime && visibleProposal ? (
+          /* ── 提议态：昨晚手机使用 → 待确认（P3）。确认 = 1 次点击 ── */
+          // wind-down-card（第 135 轮暴露）：e2e 断言必须收在卡内——
+          // document.body.innerText 的跨元素正则会命中页面其它分区的
+          // "HH:MM 放下"行（审查报告 P1-5 实测的确定性污染源）
+          <div className="space-y-3.5" data-testid="wind-down-card">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
+                  <Smartphone className={`w-5 h-5 ${theme.accentText}`} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-black tracking-wide text-white">昨晚的手机使用</h3>
+                </div>
+              </div>
+            </div>
+
+            <div className={`${theme.cardInnerBg} border ${theme.cardBorder} rounded-2xl p-3 flex items-center justify-between gap-1`}>
+              <div className="flex flex-col items-center gap-1 min-w-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="就寝提前15分钟"
+                    disabled={bedShift <= -SHIFT_MAX}
+                    onClick={() => { hapticStep(); setBedShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >−</button>
+                  <span className="text-sm font-bold font-display text-white tabular-nums min-w-12 text-center">{adjustedProposal?.bedtime}</span>
+                  <button
+                    type="button"
+                    aria-label="就寝推迟15分钟"
+                    disabled={bedShift >= SHIFT_MAX}
+                    onClick={() => { hapticStep(); setBedShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >＋</button>
+                </div>
+                <span className="text-[10px] text-slate-400">放下</span>
+              </div>
+              <span className={`${theme.accentText} font-black`}>→</span>
+              <div className="flex flex-col items-center gap-1 min-w-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="起床提前15分钟"
+                    disabled={wakeShift <= -SHIFT_MAX}
+                    onClick={() => { hapticStep(); setWakeShift((v) => Math.max(-SHIFT_MAX, v - STEP)); }}
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >−</button>
+                  <span className="text-sm font-bold font-display text-white tabular-nums min-w-12 text-center">{adjustedProposal?.wakeTime}</span>
+                  <button
+                    type="button"
+                    aria-label="起床推迟15分钟"
+                    disabled={wakeShift >= SHIFT_MAX}
+                    onClick={() => { hapticStep(); setWakeShift((v) => Math.min(SHIFT_MAX, v + STEP)); }}
+                    className="w-9 h-9 rounded-lg bg-black/20 text-slate-300 font-black disabled:opacity-30 cursor-pointer active:scale-90 transition-transform"
+                  >＋</button>
+                </div>
+                <span className="text-[10px] text-slate-400">拿起</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-300 px-1">
+              <span>约 {formatDurationChinese(adjustedProposal?.windowMinutes ?? visibleProposal.windowMinutes)}</span>
+              {visibleProposal.nightPickups > 0 && <span>睡眠中亮屏 {visibleProposal.nightPickups} 次</span>}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleAcceptProposal}
+              className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg`}
+            >
+              <span>✓ 记为这次就寝</span>
+            </button>
+
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                onClick={handleEditProposal}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800/70 text-slate-200 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                改一下
+              </button>
+              <button
+                type="button"
+                onClick={handleNegativeLabel}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800/70 text-slate-400 text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                不是我的睡眠
+              </button>
+            </div>
+          </div>
+        ) : !sleepStartTime && modelResult.phase === 'pending' && recordMode === 'auto' && isNativePlatform() ? (
+          /* 引擎计算中（第 57 轮）：此前的常规自动档文案会先闪一下再被
+             提议卡替换，语义和高度都跳。用无文字骨架等结果落定 */
+          <div className="space-y-3.5" aria-busy="true" aria-label="正在检查昨晚的手机使用">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center animate-pulse`}>
+                <Zap className={`w-5 h-5 ${theme.accentText} opacity-40`} />
+              </div>
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-24 rounded-full bg-slate-600/50 animate-pulse" />
+                <div className="h-2.5 w-36 rounded-full bg-slate-700/40 animate-pulse" />
+              </div>
+            </div>
+            <div className={`h-16 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} animate-pulse`} />
+            <div className={`h-11 rounded-2xl ${theme.accentBg} opacity-25 animate-pulse`} />
+          </div>
+        ) : !sleepStartTime ? (
+          <div className="space-y-3.5">
+            {/* 手动/自动切换独立成行（仅真机；网页端无使用信号）——
+                不与标题同排，避免挤压换行的副标题文字 */}
+            {isNativePlatform() && (
+              <div className="flex justify-end">
+                <div className="flex rounded-xl bg-black/20 p-0.5">
+                  {(['manual', 'auto'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={recordMode === m}
+                      onClick={() => setRecordMode(m)}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                        recordMode === m ? `${theme.accentBg.split(' ')[0]} ${theme.accentFg}` : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'manual' ? '手动' : '自动'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-2xl ${theme.cardInnerBg} border ${theme.cardBorder} flex items-center justify-center shadow-inner shrink-0`}>
+                {recordMode === 'auto' && isNativePlatform()
+                  ? <Zap className={`w-5 h-5 ${theme.accentText}`} />
+                  : dayPhase === 'morning'
+                    ? <Sun className={`w-5 h-5 ${theme.accentText}`} />
+                    : dayPhase === 'afternoon'
+                      ? <Coffee className={`w-5 h-5 ${theme.accentText}`} />
+                      : <Moon className={`w-5 h-5 ${theme.accentText}`} />}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-black tracking-wide text-white">
+                  {recordMode === 'auto' && isNativePlatform()
+                    ? (usagePerm === 'granted' ? '自动记录已开启' : '开启自动记录')
+                    : manualHeading}
+                </h3>
+              </div>
+            </div>
+
+            {recordMode === 'auto' && isNativePlatform() ? (
+              usagePerm === 'granted' ? (
+                <button
+                  type="button"
+                  onClick={handleStartSleep}
+                  className="w-full py-1.5 text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+                >
+                  今晚还是想手动监测？
+                </button>
+              ) : (
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={handleOpenAutoSettings}
+                    className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
+                  >
+                    <Zap className="w-4 h-4" />
+                    <span>{usagePerm === 'checking' ? '检查权限中…' : '开启自动记录'}</span>
+                    <span className="text-sm">→</span>
+                  </button>
+                  <p className={`text-[10px] ${theme.textMuted} leading-relaxed px-1`}>
+                    需"使用情况访问"权限 · 只读屏幕亮灭时刻，数据留在本机
+                  </p>
+                </div>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={manualUsesMonitor ? handleStartSleep : handleQuickLog}
+                className={`w-full py-3.5 px-5 rounded-2xl ${theme.accentBg} ${theme.accentFg} font-black text-xs tracking-wider flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer shadow-lg animate-cta-breathe`}
+              >
+                <span>{manualCta}</span>
+                <span className="text-sm">→</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs px-1 font-bold">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-emerald-400 font-black text-sm">
+                  正在实时记录中 · 已就寝 {formatElapsed(elapsedMinutes)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelSession}
+                className="text-slate-400 hover:text-white text-xs underline cursor-pointer py-2 -my-2"
+              >
+                取消记录
+              </button>
+            </div>
+            {elapsedMinutes > 960 && (
+              <p className="text-[10px] text-amber-300 px-1 -mt-2">
+                会话已超过 16 小时——点「已醒来」将按 16 小时上限截断保存（忘记结束的常见情形）。
+              </p>
+            )}
+
+            {/* 两行布局：一行 flex 塞不下"图标+文案+CTA"三块，硬塞会把副标题挤折行。
+                琥珀色是有意保留的"晨光"语义（醒来 = 早晨），不随主题强调色变化 */}
+            <button
+              type="button"
+              onClick={handleWakeUp}
+              className="w-full py-3.5 px-5 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black flex flex-col gap-2.5 active:scale-[0.99] transition-all cursor-pointer shadow-xl"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-black/10 flex items-center justify-center shrink-0">
+                  <Sun className="w-5 h-5 text-slate-950 fill-current" />
+                </div>
+                <div className="text-left min-w-0">
+                  <span className="text-sm font-black tracking-wide block text-slate-950">
+                    已醒来 · 记录本次实际时长
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs font-black bg-black/10 px-3 py-2 rounded-xl text-slate-950 text-center">
+                完成本次睡眠 →
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Completion Modal - 100% Solid & Strict Duration Display */}
+      {showSummaryModal && completedRecord && createPortal(
+        <div ref={summaryModalA11y.ref} {...summaryModalA11y.dialogProps} className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
+          <div className={`${theme.cardBg} border-2 ${theme.accentBorder} rounded-3xl w-full max-w-sm p-6 text-white shadow-2xl text-center`}>
+            <div className={`text-sm font-bold ${theme.accentText} mb-1`}>
+              {completedRecord.durationMinutes < 30 ? '记录完毕 · 微睡眠/短时记录' : '晨安！恭喜完成睡眠'}
+            </div>
+
+            <h3 className="text-2xl font-black tracking-tight text-white mb-2">
+              本次睡眠评定 {completedRecord.sleepScore} 分
+            </h3>
+
+            {sessionTruncated && (
+              <div className="mb-4 text-xs text-amber-300 bg-amber-950/60 p-2.5 rounded-xl border border-amber-500/40 flex items-center gap-1.5 text-left">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>监测会话超过 16 小时，已按 16 小时记录（可能是忘记点"已醒来"）。</span>
+              </div>
+            )}
+
+            {completedRecord.durationMinutes < 30 && (
+              <div className="mb-4 text-xs text-amber-300 bg-amber-950/60 p-2.5 rounded-xl border border-amber-500/40 flex items-center gap-1.5 text-left">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>记录时长为 {completedRecord.durationMinutes} 分钟，按你实际开始/结束时间计算，未做拉长。</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-2.5 mb-6">
+              <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
+                <span className="text-xs text-slate-300 block mb-1 font-bold">实际时长</span>
+                <span className="text-base font-bold font-display text-white">
+                  {completedRecord.durationMinutes < 60
+                    ? `${completedRecord.durationMinutes}分钟`
+                    : `${(completedRecord.durationMinutes / 60).toFixed(1)}h`}
+                </span>
+              </div>
+              <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
+                <span className="text-xs text-slate-300 block mb-1 font-bold">深睡时长</span>
+                <span className="text-base font-bold font-display text-emerald-400">
+                  {completedRecord.deepSleepMinutes}分
+                </span>
+              </div>
+              <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3`}>
+                <span className="text-xs text-slate-300 block mb-1 font-bold">睡眠效率</span>
+                <span className={`text-base font-bold font-display ${theme.accentText}`}>
+                  {completedRecord.sleepEfficiency}%
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowSummaryModal(false)}
+              className={`w-full py-3 rounded-xl ${theme.accentBg} ${theme.accentFg} font-black text-sm transition-colors cursor-pointer shadow-lg`}
+            >
+              确定并查看详情
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+});

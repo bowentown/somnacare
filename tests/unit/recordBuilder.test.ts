@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildRecordFromWindow } from '../../src/utils/recordBuilder';
-import { sanitizeRecord } from '../../src/utils/recordSanitize';
+import { buildRecordFromWindow } from '../../src/features/sleep/utils/recordBuilder';
+import { sanitizeRecord } from '../../src/features/sleep/utils/recordSanitize';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const golden: Record<string, any> = JSON.parse(

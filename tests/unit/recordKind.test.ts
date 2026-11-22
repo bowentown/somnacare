@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { sanitizeRecord } from '../../src/utils/recordSanitize';
-import { mergeRecord, isNap, isNight, deriveKind } from '../../src/utils/recordFilter';
-import { computeRegularity } from '../../src/utils/sleepRegularity';
+import { sanitizeRecord } from '../../src/features/sleep/utils/recordSanitize';
+import { mergeRecord, isNap, isNight, deriveKind } from '../../src/features/sleep/utils/recordFilter';
+import { computeRegularity } from '../../src/features/sleep/utils/sleepRegularity';
 
 installMemoryStorage();
 

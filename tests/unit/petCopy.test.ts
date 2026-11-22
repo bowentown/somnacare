@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ALL_POSTCARDS } from '../../src/data/travelPostcards';
+import { ALL_POSTCARDS, TRIP_POOL } from '../../src/features/pet/data/travelPostcards';
+import { TRIP_POSTCARD_MANIFEST } from '../../src/features/pet/data/postcardIds';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,13 +52,21 @@ describe('桌宠与明信片预设文案语料质量', () => {
   });
 
   it('桌宠播报与本地评论池守住数据诚实与人设边界', () => {
-    const petOverlay = readFileSync(join(ROOT, 'src/utils/petOverlay.ts'), 'utf-8');
-    const petMoments = readFileSync(join(ROOT, 'src/utils/petMoments.ts'), 'utf-8');
+    const petOverlay = readFileSync(join(ROOT, 'src/features/pet/utils/petOverlay.ts'), 'utf-8');
+    const petMoments = readFileSync(join(ROOT, 'src/features/pet/utils/petMoments.ts'), 'utf-8');
     expect(petOverlay).not.toContain('翻了那么多次身');
     expect(petMoments).toContain('禁止写死具体钟点');
     const lcStart = petMoments.indexOf('const LOCAL_COMMENTS');
     const lcEnd = petMoments.indexOf('const friends =', lcStart);
     expect(lcStart).toBeGreaterThanOrEqual(0);
     expect(petMoments.slice(lcStart, lcEnd)).not.toContain('本鱼');
+  });
+
+  it('轻量抽卡索引 postcardIds.ts 与完整明信片池 TRIP_POOL 100% 同步', () => {
+    expect(TRIP_POSTCARD_MANIFEST.length).toBe(TRIP_POOL.length);
+    for (let i = 0; i < TRIP_POOL.length; i += 1) {
+      expect(TRIP_POSTCARD_MANIFEST[i].id).toBe(TRIP_POOL[i].id);
+      expect(TRIP_POSTCARD_MANIFEST[i].souvenirName).toBe(TRIP_POOL[i].souvenir.name);
+    }
   });
 });

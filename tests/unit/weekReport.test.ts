@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { summarizeWeek } from '../../src/utils/weekSummary';
-import { computeWeekReport, GOOD_NIGHT_THRESHOLD } from '../../src/utils/weekReport';
+import { summarizeWeek } from '../../src/features/trends/utils/weekSummary';
+import { computeWeekReport, GOOD_NIGHT_THRESHOLD } from '../../src/features/trends/utils/weekReport';
 
 installMemoryStorage();
 

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildAnalysisPrompts } from '../../src/utils/clinicalAnalysisPrompt';
-import { maskProfileSecrets, unmaskProfileSecrets } from '../../src/utils/secretMask';
+import { buildAnalysisPrompts } from '../../src/features/coach/utils/clinicalAnalysisPrompt';
+import { maskProfileSecrets, unmaskProfileSecrets } from '../../src/shared/utils/secretMask';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -40,7 +40,7 @@ describe('LLM 提示词隐私剥离与落盘密钥掩码', () => {
   });
 
   it('UserProfile 不新增 aiConfig 之外的凭据字段（防黑名单遗漏）', () => {
-    const typesSrc = readFileSync(join(ROOT, 'src/types/sleep.ts'), 'utf-8');
+    const typesSrc = readFileSync(join(ROOT, 'src/shared/types/sleep.ts'), 'utf-8');
     const start = typesSrc.indexOf('export interface UserProfile');
     const body = typesSrc.slice(typesSrc.indexOf('{', start), typesSrc.indexOf('\n}', start));
     const fields = [...body.matchAll(/^\s{2}([A-Za-z]\w*)\??:/gm)].map((m) => m[1]);

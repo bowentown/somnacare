@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { migrateRecordDatesToNightKey } from '../../src/utils/recordDateMigration';
-import { nightKeyOfBed } from '../../src/utils/dateUtils';
-import { loadAndMigrateRecords } from '../../src/utils/recordsHydrate';
+import { migrateRecordDatesToNightKey } from '../../src/features/sleep/utils/recordDateMigration';
+import { nightKeyOfBed } from '../../src/shared/utils/dateUtils';
+import { loadAndMigrateRecords } from '../../src/features/sleep/utils/recordsHydrate';
 
 const storage = installMemoryStorage();
 

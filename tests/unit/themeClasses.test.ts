@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { APP_THEMES } from '../../src/utils/themeStyles';
+import { APP_THEMES } from '../../src/shared/theme/themeStyles';
 
 describe('主题契约完整性（APP_THEMES）', () => {
   it('四套主题槽位一一对齐、非空，且 accentBg 不携带硬编码 text-white', () => {

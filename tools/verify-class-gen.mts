@@ -77,7 +77,7 @@ for (const f of listFiles(SRC, '.tsx')) {
   }
 }
 // 主题槽位值（拼接类名的源头都要在这里被核对到）；id/name/tag/desc 是标识符非类名
-const themeSrc = readFileSync(join(SRC, 'utils', 'themeStyles.ts'), 'utf-8');
+const themeSrc = readFileSync(join(SRC, 'shared', 'theme', 'themeStyles.ts'), 'utf-8');
 for (const m of themeSrc.matchAll(/(?:bg|text|border|ring|dot|selectionBg|accentBg|accentText|accentRing|accentBorder|focusRing|navBg|navBorder|navActiveBg|navActiveText|navInactiveText|pageBg|cardBg|cardInnerBg|cardInnerBorder): '([^']+)'/g)) {
   addChunk(m[1]);
 }

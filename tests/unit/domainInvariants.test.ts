@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { axisWindow } from '../../src/utils/clinicalSummaryCard';
-import { buildSleepFacts } from '../../src/utils/sleepFacts';
-import { buildPetSayLines } from '../../src/utils/petOverlay';
-import { persistChatState } from '../../src/utils/chatStore';
-import { fetchJsonWithTimeout } from '../../src/utils/fetchJson';
-import { generateLocalClinicalAnalysis } from '../../src/utils/clinicalSleepEngine';
+import { axisWindow } from '../../src/features/trends/utils/clinicalSummaryCard';
+import { buildSleepFacts } from '../../src/features/pet/utils/sleepFacts';
+import { buildPetSayLines } from '../../src/features/pet/utils/petOverlay';
+import { persistChatState } from '../../src/features/coach/utils/chatStore';
+import { fetchJsonWithTimeout } from '../../src/shared/utils/fetchJson';
+import { generateLocalClinicalAnalysis } from '../../src/features/coach/utils/clinicalSleepEngine';
 
 const storage = installMemoryStorage();
 

@@ -24,10 +24,10 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const view = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java'), 'utf-8');
 const service = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java'), 'utf-8');
 const plugin = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java'), 'utf-8');
-const overlay = readFileSync(join(ROOT, 'src/utils/petOverlay.ts'), 'utf-8');
-const moments = readFileSync(join(ROOT, 'src/utils/petMoments.ts'), 'utf-8');
+const overlay = readFileSync(join(ROOT, 'src/features/pet/utils/petOverlay.ts'), 'utf-8');
+const moments = readFileSync(join(ROOT, 'src/features/pet/utils/petMoments.ts'), 'utf-8');
 // 桥接调用在 LLM 传输层（第 95 轮从 petMoments 拆出）
-const momentsLlm = readFileSync(join(ROOT, 'src/utils/momentsLlm.ts'), 'utf-8');
+const momentsLlm = readFileSync(join(ROOT, 'src/features/pet/utils/momentsLlm.ts'), 'utf-8');
 const bedtime = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/BedtimeOverlayService.java'), 'utf-8');
 
 let failures = 0;
@@ -93,10 +93,10 @@ check('深夜劝睡每晚一次（K_NAG_DATE 去重）', service.includes('K_NAG
 check('petContext 纯模块在位且被 petOverlay 消费',
   overlay.includes("from './petContext'") && overlay.includes('petContext(records'));
 check('petContext 三字段命名在位（无 hasTonight 残留）',
-  readFileSync(join(ROOT, 'src/utils/petContext.ts'), 'utf-8').includes('lastNightRecorded')
+  readFileSync(join(ROOT, 'src/features/pet/utils/petContext.ts'), 'utf-8').includes('lastNightRecorded')
   && !overlay.includes('hasTonight'));
 check('missedDays 按夜归属从昨天起数（i=1，第 51 轮口径）',
-  readFileSync(join(ROOT, 'src/utils/petContext.ts'), 'utf-8').includes('for (let i = 1; i <= 14; i++)'));
+  readFileSync(join(ROOT, 'src/features/pet/utils/petContext.ts'), 'utf-8').includes('for (let i = 1; i <= 14; i++)'));
 check('插件落盘上下文（K_CTX_*）', plugin.includes('K_CTX_SCORE') && plugin.includes('K_CTX_MISSED') && plugin.includes('K_CTX_LAST_NIGHT'));
 check('服务转推上下文（调用点而非仅签名，变异 3）', service.includes('whale.setContext('));
 check('视图消费上下文 setContext（含 streak，第 125 轮）', view.includes('public void setContext(int lastScore, int missedDays, boolean lastNightRecorded, int streak)'));
@@ -118,7 +118,7 @@ check('权重表记录感知：蔫/精神/想你补记',
 
 // ── 5b) petContext 逻辑级数值测试（复审 R4；第 51 轮夜归属口径：昨晚的记录 date=昨天）──
 {
-  const { petContext } = await import(new URL('../src/utils/petContext.ts', import.meta.url).href);
+  const { petContext } = await import(new URL('../src/features/pet/utils/petContext.ts', import.meta.url).href);
   const now = new Date(2026, 9, 5, 12, 0, 0);   // 2026-10-05 周一
   const dstr = (off: number): string => {
     const d = new Date(2026, 9, 5 + off);

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { planWeeklyLayout, renderWeeklyCard, CARD_H, CARD_W } from '../../src/utils/sleepShareCard';
+import { planWeeklyLayout, renderWeeklyCard, CARD_H, CARD_W } from '../../src/features/trends/utils/sleepShareCard';
 
 const storage = installMemoryStorage();
 

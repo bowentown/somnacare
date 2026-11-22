@@ -7,7 +7,7 @@ import {
   recordNegativeLabel,
   loadShadowStore,
   shadowStats,
-} from '../../src/utils/modelShadow';
+} from '../../src/features/sleep/utils/modelShadow';
 
 const storage = installMemoryStorage();
 

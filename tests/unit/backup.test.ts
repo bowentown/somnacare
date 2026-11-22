@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installMemoryStorage } from './_helpers';
-import { buildFullBackup, parseBackup, restoreFullBackup, BACKUP_SCHEMA, IMPORT_MAX_BYTES } from '../../src/utils/backup';
+import { buildFullBackup, parseBackup, restoreFullBackup, BACKUP_SCHEMA, IMPORT_MAX_BYTES } from '../../src/shared/storage/backup';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const storage = installMemoryStorage();
@@ -127,8 +127,8 @@ describe('全量备份（roundtrip、凭据与 customBaseUrl 剥离、白名单�
   });
 
   it('导入白名单与 UserProfile / CustomAIConfig 类型定义双向一致', () => {
-    const typesSrc = readFileSync(join(ROOT, 'src/types/sleep.ts'), 'utf-8');
-    const backupSrc = readFileSync(join(ROOT, 'src/utils/backup.ts'), 'utf-8');
+    const typesSrc = readFileSync(join(ROOT, 'src/shared/types/sleep.ts'), 'utf-8');
+    const backupSrc = readFileSync(join(ROOT, 'src/shared/storage/backup.ts'), 'utf-8');
 
     const ifaceFields = (name: string): string[] => {
       const start = typesSrc.indexOf(`export interface ${name}`);

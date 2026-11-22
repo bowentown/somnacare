@@ -8,7 +8,7 @@
  *     `isNativePlatform()` 恒 false，依赖 native 的分支整体不渲染（第 90 轮）。
  *  2. 静态 import `@capacitor/core` / 插件包会拉起 web 运行时并在页面加载时
  *     改写 `window.Capacitor`，把 e2e 与网页预览的平台判定一起改掉（第 52 轮）。
- * 现在两者都收敛到 `src/utils/nativeBridge.ts`。
+ * 现在两者都收敛到 `src/shared/native/nativeBridge.ts`。
  *
  * 两层：
  *  1. 行为：import 真实模块，断言"Web 端绝不返回原生插件"这条安全边界；
@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SRC = join(ROOT, 'src');
-const BRIDGE = 'utils/nativeBridge.ts';
+const BRIDGE = 'shared/native/nativeBridge.ts';
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -34,7 +34,7 @@ const check = (name: string, ok: boolean, detail = '') => {
 // ── 1. 行为：平台判定与插件取用的契约 ──
 {
   const { isNativePlatform, nativePlugin } = await import(
-    new URL('../src/utils/nativeBridge.ts', import.meta.url).href
+    new URL('../src/shared/native/nativeBridge.ts', import.meta.url).href
   );
   const setWindow = (v: unknown) => { (globalThis as any).window = v; };
 
@@ -99,7 +99,7 @@ const check = (name: string, ok: boolean, detail = '') => {
 }
 
 if (failures > 0) {
-  console.error('\n原生桥访问不符——请统一走 src/utils/nativeBridge.ts');
+  console.error('\n原生桥访问不符——请统一走 src/shared/native/nativeBridge.ts');
   process.exit(1);
 }
 console.log('\n✓ verify-native-bridge：桥访问唯一入口（行为契约 + 无手写旁路，含反向自检）');

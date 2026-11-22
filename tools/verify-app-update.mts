@@ -17,7 +17,7 @@ import {
   compareVersions,
   parseSemver,
   plainReleaseNotes,
-} from '../src/utils/appUpdate';
+} from '../src/features/updates/utils/appUpdate';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf-8');
@@ -28,10 +28,10 @@ const ok = (name: string, condition: boolean): void => {
   if (!condition) failures++;
 };
 
-const js = read('src/utils/appUpdate.ts');
-const card = read('src/components/AppUpdateCard.tsx');
-const settings = read('src/components/SettingsTab.tsx');
-const app = read('src/App.tsx');
+const js = read('src/features/updates/utils/appUpdate.ts');
+const card = read('src/features/updates/AppUpdateCard.tsx');
+const settings = read('src/settings/subpages/DataSubpage.tsx');
+const app = read('src/app/App.tsx');
 const manager = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/AppUpdateManager.java');
 const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
 const pluginManifest = read('plugins/cap-gemma-llm/android/src/main/AndroidManifest.xml');

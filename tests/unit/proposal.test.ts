@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { computeProposal, computeProposalTraced, computeModelProposal } from '../../src/utils/proposal';
-import { clockMinutes, shortArc } from '../../src/utils/clockMath';
+import { computeProposal, computeProposalTraced, computeModelProposal } from '../../src/features/sleep/utils/proposal';
+import { clockMinutes, shortArc } from '../../src/shared/utils/clockMath';
 
 const storage = installMemoryStorage();
 

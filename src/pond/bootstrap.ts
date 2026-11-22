@@ -21,7 +21,7 @@ import { connectSettingsEffects } from "./settings/effects";
 import { connectPersistence, loadInto } from "./settings/persistence";
 import { settings } from "./settings/store";
 import { getWeatherPreset, type WeatherPresetId } from "./weather";
-import { isGestureLive } from "../utils/gestureGate";
+import { isGestureLive } from "../shared/utils/gestureGate";
 
 // 持久化沿用 nagomi 自有的隔离键（nagomi:pond-settings:v2），与 App 数据零交集
 loadInto(settings);

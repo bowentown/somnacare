@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { computeRegularity, computeSRI, sleepIntervalsOf, buildSleepDayVectors } from '../../src/utils/sleepRegularity';
-import { computeSleepNeed, computeMSFsc, computeSleepDebt, computeSleepDebtRatio } from '../../src/utils/sleepScore';
-import { computeSuggestedSchedule } from '../../src/utils/scheduleSuggestion';
-import { nightKeyOfBed } from '../../src/utils/dateUtils';
-import { reclassifyForChronotype } from '../../src/utils/recordFilter';
+import { computeRegularity, computeSRI, sleepIntervalsOf, buildSleepDayVectors } from '../../src/features/sleep/utils/sleepRegularity';
+import { computeSleepNeed, computeMSFsc, computeSleepDebt, computeSleepDebtRatio } from '../../src/features/sleep/utils/sleepScore';
+import { computeSuggestedSchedule } from '../../src/features/sleep/utils/scheduleSuggestion';
+import { nightKeyOfBed } from '../../src/shared/utils/dateUtils';
+import { reclassifyForChronotype } from '../../src/features/sleep/utils/recordFilter';
 
 installMemoryStorage();
 

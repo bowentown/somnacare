@@ -41,8 +41,8 @@ ok(read('src/pond/bootstrap.ts').includes(notice), '许可：bootstrap 头注携
 const bootstrap = read('src/pond/bootstrap.ts');
 ok(bootstrap.includes('new School()') && bootstrap.includes('new FishRenderer(canvas)') && bootstrap.includes('connectSettingsEffects'),
   '接线：bootstrap 完整连接 School + FishRenderer + settings effects');
-const card = read('src/components/PondCard.tsx');
-ok(card.includes('await import(\'../pond/bootstrap\')'), '接线：bootstrap 走动态 import（three 独立 chunk 不进主包）');
+const card = read('src/features/sleep/components/PondCard.tsx');
+ok(card.includes("await import('../../../pond/bootstrap')"), '接线：bootstrap 走动态 import（three 独立 chunk 不进主包）');
 ok(card.includes('navigator.webdriver') && card.includes('staticSteps'), '接线：自动化/减少动态静帧门（假时钟 runFor×rAF 卡死防护 + CI 软件渲染步数分级）');
 ok(card.includes('setPaused') && card.includes('visibilitychange') && card.includes('IntersectionObserver'),
   '接线：离屏/隐藏双通道暂停');
@@ -72,8 +72,8 @@ ok(!!pkg.dependencies?.three, '依赖：three 已声明（nagomi 渲染核心的
 // ⑥ 欠觉比单一实现（第 116 轮）：池塘天气的公式迁至 sleepScore 共享，
 // 本地重写即回潮（氛围可以宽阈值，但数字只能有一个出处）
 {
-  const pond = read('src/components/PondCard.tsx');
-  const sleepScore = read('src/utils/sleepScore.ts');
+  const pond = read('src/features/sleep/components/PondCard.tsx');
+  const sleepScore = read('src/features/sleep/utils/sleepScore.ts');
   ok(pond.includes('computeSleepDebtRatio(records')
     && !pond.includes('1 - avg / target')
     && sleepScore.includes('export function computeSleepDebtRatio'),

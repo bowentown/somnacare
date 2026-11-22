@@ -184,8 +184,8 @@ test('主题切换：下拉选择 → 刷新后持久', async ({ page }) => {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
   await navTo(page, '偏好');
-  // 刷新后仍是所选拨主题（头部下拉收起态即显示主题名）
-  await expect(page.getByRole('button', { name: /界面主题 深空纯黑 \(OLED\)/ })).toBeVisible();
+  // 刷新后仍是所选主题（菜单行右侧摘要直接显示当前主题名）
+  await expect(page.getByRole('button', { name: /界面主题.*深空纯黑 \(OLED\)/ })).toBeVisible();
 });
 
 test('备份往返：导出 JSON → 导入恢复 → 记录无损', async ({ page }) => {

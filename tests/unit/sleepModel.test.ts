@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { fitSleepModel, modelWindowStart } from '../../src/utils/sleepModel';
-import { computeModelProposal } from '../../src/utils/proposal';
-import { circularMedian, clockMinutes } from '../../src/utils/clockMath';
+import { fitSleepModel, modelWindowStart } from '../../src/features/sleep/utils/sleepModel';
+import { computeModelProposal } from '../../src/features/sleep/utils/proposal';
+import { circularMedian, clockMinutes } from '../../src/shared/utils/clockMath';
 
 const storage = installMemoryStorage();
 

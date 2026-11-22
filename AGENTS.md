@@ -29,7 +29,7 @@ npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vit
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/` | React 应用。`components/`（五分区 + 弹窗/动画/UI 原子）、`hooks/`（App 壳层的原生/生命周期副作用，`appWatchers.ts`）、`utils/`（睡眠评分与分期、临床规则引擎、洞察、端侧原生 Gemma 引擎、提议引擎、护眼、主题）、`types/`、`pond/`（"活的海"池塘引擎）、`services/`、`data/` |
+| `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 40 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
 | `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
 | `tools/` | `verify-*.mts` 静态与产物门禁（16 条，含 `verify-bundle` 读 dist 钉主包架构）、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
@@ -73,11 +73,11 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
 ## 领域规则（最容易改错的地方）
 
 - **夜归属**：一条睡眠记录的 `date` = **放下手机那一天**；就寝跨午夜的归**前一天**。
-  权威实现 `nightKeyOfBed(bedtimeMs, chronotype)`（`src/utils/dateUtils.ts`）；
+  权威实现 `nightKeyOfBed(bedtimeMs, chronotype)`（`src/shared/utils/dateUtils.ts`）；
   `chronotype: 'day'`（白天作息）用自然日。迁移规则抽在 `migrationShiftDays()`
-  （`src/utils/recordDateMigration.ts`）——**记录路径与影子档案路径必须调用同一个**（曾各写一份导致差一天）。
+  （`src/features/sleep/utils/recordDateMigration.ts`）——**记录路径与影子档案路径必须调用同一个**（曾各写一份导致差一天）。
   迁移完成标记是 `somnacare_record_date_schema`。
-- **环形时间运算**用 `src/utils/clockMath.ts`（`circularMean` / `circularMedian` / `circularDev` / `shortArc`）。
+- **环形时间运算**用 `src/shared/utils/clockMath.ts`（`circularMean` / `circularMedian` / `circularDev` / `shortArc`）。
   就寝/起床时刻**不能**直接求算术平均（23:50 与 00:10 的平均不是 12:00）。
 - **数据诚实**：深睡/浅睡/REM 是**模型估算**，不是测量（无体动/脑波传感器）。UI 必须标注，
   绝不把估算写成实测。零记录时不得生成"看起来很专业"的默认报告。
@@ -100,7 +100,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   **`window.CapacitorCustomPlatform`**（`window.Capacitor` 的**兄弟**属性），不是嵌套属性。
   塞进 `window.Capacitor` 里 → `isNativePlatform()` 恒 `false` → 依赖 `native` 的分支不渲染。
   正确写法：`(window as any).CapacitorCustomPlatform = { name: 'android' };`（可再加 `window.androidBridge = {}`）。
-- **原生桥访问一律走 `src/utils/nativeBridge.ts`**（第 94 轮收敛，`verify-native-bridge` 钉住）：
+- **原生桥访问一律走 `src/shared/native/nativeBridge.ts`**（第 94 轮收敛，`verify-native-bridge` 钉住）：
   `isNativePlatform()` 判平台、`nativePlugin('GemmaLLM' | 'UsageSignal' | 'Filesystem' | ...)`
   取插件（非原生平台一律返回 `null`）。业务代码里**不要**手写 `window.Capacitor?.Plugins`——
   那正是此前 20 处重复踩坑的来源（含"web 端漏出原生插件"这类静默失效）。

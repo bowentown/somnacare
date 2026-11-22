@@ -35,7 +35,7 @@ const receiver = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare
 const service = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/NightRescueService.java');
 const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java');
 const workflow = read('.github/workflows/build-apk.yml');
-const card = read('src/components/PondCard.tsx'); // 占位读校验工具可用性
+const card = read('src/features/sleep/components/PondCard.tsx'); // 占位读校验工具可用性
 void card;
 
 // 谓词（正向反向共用）
@@ -95,10 +95,10 @@ ok(workflow.includes('com.somnacare.gemmallm.NightRescueService')
   'CI：service 进 manifest 注入 sed（specialUse 子类型）');
 
 // ④ Web 接线
-const types = read('src/types/sleep.ts');
+const types = read('src/shared/types/sleep.ts');
 // 桥接同步在 hooks/appWatchers.ts（第 99 轮从 App.tsx 拆出）
-const watchers = read('src/hooks/appWatchers.ts');
-const today = read('src/components/TodayTab.tsx');
+const watchers = read('src/app/hooks/useAppWatchers.ts');
+const today = read('src/features/sleep/components/TodayTab.tsx');
 ok(types.includes('nightRescueEnabled?: boolean'), 'Web：UserProfile.nightRescueEnabled 字段');
 ok(watchers.includes('nightRescueSet') && watchers.includes('!== false'), 'Web：App 同步走桥且默认开启（!== false 语义）');
 ok(today.includes('深夜救援') && today.includes('nightRescueEnabled'), 'Web：TodayTab 开关在场');

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installMemoryStorage } from './_helpers';
-import { buildSleepFacts } from '../../src/utils/sleepFacts';
+import { buildSleepFacts } from '../../src/features/pet/utils/sleepFacts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const storage = installMemoryStorage();
@@ -30,7 +30,7 @@ describe('朋友圈事实串生产/消费契约（buildSleepFacts ↔ MomentsOve
   beforeEach(() => storage.clear());
 
   it('周日计算排除今晚与上周记录，产出与 MomentsOverlay 正则完全匹配的事实串', () => {
-    const overlaySrc = readFileSync(join(ROOT, 'src/components/MomentsOverlay.tsx'), 'utf-8');
+    const overlaySrc = readFileSync(join(ROOT, 'src/features/pet/MomentsOverlay.tsx'), 'utf-8');
     const consumerRegexes: RegExp[] = [];
     for (const m of overlaySrc.matchAll(/f\.match\((\/.+?\/[a-z]*)\)/g)) {
       const lastSlash = m[1].lastIndexOf('/');

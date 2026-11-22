@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { installMemoryStorage } from './_helpers';
-import { morningAt9From, recallAt21From, weekKeyOf } from '../../src/utils/careNotifications';
+import { morningAt9From, recallAt21From, weekKeyOf } from '../../src/features/sleep/utils/careNotifications';
 
 const storage = installMemoryStorage();
 const at = (y: number, mo: number, d: number, h: number, mi: number) =>

@@ -31,7 +31,7 @@ const plugin = read('plugins/cap-gemma-llm/android/src/main/java/com/somnacare/g
 const ci = read('.github/workflows/build-apk.yml');
 const info = read('plugins/cap-gemma-llm/android/src/main/res/xml/sleep_widget_info.xml');
 const layout = read('plugins/cap-gemma-llm/android/src/main/res/layout/sleep_widget_layout.xml');
-const petOverlay = read('src/utils/petOverlay.ts');
+const petOverlay = read('src/features/pet/utils/petOverlay.ts');
 
 check('Provider：无记录诚实 "--"（不冒充 0 分）+ 点击唤起主应用',
   provider.includes('score >= 0 ? String.valueOf(score) : "--"')

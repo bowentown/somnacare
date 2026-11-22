@@ -275,6 +275,7 @@ test('晚睡用户：模型先验错位拒绝 → 放行启发式回退 → 卡�
 
   // 自检面板：⑤ 应报"已放行启发式回退"，⑦ 应报能出提议（与组件一致）
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /数据备份与诊断/ }).click();
   await page.getByRole('button', { name: /点此自检链路/ }).click();
   const diag = await page.locator('pre').filter({ hasText: '⑦ 结论' }).innerText({ timeout: 15000 });
   expect(diag).toContain('已放行启发式回退');
@@ -356,13 +357,15 @@ test('用户自检 = 显式要卡：模型拒绝不放行 → 自检解锁启发
 
   // 偏好页点自检 = 用户显式要卡 → 面板报告"已解锁放行"
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /数据备份与诊断/ }).click();
   await page.getByRole('button', { name: /点此自检链路/ }).click();
   const diag = await page.locator('pre').filter({ hasText: '⑦ 结论' }).innerText({ timeout: 15000 });
   expect(diag).toContain('已按你的要求放行');
   expect(diag).toContain('00:28');
   expect(diag).toContain('07:38');
 
-  // 切回睡眠页：解锁的启发式候选作为卡片出现（预填+确认，用户裁决）
+  // 返回菜单并切回睡眠页：解锁的启发式候选作为卡片出现（预填+确认，用户裁决）
+  await page.getByRole('button', { name: '返回' }).click();
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '睡眠' }).click();
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   const cardText = await page.evaluate(() => document.body.innerText);
@@ -554,6 +557,7 @@ test('后台驻留隔夜：恢复前台自动强制刷新 → 无需自检出卡
 
   // 面板 ⑧：恢复触发与引擎结果留痕（下次真机"还不弹"时的定位入口）
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /数据备份与诊断/ }).click();
   await page.getByRole('button', { name: /点此自检链路/ }).click();
   const diag = await page.locator('pre').filter({ hasText: '⑧ 前台恢复触发' }).innerText({ timeout: 15000 });
   expect(diag).toContain('前台恢复触发');
@@ -626,8 +630,9 @@ test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自�
   const shadow = await readStore(page, 'somnacare_model_shadow');
   expect((shadow?.entries ?? []).some((e: any) => e.model?.bed)).toBeTruthy();
 
-  // 自检面板：整条链路逐站报状态，模型应报"跑通"
+  // 自检面板（位于偏好 → 数据备份与诊断二级子页）：整条链路逐站报状态，模型应报"跑通"
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '偏好' }).click();
+  await page.getByRole('button', { name: /数据备份与诊断/ }).click();
   await expect(page.getByText('自动记录 · 模型诊断')).toBeVisible();
   await page.getByRole('button', { name: /点此自检链路/ }).click();
   await expect(page.locator('pre').filter({ hasText: '⑦ 结论' })).toBeVisible({ timeout: 15000 });
@@ -635,7 +640,8 @@ test('模型路径：mock 原生 → decided 提议 + 引擎入影子档 + 自�
   expect(diag).toContain('⑤ 模型：跑通');
   expect(diag).toContain('⑦ 结论：✓');
 
-  // 回睡眠页确认采纳 → 影子档回填 confirmed
+  // 返回偏好菜单再切回睡眠页确认采纳 → 影子档回填 confirmed
+  await page.getByRole('button', { name: '返回' }).click();
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '睡眠' }).click();
   await expect(page.getByText('昨晚的手机使用')).toBeVisible();
   await page.getByRole('button', { name: /记为这次就寝/ }).click();

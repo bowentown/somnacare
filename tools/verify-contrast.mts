@@ -10,7 +10,7 @@
 import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { join as j2, relative as r2 } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { APP_THEMES } from '../src/utils/themeStyles.ts';
+import { APP_THEMES } from '../src/shared/theme/themeStyles.ts';
 
 const TAILWIND: Record<string, string> = {
   'indigo-600': '#4f46e5', 'indigo-500': '#6366f1', 'indigo-400': '#818cf8',
