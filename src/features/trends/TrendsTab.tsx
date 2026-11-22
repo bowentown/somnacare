@@ -9,6 +9,7 @@ import { TrendsChartsSection } from './TrendsChartsSection';
 import { TrendsHistoryList } from './TrendsHistoryList';
 import { TrendsSummarySection } from './TrendsSummarySection';
 import { TrendsUsageCard } from './TrendsUsageCard';
+import { TrendsTagInsightsCard } from './TrendsTagInsightsCard';
 
 /**
  * 趋势主壳（独立懒加载分包，Recharts 与睡眠日历留在此 chunk 内不进首包）：
@@ -59,6 +60,8 @@ const TrendsTabInner: React.FC = () => {
       />
 
       <TrendsUsageCard theme={theme} chronotype={chronotype} />
+
+      <TrendsTagInsightsCard records={records} theme={theme} />
 
       {createPortal(
         <ShareCardModal open={showShare} onClose={() => setShowShare(false)} records={records} theme={theme} />,

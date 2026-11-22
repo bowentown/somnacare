@@ -1,13 +1,19 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { useUIStore } from '../shared/store/uiStore';
 import { AppearanceSubpage } from '../settings/subpages/AppearanceSubpage';
 import { ScheduleSubpage } from '../settings/subpages/ScheduleSubpage';
 import { PetSubpage } from '../settings/subpages/PetSubpage';
-import { WidgetsSubpage } from '../settings/subpages/WidgetsSubpage';
 import { DataSubpage } from '../settings/subpages/DataSubpage';
 import { AdSkipSubpage } from '../features/extensions/ad-skip/AdSkipSubpage';
-import { WindDownSubpage } from '../features/intervention/WindDownSubpage';
 import { PaneErrorBoundary } from '../shared/ui/PaneErrorBoundary';
+
+// Phase 4 & 5 富交互子页按需懒加载，不增加首屏主包体积
+const WidgetsSubpage = lazy(() =>
+  import('../settings/subpages/WidgetsSubpage').then((m) => ({ default: m.WidgetsSubpage })),
+);
+const WindDownSubpage = lazy(() =>
+  import('../features/intervention/WindDownSubpage').then((m) => ({ default: m.WindDownSubpage })),
+);
 
 /**
  * 全局二级子页宿主（Phase 2B）：
@@ -20,15 +26,17 @@ export const SubpageHost: React.FC = () => {
 
   return (
     <PaneErrorBoundary label={top.id}>
-      {top.id === 'settings/appearance' && <AppearanceSubpage />}
-      {top.id === 'settings/schedule' && <ScheduleSubpage />}
-      {top.id === 'settings/pet' && <PetSubpage />}
-      {top.id === 'settings/widgets' && <WidgetsSubpage />}
-      {top.id === 'settings/data' && (
-        <DataSubpage autoCheck={typeof top.params?.autoCheck === 'number' ? top.params.autoCheck : undefined} />
-      )}
-      {top.id === 'settings/extensions' && <AdSkipSubpage />}
-      {top.id === 'intervention/wind-down' && <WindDownSubpage />}
+      <Suspense fallback={null}>
+        {top.id === 'settings/appearance' && <AppearanceSubpage />}
+        {top.id === 'settings/schedule' && <ScheduleSubpage />}
+        {top.id === 'settings/pet' && <PetSubpage />}
+        {top.id === 'settings/widgets' && <WidgetsSubpage />}
+        {top.id === 'settings/data' && (
+          <DataSubpage autoCheck={typeof top.params?.autoCheck === 'number' ? top.params.autoCheck : undefined} />
+        )}
+        {top.id === 'settings/extensions' && <AdSkipSubpage />}
+        {top.id === 'intervention/wind-down' && <WindDownSubpage />}
+      </Suspense>
     </PaneErrorBoundary>
   );
 };

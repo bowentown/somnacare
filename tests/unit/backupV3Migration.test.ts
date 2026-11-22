@@ -23,18 +23,19 @@ describe('统一 Storage 注册表与 Backup v3 向下兼容迁移', () => {
     unregisterBackupSlice('testCustomSlice');
   });
 
-  it('STORAGE_CATALOG 完整登记全部 40 个 somnacare_* 键且无重名', () => {
+  it('STORAGE_CATALOG 完整登记全部 41 个 somnacare_* 键且无重名', () => {
     expect(BACKUP_SCHEMA).toBe(3);
-    expect(STORAGE_CATALOG.length).toBe(40);
+    expect(STORAGE_CATALOG.length).toBe(41);
     const keys = STORAGE_CATALOG.map((e) => e.key);
-    expect(new Set(keys).size).toBe(40);
+    expect(new Set(keys).size).toBe(41);
     expect(keys.every((k) => k.startsWith('somnacare_'))).toBe(true);
 
     // 敏感密钥必须标记为 secret，绝不能进入 backup 策略
     const hf = STORAGE_CATALOG.find((e) => e.key === 'somnacare_hf_token');
     expect(hf?.policy).toBe('secret');
-    // 关怀提醒由内置 careNotifications slice 纳管
+    // 关怀提醒与睡前干预切片均已通过注册表纳管
     expect(listBackupSlices().some((s) => s.id === 'careNotifications')).toBe(true);
+    expect(listBackupSlices().some((s) => s.id === 'intervention')).toBe(true);
   });
 
   it('真实 v1.42.0（schema: 2）备份可无缝升级到 v3 并恢复记录、档案、图鉴、朋友圈与聊天', () => {

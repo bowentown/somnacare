@@ -29,34 +29,33 @@ npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vit
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 40 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
-| `plugins/cap-gemma-llm/` | 本地 Capacitor 插件（Java）：MediaPipe Gemma、护眼滤镜服务、到点提醒、桌宠悬浮窗与行为、广告跳过、应用内更新、图标切换、Shizuku 守护 |
+| `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 懒加载二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 41 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`widgets/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
+| `plugins/cap-gemma-llm/` | 本地插件（Java）：端侧 MediaPipe Gemma `.task` 推理与安全模型下载 |
+| `plugins/cap-sleep-core/` | 本地插件（Java）：闹钟持续响铃、作息到点提醒、深夜救援、应用内更新、电池白名单、主题换图标与开机重排 |
+| `plugins/cap-sleep-widgets/` | 本地插件（Java）：4 款桌面小组件（2×1 评分 / 2×2 睡前快捷 / 4×2 7 晚节律 / 2×2 大肥鱼能量）、独立 `WidgetSnapshot` 存储与 DeepLink 路由 |
+| `plugins/cap-eye-care/` | 本地插件（Java）：全局暖色/减光护眼悬浮窗、20-20-20 远眺提醒、快捷设置磁贴与跨插件切换接收器 |
+| `plugins/cap-pet-overlay/` | 本地插件（Java）：鲸鱼娘桌宠悬浮窗、SurfaceView 独立渲染线程与精灵图素材（保留 `NOTICE.md` 非商授权） |
+| `plugins/cap-ad-skip/` | 本地插件（Java）：可选开屏广告跳过无障碍服务、GKD 规则表与 Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
-| `tools/` | `verify-*.mts` 静态与产物门禁（16 条，含 `verify-bundle` 读 dist 钉主包架构）、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
+| `tools/` | `verify-*.mts` 静态与产物门禁（16 条）、`patch-android-host.mts` 结构化宿主补丁、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
 | `tests/` | `tests/unit/`（Vitest 并行领域行为单测）与 `tests/e2e/`（Playwright 端到端回归） |
 | `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（wav）、通知小图标 |
-| `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK；打 `v*` tag 自动发 Release |
+| `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK（含 7 插件快速预编译）；打 `v*` tag 自动发 Release |
 | `docs/screenshots/` | 仅供 README 引用（无架构文档；README 本身就是最完整的说明） |
 
 ## ★ 没有 `android/` 目录：原生工程由 CI 生成
 
-`android/` 不在仓库里，CI 用 `npx cap add android` 现场生成，随后用 **`sed` 注入**：
+`android/` 不在仓库里，CI 用 `npx cap add android && npx cap sync android` 现场生成：
 
-- `AndroidManifest.xml` 的**权限清单**（闹钟/通知/录音/悬浮窗/前台服务/安装包/包可见性/电池白名单…）
-- 所有 **service / receiver / provider** 声明（护眼、到点提醒、桌宠、深夜救援、响铃、Boot、QS 磁贴、无障碍服务）
-- `allowBackup="false"` + `usesCleartextTraffic="false"`（与"数据仅存本机"的产品承诺绑定）
-- `minSdkVersion = 24`（MediaPipe 要求；**只升不降**）、`file_paths.xml` 追加更新下载目录
-
-**所以：要加权限/服务/接收器，改的是 workflow，不是某个 manifest 文件。**
-插件自己的 `plugins/*/android/src/main/AndroidManifest.xml` 是入库的，由 Capacitor 合并。
-改动这部分必须同步更新 `tools/verify-apk-build-hardening.mts`（它钉住"sed 注入 + grep 断言成对出现"、
-签名 Secrets 缺失时 tag 构建必须 exit 1、只接受 release 变体 APK）。
+- **各领域权限、服务、接收器与 Provider 均已归属到 7 个本地插件各自的 `plugins/cap-*/android/src/main/AndroidManifest.xml`**，由 Android Gradle Plugin Manifest Merger 自动合并；
+- **宿主级修补统一收口到可单测脚本 `tools/patch-android-host.mts`**（取代百行脆弱 `sed`）：负责 `file_paths.xml` 追加更新下载路径、`allowBackup="false"` 与 `usesCleartextTraffic="false"` 安全加固、`minSdkVersion >= 24`（只升不降）及 `gradle.properties` 幂等补齐；
+- 改动插件清单或宿主补丁时，须同步保持 `tools/verify-apk-build-hardening.mts` 与 `tests/unit/patchAndroidHost.test.ts` 全绿。
 
 ## CI 流程（`.github/workflows/build-apk.yml`）
 
 Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-effort，审计不过关自动回退内置版本）
-→ `npm run verify` → `npm run build` → `npm run verify:css` → Playwright → `cap add/sync android`
-→ 注入 manifest/gradle → `gradlew` 出包 → **`v*` tag** 时创建 GitHub Release。
+→ `npm run lint` → `npm test` → `npm run verify` → `npm run build` → `npm run verify:css` → Playwright → `cap add/sync android`
+→ `patch-android-host.mts` + 7 插件 Java 预编译快速失败检查 → `gradlew` 出包 → **`v*` tag** 时创建 GitHub Release。
 
 - push 到 `main`/`master` 也会构建（不进 Release）。并发组按 `${{ github.ref }}` 分组：
   **main 与 v* 标签永不互杀**（曾因固定组名竞态取消了 tag run，Release 静默未发）。
@@ -90,8 +89,8 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
 
 代码 MIT，但有两块**不在 MIT 内**，不要合并、改名或搬进 MIT 范围：
 
-- 角色精灵图：非商业使用 + 必须保留署名链 —— `plugins/cap-gemma-llm/android/src/main/assets/pet/NOTICE.md`
-  （樱花变体同条款：`pet-sport/NOTICE.md`）
+- 角色精灵图：非商业使用 + 必须保留署名链 —— `plugins/cap-pet-overlay/android/src/main/assets/pet/NOTICE.md`
+  （樱花变体同条款：`plugins/cap-pet-overlay/android/src/main/assets/pet-sport/NOTICE.md`）
 - 池塘引擎："活的海"移植自 nagomi（PolyForm Noncommercial 1.0.0）—— `src/pond/LICENSE.nagomi`
 
 ## 测试与 UI 的坑
@@ -101,7 +100,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   塞进 `window.Capacitor` 里 → `isNativePlatform()` 恒 `false` → 依赖 `native` 的分支不渲染。
   正确写法：`(window as any).CapacitorCustomPlatform = { name: 'android' };`（可再加 `window.androidBridge = {}`）。
 - **原生桥访问一律走 `src/shared/native/nativeBridge.ts`**（第 94 轮收敛，`verify-native-bridge` 钉住）：
-  `isNativePlatform()` 判平台、`nativePlugin('GemmaLLM' | 'UsageSignal' | 'Filesystem' | ...)`
+  `isNativePlatform()` 判平台、`nativePlugin('SleepCore' | 'SleepWidgets' | 'EyeCare' | 'PetOverlay' | 'AdSkip' | 'GemmaLLM' | 'UsageSignal' | ...)`
   取插件（非原生平台一律返回 `null`）。业务代码里**不要**手写 `window.Capacitor?.Plugins`——
   那正是此前 20 处重复踩坑的来源（含"web 端漏出原生插件"这类静默失效）。
 - **点击前要等吸附动画**：底栏切换用指数缓出（前 100ms 走完约 80%），Playwright 的两帧稳定判定会在

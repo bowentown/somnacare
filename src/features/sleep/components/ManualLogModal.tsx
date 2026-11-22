@@ -1,6 +1,7 @@
 import React, { useEffect, useState  } from 'react';
 import { X, Moon, Clock, Sparkles, Check, Smartphone, Coffee, Bath, Flower2, BookOpen, Dumbbell, Wine, Utensils } from 'lucide-react';
 import { HABIT_OPTIONS as HABIT_CATALOG_LIST } from '../../intervention/utils/habitCatalog';
+import { useInterventionStore } from '../../intervention/store/interventionStore';
 import { buildRecordFromWindow } from '../utils/recordBuilder';
 
 const habitCatalogById: Record<string, { id: string; label: string }> = Object.fromEntries(HABIT_CATALOG_LIST.map((h) => [h.id, h]));
@@ -57,6 +58,7 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
   editing,
   chronotype = 'night',
 }) => {
+  const customTags = useInterventionStore((s) => s.customTags);
   const [date, setDate] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -332,6 +334,24 @@ export const ManualLogModal: React.FC<ManualLogModalProps> = ({
                   >
                     <h.icon className="w-3.5 h-3.5" />
                     <span>{h.label}</span>
+                  </button>
+                );
+              })}
+              {customTags.map((tag) => {
+                const active = selectedHabits.includes(tag.id);
+                return (
+                  <button
+                    type="button"
+                    key={tag.id}
+                    onClick={() => toggleHabit(tag.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      active
+                        ? `${accentBg} ${accentFg} border border-white shadow-md`
+                        : `${innerBg} text-slate-200 border ${innerBorder} hover:border-slate-400`
+                    }`}
+                  >
+                    <span>{tag.emoji}</span>
+                    <span>{tag.label}</span>
                   </button>
                 );
               })}

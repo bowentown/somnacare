@@ -15,7 +15,7 @@ export interface StorageKeyMeta {
   policy: StoragePolicy;
 }
 
-/** 全仓 40 个持久化键台账（与既有线上 APK 键名逐字一致） */
+/** 全仓 41 个持久化键台账（40 个线上既有键 + Phase 5 睡前仪式与 CBT-I 持久化键） */
 export const STORAGE_CATALOG: readonly StorageKeyMeta[] = [
   // 核心可备份数据域
   { key: 'somnacare_sleep_records', domain: 'sleep', policy: 'backup' },
@@ -28,6 +28,7 @@ export const STORAGE_CATALOG: readonly StorageKeyMeta[] = [
   { key: 'somnacare_pet_enabled', domain: 'pet', policy: 'backup' },
   { key: 'somnacare_notify_morning', domain: 'sleep', policy: 'backup' },
   { key: 'somnacare_notify_recall', domain: 'sleep', policy: 'backup' },
+  { key: 'somnacare_intervention_v1', domain: 'intervention', policy: 'backup' },
 
   // 凭据（永不进入备份文件）
   { key: 'somnacare_hf_token', domain: 'coach', policy: 'secret' },
@@ -111,6 +112,26 @@ registerBackupSlice<{ morning?: boolean; recall?: boolean }>({
     }
     if (typeof data.recall === 'boolean') {
       localStorage.setItem('somnacare_notify_recall', data.recall ? '1' : '0');
+    }
+  },
+});
+
+// 内置切片：Phase 5 睡前仪式 / CBT-I 微课进度 / 自定义睡眠日记标签
+registerBackupSlice<unknown>({
+  id: 'intervention',
+  storageKeys: ['somnacare_intervention_v1'],
+  exportSlice: () => {
+    const raw = localStorage.getItem('somnacare_intervention_v1');
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  },
+  importSlice: (data) => {
+    if (data && typeof data === 'object') {
+      localStorage.setItem('somnacare_intervention_v1', JSON.stringify(data));
     }
   },
 });
