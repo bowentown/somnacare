@@ -5,16 +5,8 @@ export const INTERVENTION_STORAGE_KEY = 'somnacare_intervention_v1';
 
 export type BreathModeId = '478' | 'box' | '46';
 
-export interface CustomDiaryTag {
-  id: string;
-  label: string;
-  emoji: string;
-  polarity: 'positive' | 'negative';
-}
-
 export interface InterventionState {
   completedLessonIds: string[];
-  customTags: CustomDiaryTag[];
   ritualDate: string;
   completedRitualIds: string[];
   preferredBreathMode: BreathModeId;
@@ -30,7 +22,6 @@ export const RITUAL_ITEMS: Array<{ id: string; label: string; hint: string }> = 
 function createDefaultState(): InterventionState {
   return {
     completedLessonIds: [],
-    customTags: [],
     ritualDate: toLocalDateString(new Date()),
     completedRitualIds: [],
     preferredBreathMode: '478',
@@ -44,27 +35,6 @@ function sanitizeState(raw: unknown): InterventionState {
   const completedLessonIds = Array.isArray(obj.completedLessonIds)
     ? [...new Set(obj.completedLessonIds.filter((v): v is string => typeof v === 'string' && v.length > 0))]
     : [];
-  const customTags = Array.isArray(obj.customTags)
-    ? obj.customTags
-        .filter((t): t is CustomDiaryTag => {
-          if (!t || typeof t !== 'object') return false;
-          const x = t as Record<string, unknown>;
-          return (
-            typeof x.id === 'string' &&
-            x.id.length > 0 &&
-            typeof x.label === 'string' &&
-            x.label.trim().length > 0 &&
-            typeof x.emoji === 'string'
-          );
-        })
-        .slice(0, 16)
-        .map((t): CustomDiaryTag => ({
-          id: t.id,
-          label: t.label.trim().slice(0, 14),
-          emoji: t.emoji || '🏷️',
-          polarity: t.polarity === 'negative' ? 'negative' : 'positive',
-        }))
-    : [];
   const today = toLocalDateString(new Date());
   const ritualDate = typeof obj.ritualDate === 'string' ? obj.ritualDate : today;
   const completedRitualIds =
@@ -76,7 +46,6 @@ function sanitizeState(raw: unknown): InterventionState {
 
   return {
     completedLessonIds,
-    customTags,
     ritualDate: today,
     completedRitualIds,
     preferredBreathMode,
@@ -138,36 +107,6 @@ export function toggleRitualItem(itemId: string, now: Date = new Date()): void {
 
 export function setPreferredBreathMode(mode: BreathModeId): void {
   updateAndPersist((prev) => ({ ...prev, preferredBreathMode: mode }));
-}
-
-export function addCustomDiaryTag(
-  label: string,
-  emoji = '🏷️',
-  polarity: 'positive' | 'negative' = 'positive',
-): CustomDiaryTag | null {
-  const clean = label.trim().slice(0, 14);
-  if (!clean) return null;
-  const current = interventionStore.getState();
-  if (current.customTags.length >= 16) return null;
-  if (current.customTags.some((t) => t.label === clean)) return null;
-  const tag: CustomDiaryTag = {
-    id: `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
-    label: clean,
-    emoji: emoji.trim() || '🏷️',
-    polarity,
-  };
-  updateAndPersist((prev) => ({
-    ...prev,
-    customTags: [...prev.customTags, tag],
-  }));
-  return tag;
-}
-
-export function removeCustomDiaryTag(tagId: string): void {
-  updateAndPersist((prev) => ({
-    ...prev,
-    customTags: prev.customTags.filter((t) => t.id !== tagId),
-  }));
 }
 
 /** 仅供单测复位 */

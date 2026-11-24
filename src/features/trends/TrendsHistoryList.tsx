@@ -138,6 +138,7 @@ interface TrendsHistoryListProps {
   onFocusDate: (date: string) => void;
   onEditRecord: (r: SleepRecord) => void;
   onDeleteRecord: (id: string) => void;
+  defaultExpanded?: boolean;
 }
 
 export const TrendsHistoryList: React.FC<TrendsHistoryListProps> = React.memo(function TrendsHistoryList({
@@ -147,8 +148,9 @@ export const TrendsHistoryList: React.FC<TrendsHistoryListProps> = React.memo(fu
   onFocusDate,
   onEditRecord,
   onDeleteRecord,
+  defaultExpanded = false,
 }) {
-  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(defaultExpanded);
   const innerBg = theme.cardInnerBg || 'bg-[#0a0f1d]';
   const innerBorder = theme.cardInnerBorder || 'border-slate-700/80';
   const accentText = theme.accentText || 'text-indigo-400';

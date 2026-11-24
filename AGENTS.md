@@ -29,13 +29,13 @@ npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vit
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 懒加载二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 41 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`widgets/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
+| `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 懒加载二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 42 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`widgets/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
 | `plugins/cap-gemma-llm/` | 本地插件（Java）：端侧 MediaPipe Gemma `.task` 推理与安全模型下载 |
 | `plugins/cap-sleep-core/` | 本地插件（Java）：闹钟持续响铃、作息到点提醒、深夜救援、应用内更新、电池白名单、主题换图标与开机重排 |
 | `plugins/cap-sleep-widgets/` | 本地插件（Java）：4 款桌面小组件（2×1 评分 / 2×2 睡前快捷 / 4×2 7 晚节律 / 2×2 大肥鱼能量）、独立 `WidgetSnapshot` 存储与 DeepLink 路由 |
-| `plugins/cap-eye-care/` | 本地插件（Java）：全局暖色/减光护眼悬浮窗、20-20-20 远眺提醒、快捷设置磁贴与跨插件切换接收器 |
-| `plugins/cap-pet-overlay/` | 本地插件（Java）：鲸鱼娘桌宠悬浮窗、SurfaceView 独立渲染线程与精灵图素材（保留 `NOTICE.md` 非商授权） |
-| `plugins/cap-ad-skip/` | 本地插件（Java）：可选开屏广告跳过无障碍服务、GKD 规则表与 Shizuku 守护 |
+| `plugins/cap-eye-care/` | 本地插件（Java）：全局暖色/减光护眼悬浮窗、20-20-20 远眺提醒、`护眼滤镜` 与 `极暗夜读` 双快捷磁贴、跨插件切换接收器 |
+| `plugins/cap-pet-overlay/` | 本地插件（Java）：鲸鱼娘桌宠悬浮窗（4 键扇面：消息 / 护眼 / 跳广告 / 缩放）、`大肥鱼桌宠` 快捷磁贴、深夜高刺激刷屏超时轻提醒、SurfaceView 独立渲染线程与精灵图素材（保留 `NOTICE.md` 非商授权） |
+| `plugins/cap-ad-skip/` | 本地插件（Java）：开屏与应用内广告跳过无障碍服务、按应用排除不跳名单、`广告跳过` 快捷磁贴、显式切换广播接收器、GKD 规则表与 Shizuku 守护 |
 | `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
 | `tools/` | `verify-*.mts` 静态与产物门禁（16 条）、`patch-android-host.mts` 结构化宿主补丁、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
 | `tests/` | `tests/unit/`（Vitest 并行领域行为单测）与 `tests/e2e/`（Playwright 端到端回归） |

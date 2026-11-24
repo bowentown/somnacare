@@ -264,6 +264,8 @@ test('深夜救援开关：默认开启 → 关闭 → 落库', async ({ page })
   const fixed = await openAt(page, 9, 0);
   await seed(page, [mkRecord(dstr(-1, fixed), '23:40', '08:10')]);
   await open(page);
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: /我的作息与闹钟/ }).click();
 
   const sw = page.getByRole('button', { name: '深夜救援' });
   await expect(sw).toHaveAttribute('aria-pressed', 'true');   // 默认开启语义

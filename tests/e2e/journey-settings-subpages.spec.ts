@@ -347,6 +347,7 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
   await page.waitForTimeout(2400);
   await page.getByRole('navigation', { name: '主标签栏' }).getByRole('button', { name: '护眼', exact: true }).click();
   await page.waitForTimeout(500);
+  await page.getByRole('button', { name: /用眼日报与 20-20-20/ }).click();
 
   const restSwitch = page.getByRole('checkbox', { name: '开关 20-20-20 远眺提醒' });
   await expect(restSwitch).toBeVisible();               // 卡片在原生 mock 下渲染

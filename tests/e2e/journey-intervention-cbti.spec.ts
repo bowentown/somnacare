@@ -9,10 +9,18 @@ import {
   watchErrors,
 } from './_journeyHelpers';
 
-test('旅程42 睡前仪式 CBT-I 闭环：3 模式呼吸、微课打卡、自定义标签联动补录与趋势关联洞察', async ({ page }) => {
+test('旅程42 睡前仪式 CBT-I 闭环：3 模式呼吸、仪式清单打卡与微课进度持久化', async ({ page }) => {
   const errors = watchErrors(page);
   const fixed = await openAt(page, 22, 15);
-  await seed(page, [], NIGHT_SCHEMA);
+  await seed(
+    page,
+    [
+      mkRecord(dstr(-1, fixed), '00:20', '06:30', 68),
+      mkRecord(dstr(-2, fixed), '00:40', '06:40', 66),
+      mkRecord(dstr(-3, fixed), '23:55', '06:35', 70),
+    ],
+    NIGHT_SCHEMA,
+  );
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
@@ -39,12 +47,7 @@ test('旅程42 睡前仪式 CBT-I 闭环：3 模式呼吸、微课打卡、自�
   await region.getByRole('button', { name: '标记为已学' }).click();
   await expect(region.getByText('已学 1/6')).toBeVisible();
 
-  // 5. 新增自定义睡眠日记标签
-  await region.getByLabel('自定义睡眠标签名称').fill('热水泡脚');
-  await region.getByRole('button', { name: '添加' }).click();
-  await expect(region.getByText('热水泡脚')).toBeVisible();
-
-  // 6. 刷新页面验证微课进度、呼吸模式与自定义标签持久落盘
+  // 5. 刷新页面验证微课进度与呼吸模式持久落盘，且已剔除低价值标签模块
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(4200);
@@ -52,46 +55,109 @@ test('旅程42 睡前仪式 CBT-I 闭环：3 模式呼吸、微课打卡、自�
   const regionAfterReload = page.getByRole('region', { name: '睡前仪式' });
   await expect(regionAfterReload.getByText('4-6 慢速长呼呼吸')).toBeVisible();
   await expect(regionAfterReload.getByText('已学 1/6')).toBeVisible();
-  await expect(regionAfterReload.getByText('热水泡脚')).toBeVisible();
+  await expect(regionAfterReload.getByText('自定义睡眠日记标签')).toHaveCount(0);
 
-  // 7. 返回首页打开手动补录弹窗，验证自定义标签可直接勾选并落库
-  await page.getByRole('button', { name: '返回' }).click();
-  await page.getByRole('button', { name: /补录睡眠|手动补录/ }).click();
-  const customChip = page.getByRole('button', { name: /热水泡脚/ });
-  await expect(customChip).toBeVisible();
-  await customChip.click();
-  await page.getByRole('button', { name: /保存记录并更新睡眠趋势/ }).click();
+  expect(errors).toEqual([]);
+});
 
-  // 8. 切到趋势页，验证仅 1 晚时诚实显示「1/5 晚（还差 4 晚）」而非假相关
-  await navTo(page, '趋势');
-  await expect(page.getByText('睡前标签关联洞察')).toBeVisible();
-  await expect(page.getByText(/热水泡脚 · 1\/5 晚（还差 4 晚）/)).toBeVisible();
+test('旅程43 极简二级子页 + 广告跳过排除名单 + 大肥鱼深夜刷屏超时提醒闭环', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.addInitScript(() => {
+    const excluded = new Set<string>();
+    const stimCalls: unknown[] = [];
+    (window as any).__stimCalls = stimCalls;
+    const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
+    (window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: new Proxy({} as Record<string, any>, { get: (t, p) => t[p as string] ?? stub() }),
+    };
+    (window as any).CapacitorCustomPlatform = { name: 'android' };
+    (window as any).androidBridge = {};
+    (window as any).Capacitor.Plugins.AdSkip = {
+      adSkipStatus: async () => ({
+        enabled: true,
+        serviceEnabled: true,
+        hits: 18,
+        diag: ['12:00:01 scan tv.danmaku.bili hit=app-splash'],
+        excludedPkgs: [...excluded],
+      }),
+      adSkipStats: async () => ({
+        total: 18,
+        apps: [
+          { pkg: 'tv.danmaku.bili', label: '哔哩哔哩', hits: 12, excluded: excluded.has('tv.danmaku.bili') },
+          { pkg: 'com.cmbchina.ccd', label: '招商银行', hits: 6, excluded: excluded.has('com.cmbchina.ccd') },
+        ],
+      }),
+      adSkipSetPackageExcluded: async (args: { pkg: string; excluded: boolean }) => {
+        if (args.excluded) excluded.add(args.pkg);
+        else excluded.delete(args.pkg);
+        return { ok: true, excludedPkgs: [...excluded] };
+      },
+      adSkipInstalledApps: async () => ({
+        apps: [
+          { pkg: 'com.eg.android.AlipayGphone', label: '支付宝', excluded: excluded.has('com.eg.android.AlipayGphone') },
+          { pkg: 'com.cmbchina.ccd', label: '招商银行', excluded: excluded.has('com.cmbchina.ccd') },
+        ],
+      }),
+      shizukuStatus: async () => ({ installed: false, running: false, granted: false, version: 0 }),
+    };
+    (window as any).Capacitor.Plugins.PetOverlay = {
+      petPermission: async () => ({ granted: true, sdkInt: 35 }),
+      petSetStimulusGuard: async (args: unknown) => {
+        stimCalls.push(args);
+        return { ok: true };
+      },
+      petConsumePendingTab: async () => ({ tab: null }),
+    };
+    localStorage.setItem('somnacare_sleep_records', '[]');
+    localStorage.setItem('somnacare_onboarded_v1', '1');
+    sessionStorage.clear();
+  });
 
-  // 9. 注入 5 晚带 caffeine（较短/入睡慢）+ 3 晚无 caffeine（较长/入睡快），验证满 5 晚自动解锁关联差值
-  const seeded = [
-    ...Array.from({ length: 5 }, (_, i) => ({
-      ...mkRecord(dstr(-(i + 1), fixed), '00:15', '06:15', 65),
-      durationMinutes: 360,
-      latencyMinutes: 40,
-      sleepEfficiency: 80,
-      preSleepHabits: ['caffeine'],
-    })),
-    ...Array.from({ length: 3 }, (_, i) => ({
-      ...mkRecord(dstr(-(i + 6), fixed), '23:00', '07:15', 90),
-      durationMinutes: 495,
-      latencyMinutes: 10,
-      sleepEfficiency: 94,
-      preSleepHabits: [],
-    })),
-  ];
-  await seed(page, seeded, NIGHT_SCHEMA);
-  await page.reload();
+  await page.goto('/');
   await page.waitForLoadState('domcontentloaded');
-  await page.waitForTimeout(4200);
+  await page.waitForTimeout(2600);
+
+  // 1. 趋势页已剔除「睡前标签关联洞察」，只保留清爽主卡与二级目录
   await navTo(page, '趋势');
-  await expect(page.getByText('下午喝咖啡/茶')).toBeVisible();
-  await expect(page.getByText(/5 晚 vs 3 晚/)).toBeVisible();
-  await expect(page.getByText(/评分 -/)).toBeVisible();
+  await expect(page.getByText('睡前标签关联洞察')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /历史记录/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /睡眠日历/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /手机使用对照/ })).toBeVisible();
+
+  // 2. 偏好页主目录直接包含「摇一摇广告跳过」，进入测试双入口排除应用名单
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: /摇一摇广告跳过/ }).click();
+  const adRegion = page.getByRole('region', { name: '摇一摇广告跳过' });
+  await expect(adRegion.getByText('排除不跳名单')).toBeVisible();
+
+  // 入口 ①：从命中榜一键把「招商银行」停用
+  const cmbRow = adRegion.locator('div').filter({ hasText: /^招商银行累计跳过 6 次/ }).first();
+  await cmbRow.getByRole('button', { name: '在此应用停用' }).click();
+  await expect(adRegion.getByRole('button', { name: '恢复 招商银行 的广告跳过' })).toBeVisible();
+
+  // 入口 ②：搜索本机应用把「支付宝」加入不跳名单
+  await adRegion.getByRole('button', { name: /搜索本机应用加入不跳名单/ }).click();
+  await adRegion.getByLabel('搜索本机应用').fill('支付');
+  await adRegion.getByRole('button', { name: '加入不跳', exact: true }).click();
+  await expect(adRegion.getByText('已排除 2')).toBeVisible();
+
+  // 3. 返回偏好 → 进入「大肥鱼桌宠」，配置深夜刷屏超时提醒为 15 分钟并切换应用勾选
+  await page.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('button', { name: /大肥鱼桌宠/ }).click();
+  const petRegion = page.getByRole('region', { name: '大肥鱼桌宠' });
+  await expect(petRegion.getByText('深夜刷屏超时提醒')).toBeVisible();
+  await petRegion.getByRole('button', { name: '15 分钟' }).click();
+  await petRegion.getByRole('button', { name: '百度贴吧' }).click();
+
+  const savedGuard = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('somnacare_pet_stimulus_guard') || '{}'),
+  );
+  expect(savedGuard.thresholdMin).toBe(15);
+  expect(savedGuard.pkgs).toContain('com.baidu.tieba');
+  const nativeCalls = await page.evaluate(() => (window as any).__stimCalls.length);
+  expect(nativeCalls).toBeGreaterThanOrEqual(2);
 
   expect(errors).toEqual([]);
 });

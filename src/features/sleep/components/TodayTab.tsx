@@ -5,24 +5,20 @@ import {
   ChevronRight,
   Clock,
   Hourglass,
+  Music2,
   Plus,
   Play,
-  ArrowRight,
   ShieldAlert,
   Wind,
 } from 'lucide-react';
 import { EmptyState } from '../../../shared/ui';
-import { computeMSFsc, computeSleepDebt, computeSleepNeed, formatDurationChinese } from '../utils/sleepScore';
-import { computeSuggestedSchedule } from '../utils/scheduleSuggestion';
+import { computeSleepDebt, computeSleepNeed, formatDurationChinese } from '../utils/sleepScore';
 import { OneTapSleepTracker } from './OneTapSleepTracker';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
-import { nightKeyOfBed, toLocalDateString } from '../../../shared/utils/dateUtils';
+import { nightKeyOfBed, toLocalDateString, localDateOffset } from '../../../shared/utils/dateUtils';
 import { SoundscapePlayer } from '../../intervention/SoundscapePlayer';
-import { Music2 } from 'lucide-react';
-import { isNativePlatform, requestAlarmPermissions } from '../utils/nativeAlarmScheduler';
-import { nativePlugin } from '../../../shared/native/nativeBridge';
+import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { queryWindDownApps, type WindDownResult } from '../utils/usageSignal';
-import { localDateOffset } from '../../../shared/utils/dateUtils';
 import { getDayPhase } from '../../../shared/utils/dayPhase';
 import { computeWeekReport } from '../../trends/utils/weekReport';
 import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../../pet/services/travelService';
@@ -41,16 +37,6 @@ import {
 import { PondCard } from './PondCard';
 import { SleepDial } from './SleepDial';
 import { MoonEnergy } from './MoonEnergy';
-
-// 作息目标联动工具：HH:MM ↔ 当日分钟数（跨午夜安全）
-const toMin = (t: string): number => {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + m;
-};
-const toClock = (min: number): string => {
-  const norm = ((min % 1440) + 1440) % 1440;
-  return `${String(Math.floor(norm / 60)).padStart(2, '0')}:${String(norm % 60).padStart(2, '0')}`;
-};
 
 const TodayTabInner: React.FC = () => {
   const records = useSleepStore((s) => s.records);
@@ -73,59 +59,49 @@ const TodayTabInner: React.FC = () => {
   const onSaveRecord = saveManualSleepRecord;
   const onOpenAutoCheck = openAutoCheckSubpage;
   const onOpenCodex = () => uiStore.setState({ codexOpen: true });
-  // 首页主卡只显示夜睡（小睡另有紧凑行）——旧数据无 kind 视为夜睡。
-  // useMemo（第 82 轮性能）：60s 时钟每跳一次都全表扫两遍，纯浪费
+
   const latestRecord = useMemo(() => nightsOnly(records)[0] || null, [records]);
   const todayNaps = useMemo(
     () => napsOnly(records).filter((r) => r.date === toLocalDateString()),
-    [records]
+    [records],
   );
-  // 昼夜双布局（第 57 轮）：晚上把"开始/音景/目标"放前面，昨晚评分折叠到最后
-  // 分钟滴答（第 129 轮）：共享单一定时器，不再自挂 interval
+
   const phaseNow = useMinuteTick();
   const dayPhase = getDayPhase(phaseNow);
   const isEvening = dayPhase === 'evening' || dayPhase === 'late';
   const [sleepExpanded, setSleepExpanded] = useState(() => !isEvening);
-  useEffect(() => { setSleepExpanded(!isEvening); }, [isEvening]);
-  // useMemo（第 81 轮性能）：travel 状态含同步 JSON.parse、周报要全量扫
-  // 记录——此前每次渲染（60s 时钟/父级状态）都重算一遍，纯浪费
+  useEffect(() => {
+    setSleepExpanded(!isEvening);
+  }, [isEvening]);
+
   const travel = useMemo(() => loadTravelState(), [records]);
   const travelProgress = useMemo(() => getTravelProgress(), [records]);
   const streak = useMemo(() => computeWeekReport(records).streak, [records]);
 
-  // ── 放下手机前的一小时（第 82 轮，取代数字健康台）：昨夜最后一次熄屏
-  //    前 60 分钟每应用前台分钟——系统"屏幕使用时间"给全天 totals，这里
-  //    只看与入睡相邻的最后一段。无权限/无数据 → 不渲染
   const [windDown, setWindDown] = useState<WindDownResult | null>(null);
-  // 夜归属键与原生侧同规则（第 86 轮修正）：夜间/不规律作息取"昨天"（凌晨
-  // 归前夜）；白天作息的放下窗口是当天 06–18、键为自然日——此前恒取昨天，
-  // 白班用户的卡片会查到错的一夜
-  // 跨午夜刷新（第 90 轮中-3 残留）：依赖里并入"当前日期"——App 被保活
-  // 跨过午夜后键必须跟着换日，否则整晚查的是昨天的窗口（phaseNow 是既有
-  // 的 60s 时钟，跨日时字符串变化触发重算）
   const phaseDate = useMemo(() => toLocalDateString(phaseNow), [phaseNow]);
   const windDownKey = useMemo(
     () => (userProfile.chronotype === 'day' ? toLocalDateString() : localDateOffset(-1)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [userProfile.chronotype, phaseDate]
+    [userProfile.chronotype, phaseDate],
   );
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;
     void queryWindDownApps(windDownKey, userProfile.chronotype ?? 'night')
-      .then((r) => { if (!cancelled && r) setWindDown(r); })
-      .catch(() => { /* 无权限/不支持：卡片不出现 */ });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .then((r) => {
+        if (!cancelled && r) setWindDown(r);
+      })
+      .catch(() => {
+        /* 无权限/不支持：卡片不出现 */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [windDownKey, records.length, userProfile.chronotype]);
-  const [goalOpen, setGoalOpen] = useState(false);
-  // 睡前提醒的悬浮窗授权态：null=未检查。此前开关只翻布尔、不申请任何权限，
-  // 提醒的投递路径（悬浮窗 > 通知兜底）在 Android 13+ 上会静默全部失效
-  const [bedtimePerm, setBedtimePerm] = useState<boolean | null>(null);
+
   const [mixerOpen, setMixerOpen] = useState(false);
 
-  // 早上自救助手（第 56 轮）：自动档 + 8:00–13:00 + 昨晚没记录 + 提议卡也没出
-  // → 给一个直达链路自检的入口，而不是让用户自己去偏好页深处找
   const [proposalPresence, setProposalPresence] = useState(false);
   const nowHour = phaseNow.getHours();
   const autoRescue = (() => {
@@ -139,7 +115,9 @@ const TodayTabInner: React.FC = () => {
     try {
       if (localStorage.getItem('somnacare_proposal_handled') === lastNight) return false;
       if (localStorage.getItem('somnacare_bedtime_start')) return false;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return true;
   })();
 
@@ -152,7 +130,6 @@ const TodayTabInner: React.FC = () => {
 
   const scoreInfo = latestRecord ? getScoreColor(latestRecord.sleepScore) : getScoreColor(85);
 
-  // 目标对比单独成行（不再挤在右侧窄列里导致"目标"竖排换行）
   const targetCompare = (() => {
     if (!latestRecord || !userProfile.targetBedtime || !userProfile.targetWakeTime) return null;
     const target = `${userProfile.targetBedtime}–${userProfile.targetWakeTime}`;
@@ -172,60 +149,80 @@ const TodayTabInner: React.FC = () => {
       : { target, text: `早于目标 ${-diff} 分钟`, tone: theme.accentText };
   })();
 
-  // 首页昼夜双布局的排序表：晚上先给"现在要做的事"，昨晚评分收到最后
   const sectionOrder = isEvening
-    ? { tracker: 1, sound: 2, goals: 3, moon: 4, pond: 5, actions: 6, sleep: 7, nap: 8 }
+    ? { tracker: 1, actions: 2, moon: 3, pond: 4, sleep: 5, nap: 6 }
     : dayPhase === 'morning'
-      ? { tracker: 1, sleep: 2, moon: 3, pond: 4, nap: 5, actions: 6, sound: 7, goals: 8 }
-      : { tracker: 1, nap: 2, sleep: 3, moon: 4, pond: 5, actions: 6, sound: 7, goals: 8 };
+      ? { tracker: 1, sleep: 2, moon: 3, pond: 4, nap: 5, actions: 6 }
+      : { tracker: 1, nap: 2, sleep: 3, moon: 4, pond: 5, actions: 6 };
+
+  const enabledAlarms = (userProfile.alarms || []).filter((a) => a.enabled).length;
 
   return (
-    <div className={`flex flex-col gap-4 pb-28 ${theme.textPrimary}`}>
-      {/* 1. Primary One-Tap Sleep Tracker */}
-      <div style={{ order: sectionOrder.tracker }} className="space-y-4">
-      {onSaveRecord && <OneTapSleepTracker onSaveRecord={onSaveRecord} startSignal={startSignal} onMonitoringStart={onMonitoringStart} theme={theme} targetDurationHours={userProfile.targetDurationHours} records={records} userProfile={userProfile} onOpenManualLogPrefilled={onOpenManualLogPrefilled} onUpdateProfile={onUpdateProfile} onProposalPresenceChange={setProposalPresence} />}
+    <div className={`flex flex-col gap-3.5 pb-28 ${theme.textPrimary}`}>
+      {/* 1. 一键就寝与自动记录提议 */}
+      <div style={{ order: sectionOrder.tracker }} className="space-y-3.5">
+        {onSaveRecord && (
+          <OneTapSleepTracker
+            onSaveRecord={onSaveRecord}
+            startSignal={startSignal}
+            onMonitoringStart={onMonitoringStart}
+            theme={theme}
+            targetDurationHours={userProfile.targetDurationHours}
+            records={records}
+            userProfile={userProfile}
+            onOpenManualLogPrefilled={onOpenManualLogPrefilled}
+            onUpdateProfile={onUpdateProfile}
+            onProposalPresenceChange={setProposalPresence}
+          />
+        )}
 
-      {autoRescue && (
-        <button
-          type="button"
-          onClick={onOpenAutoCheck}
-          aria-label="检查自动记录链路"
-          className={`w-full ${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center justify-between gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
-        >
-          <span className="flex items-center gap-2 text-[11px] font-bold text-slate-200">
-            <ShieldAlert className={`w-4 h-4 ${theme.accentText}`} />
-            自动记录没出现？
-          </span>
-          <span className={`flex items-center gap-1 text-[11px] font-black ${theme.accentText}`}>
-            检查一下 <ChevronRight className="w-3.5 h-3.5" />
-          </span>
-        </button>
-      )}
+        {autoRescue && (
+          <button
+            type="button"
+            onClick={onOpenAutoCheck}
+            aria-label="检查自动记录链路"
+            className={`w-full ${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center justify-between gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform shadow-md`}
+          >
+            <span className="flex items-center gap-2 text-[11px] font-bold text-slate-200">
+              <ShieldAlert className={`w-4 h-4 ${theme.accentText}`} />
+              自动记录没出现？
+            </span>
+            <span className={`flex items-center gap-1 text-[11px] font-black ${theme.accentText}`}>
+              检查一下 <ChevronRight className="w-3.5 h-3.5" />
+            </span>
+          </button>
+        )}
       </div>
 
-      {/* 活的海：nagomi 程序化锦鲤池（主题 → 月夜/晴日/黄昏/雨），点水聚鱼 */}
+      {/* 2. 锦鲤池 */}
       <div style={{ order: sectionOrder.pond }}>
-        <PondCard theme={theme} records={records} userProfile={userProfile} celebrateSignal={celebrateSignal} streak={streak} />
+        <PondCard
+          theme={theme}
+          records={records}
+          userProfile={userProfile}
+          celebrateSignal={celebrateSignal}
+          streak={streak}
+        />
       </div>
 
-      {/* 当天小睡紧凑行（主卡只显示夜睡；小睡不顶掉主卡） */}
-      <div style={{ order: sectionOrder.nap }}>
+      {/* 3. 当天小睡紧凑行 */}
       {todayNaps.length > 0 && (
-        <div className={`${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-2 text-[11px]`}>
-          <span>😴</span>
-          <span className="font-bold text-white">
-            今天已小睡 {todayNaps.length} 次 · 共{' '}
-            {Math.floor(todayNaps.reduce((a, r) => a + r.durationMinutes, 0) / 60) > 0
-              ? `${Math.floor(todayNaps.reduce((a, r) => a + r.durationMinutes, 0) / 60)} 小时 `
-              : ''}
-            {todayNaps.reduce((a, r) => a + r.durationMinutes, 0) % 60} 分
-          </span>
-          <span className="text-slate-400 ml-auto">不计入规律度</span>
+        <div style={{ order: sectionOrder.nap }}>
+          <div className={`${theme.cardBg} rounded-3xl px-4 py-3 border ${theme.cardBorder} flex items-center gap-2 text-[11px]`}>
+            <span>😴</span>
+            <span className="font-bold text-white">
+              今天已小睡 {todayNaps.length} 次 · 共{' '}
+              {Math.floor(todayNaps.reduce((a, r) => a + r.durationMinutes, 0) / 60) > 0
+                ? `${Math.floor(todayNaps.reduce((a, r) => a + r.durationMinutes, 0) / 60)} 小时 `
+                : ''}
+              {todayNaps.reduce((a, r) => a + r.durationMinutes, 0) % 60} 分
+            </span>
+            <span className="text-slate-400 ml-auto">不计入规律度</span>
+          </div>
         </div>
       )}
-      </div>
 
-      {/* 梦境漫游 · 月相能量（第 57 轮）：首页小挂件，点开直达图鉴 */}
+      {/* 4. 梦境漫游能量条 */}
       {onOpenCodex && (
         <div style={{ order: sectionOrder.moon }}>
           <button
@@ -249,465 +246,255 @@ const TodayTabInner: React.FC = () => {
         </div>
       )}
 
-      {/* 2. Last Sleep Overview Card with Unified Theme Colors */}
-      <div style={{ order: sectionOrder.sleep }}>
-      {latestRecord ? (
-        isEvening && !sleepExpanded ? (
-          /* 晚间折叠态：把评分收到一张小卡里，不占"准备入睡"的视线 */
-          <div className={`rounded-3xl p-4 ${theme.cardBg} border ${theme.cardBorder} shadow-xl`}>
-            <button
-              type="button"
-              onClick={() => setSleepExpanded(true)}
-              aria-label="展开昨晚睡眠详情"
-              className="w-full flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform"
-            >
-              <SleepDial
-                record={latestRecord}
-                  scoreHex={scoreInfo.stroke}
-                scoreLabel={scoreInfo.label}
-                size={64}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-black text-xs">昨晚睡眠</span>
-                  <span className="font-mono text-slate-400 text-[10px]">{latestRecord.date}</span>
-                </div>
-                <p className="font-mono text-slate-200 text-[11px] mt-1">
-                  {formatDurationChinese(latestRecord.durationMinutes)} · {latestRecord.bedtime} → {latestRecord.wakeTime}
-                </p>
-              </div>
-              <ChevronDown className={`w-4 h-4 ${theme.accentText}`} />
-            </button>
-          </div>
-        ) : (
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="查看最近一晚睡眠详情，跳转到趋势"
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigateToTrends?.(); } }}
-          onClick={() => onNavigateToTrends?.()}
-          className={`rounded-3xl p-5 ${theme.cardBg} border ${theme.cardBorder} shadow-xl transition-all cursor-pointer hover:border-white/20 active:scale-[0.99]`}
-        >
-          <div className="flex items-center justify-between text-xs mb-3 font-medium">
-            <span className="text-white font-black flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${theme.dot}`}></span>
-              昨晚睡眠
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="font-mono text-slate-300 font-bold">{latestRecord.date}</span>
-              <ChevronRight className={`w-3.5 h-3.5 ${theme.accentText}`} />
-            </span>
-          </div>
-
-          <div className="flex items-center gap-5 my-1">
-            {/* 睡眠完成度环（第 58 轮）：干净轨道 + 渐变弧 + 端点高光 */}
-            <SleepDial
-              record={latestRecord}
-              scoreHex={scoreInfo.stroke}
-              scoreLabel={scoreInfo.label}
-              size={96}
-            />
-
-            {/* Metrics：标签/数值都不换行，避免"目 标"式的断字 */}
-            <div className="flex-1 min-w-0 space-y-2.5 text-xs">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-300 font-bold whitespace-nowrap">总睡眠时长</span>
-                <span className="font-bold text-white font-display text-sm whitespace-nowrap">
-                  {formatDurationChinese(latestRecord.durationMinutes)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-300 font-bold whitespace-nowrap">入睡 / 醒来</span>
-                <span className="font-display text-slate-100 font-bold whitespace-nowrap">
-                  {latestRecord.bedtime} - {latestRecord.wakeTime}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-300 font-bold whitespace-nowrap">睡眠效率</span>
-                <span className="font-display text-emerald-400 font-bold whitespace-nowrap">
-                  {latestRecord.sleepEfficiency}%
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {targetCompare && (
-            <div className="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between gap-3 text-[11px]">
-              <span className="text-slate-400 font-mono whitespace-nowrap">目标 {targetCompare.target}</span>
-              <span className={`font-bold whitespace-nowrap ${targetCompare.tone}`}>{targetCompare.text}</span>
-            </div>
-          )}
-
-          {latestRecord.dreamNotes && (
-            <div className="mt-3 pt-3 border-t border-slate-700/80 text-xs text-slate-200">
-              <span className={`${theme.accentText} font-bold`}>梦境记录：</span>
-              <span className="line-clamp-3 break-words">{latestRecord.dreamNotes}</span>
-            </div>
-          )}
-        </div>
-        )
-      ) : (
-        <EmptyState
-          theme={theme}
-          illustration="no-data"
-          title="暂无睡眠记录"
-          hint="点下方「晨起手动补录」记下第一晚"
-        />
-      )}
-
-      {/* 放下手机前的一小时（第 82 轮）：昨夜睡前最后 60 分钟的真实画面 */}
-      {windDown && windDown.apps.length > 0 && (() => {
-        const totalMin = windDown.apps.reduce((a, x) => a + x.minutes, 0);
-        // 睡债接入（第 115 轮）：科学第一次驱动睡前行为——个人基线下近 7 晚
-        // 欠债 ≥1h → 量化文案 + 提前建议；基线未个人化（<5 晚）→ 诚实缺省
-        const wNeed = computeSleepNeed(records, Math.round(userProfile.targetDurationHours * 60), userProfile.chronotype ?? 'night');
-        const wDebt = wNeed.basis === 'personal'
-          ? computeSleepDebt(records, wNeed.baselineMinutes, userProfile.chronotype ?? 'night')
-          : null;
-        const debtNudge = wDebt && wDebt.debtMinutes >= 60
-          ? `近 7 晚欠下 ${formatDurationChinese(wDebt.debtMinutes)} 睡债——今晚建议提前 30 分钟放下手机。`
-          : null;
-        const putDown = new Date(windDown.windowEnd);
-        const hm = `${String(putDown.getHours()).padStart(2, '0')}:${String(putDown.getMinutes()).padStart(2, '0')}`;
-        return (
-          <div
-            className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}
-            data-testid="winddown-card"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Hourglass className={`w-4 h-4 ${theme.accentText}`} />
-                <h3 className="text-sm font-bold text-white">放下手机前的一小时</h3>
-              </div>
-              <span className="text-[10px] text-slate-400 font-mono shrink-0">{hm} 放下</span>
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-bold font-display tabular-nums ${theme.accentText}`}>{totalMin}</span>
-              <span className="text-xs text-slate-300">分钟还在亮屏</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {windDown.apps.slice(0, 4).map((a) => (
-                <span
-                  key={a.pkg}
-                  className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-full px-2.5 py-1 text-[11px] text-slate-200 font-bold`}
-                >
-                  {a.label}
-                  <span className={`ml-1 font-mono ${theme.accentText}`}>{a.minutes}m</span>
-                </span>
-              ))}
-            </div>
-            {totalMin >= 55 && (
-              <p className="text-[10px] text-amber-300 leading-relaxed">
-                放下前手机几乎没停过——大脑可能需要更久才能平静下来。
-              </p>
-            )}
-            {debtNudge && (
-              <p className={`text-[10px] ${theme.accentText} leading-relaxed`} data-testid="winddown-debt">
-                {debtNudge}
-              </p>
-            )}
-          </div>
-        );
-      })()}
-      </div>
-
-      {/* 4. Action Cards for Manual Log & Bedside Monitor */}
-      <div className="grid grid-cols-2 gap-3 pt-1" style={{ order: sectionOrder.actions }}>
-        <button
-          type="button"
-          onClick={onOpenManualLog}
-          className={`p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
-              <Plus className="w-4 h-4 stroke-[3]" />
-            </div>
-            <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
-          </div>
-          <span className="text-sm font-bold text-white block">晨起手动补录</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onOpenActiveSleep}
-          className={`p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-slate-500 text-left transition-all active:scale-[0.98] group cursor-pointer shadow-md`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
-              <Play className="w-4 h-4 fill-current ml-0.5" />
-            </div>
-            <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
-          </div>
-          <span className="text-sm font-bold text-white block">床头夜钟伴眠</span>
-        </button>
-      </div>
-
-      {/* 4.5 助眠音景混音器 + 睡前仪式二级子页入口 */}
-      <div style={{ order: sectionOrder.sound }} className="space-y-3">
-      <button
-        type="button"
-        onClick={() => setMixerOpen(true)}
-        className={`w-full p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} flex items-center justify-between cursor-pointer hover:border-white/20 transition-all active:scale-[0.99] shadow-md group`}
-      >
-        <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
-            <Music2 className="w-4 h-4" />
-          </div>
-          <div className="text-left">
-            <h4 className="text-sm font-black text-white">助眠音景</h4>
-            <p className="text-[11px] text-slate-400">多层混音 · 呼吸放松 · 定时关闭</p>
-          </div>
-        </div>
-        <ChevronRight className={`w-4 h-4 ${theme.accentText} group-hover:translate-x-0.5 transition-transform`} />
-      </button>
-
-      <button
-        type="button"
-        onClick={() => pushSubpage('intervention/wind-down')}
-        className={`w-full p-4 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} flex items-center justify-between cursor-pointer hover:border-white/20 transition-all active:scale-[0.99] shadow-md group`}
-      >
-        <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder}`}>
-            <Wind className="w-4 h-4" />
-          </div>
-          <div className="text-left">
-            <h4 className="text-sm font-black text-white">睡前仪式</h4>
-            <p className="text-[11px] text-slate-400">4-7-8 呼吸练习 · 声景伴眠 · 一键入睡</p>
-          </div>
-        </div>
-        <ChevronRight className={`w-4 h-4 ${theme.accentText} group-hover:translate-x-0.5 transition-transform`} />
-      </button>
-
-      {mixerOpen && (
-        <SoundscapePlayer theme={theme} onClose={() => setMixerOpen(false)} />
-      )}
-      </div>
-
-      {/* 5. 作息目标（默认折叠；编辑器内详尽） */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4`} style={{ order: sectionOrder.goals }}>
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setGoalOpen(!goalOpen)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setGoalOpen(!goalOpen);
-            }
-          }}
-          className="w-full flex items-center justify-between cursor-pointer"
-        >
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-400">
-              <Clock className="w-4 h-4" />
-            </div>
-            <h3 className="text-sm font-bold text-white">作息目标</h3>
-          </div>
-          <span className="flex items-center gap-2 text-[11px] font-mono text-slate-400 font-bold">
-            {!goalOpen && `${userProfile.targetBedtime} · ${userProfile.targetDurationHours}h · ${userProfile.targetWakeTime}`}
-            <ChevronDown className={`w-4 h-4 transition-transform ${goalOpen ? 'rotate-180' : ''}`} />
-          </span>
-        </div>
-
-        {/* 到点提醒开关（常驻显示；默认关闭） */}
-        <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
-          <div>
-            <span className="text-xs font-bold text-slate-200 block">到点提醒我</span>
-          </div>
-          <button
-            type="button"
-            data-no-swipe
-            onClick={(e) => {
-              e.stopPropagation();
-              const next = !userProfile.bedtimeReminderEnabled;
-              onUpdateProfile({ bedtimeReminderEnabled: next });
-              if (next) {
-                // 打开即检查两条投递路径的权限：通知（兜底路径）+ 悬浮窗（主路径）
-                void requestAlarmPermissions();
-                try {
-                  const plugin = nativePlugin('SleepCore');
-                  if (plugin?.bedtimePermission) {
-                    void plugin.bedtimePermission().then((res: any) => setBedtimePerm(!!res?.granted));
-                  }
-                } catch { /* 网页端无原生层，按钮不显示 */ }
-              }
-            }}
-            aria-pressed={!!userProfile.bedtimeReminderEnabled}
-            aria-label="到点提醒我"
-            className="relative inline-flex items-center cursor-pointer shrink-0"
-          >
-            <span
-              className={`block w-10 h-5 rounded-full transition-colors relative ${
-                userProfile.bedtimeReminderEnabled ? 'bg-amber-500' : 'bg-slate-600'
-              }`}
-            >
-              <span
-                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
-                style={{ left: userProfile.bedtimeReminderEnabled ? '22px' : '2px' }}
-              />
-            </span>
-          </button>
-        </div>
-
-        <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
-          <div>
-            <span className="text-xs font-bold text-slate-200 block">深夜救援</span>
-          </div>
-          <button
-            type="button"
-            data-no-swipe
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpdateProfile({ nightRescueEnabled: userProfile.nightRescueEnabled === false });
-            }}
-            aria-pressed={userProfile.nightRescueEnabled !== false}
-            aria-label="深夜救援"
-            className="relative inline-flex items-center cursor-pointer shrink-0"
-          >
-            <span
-              className={`block w-10 h-5 rounded-full transition-colors relative ${
-                userProfile.nightRescueEnabled !== false ? 'bg-sky-500' : 'bg-slate-600'
-              }`}
-            >
-              <span
-                className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
-                style={{ left: userProfile.nightRescueEnabled !== false ? '22px' : '2px' }}
-              />
-            </span>
-          </button>
-        </div>
-
-        {userProfile.bedtimeReminderEnabled && bedtimePerm === false && (
-          <button
-            type="button"
-            data-no-swipe
-            onClick={(e) => {
-              e.stopPropagation();
-              try {
-                void nativePlugin('SleepCore')?.bedtimeOpenPermission?.();
-              } catch { /* ignore */ }
-            }}
-            className="w-full mt-2.5 py-2.5 rounded-xl bg-orange-500/20 border border-orange-400 text-orange-200 text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform"
-          >
-            提醒需要悬浮窗权限 · 前往系统设置授权
-          </button>
-        )}
-
-        {goalOpen && (
-        <div className="space-y-4">
-          {/* 科学建议作息（第 114 轮）：个人需求 + MSFsc → 一键采用；与当前一致不出现 */}
-          {(() => {
-            const needMin = computeSleepNeed(records, Math.round(userProfile.targetDurationHours * 60), userProfile.chronotype ?? 'night').needMinutes;
-            const msfMin = computeMSFsc(records, userProfile.chronotype ?? 'night')?.msfMinutes ?? null;
-            const suggestion = computeSuggestedSchedule(needMin, msfMin, {
-              bed: userProfile.targetBedtime, wake: userProfile.targetWakeTime, durationHours: userProfile.targetDurationHours,
-            });
-            if (!suggestion) return null;
-            return (
+      {/* 5. 昨晚睡眠主卡 + 放下手机前的一小时 */}
+      <div style={{ order: sectionOrder.sleep }} className="space-y-3.5">
+        {latestRecord ? (
+          isEvening && !sleepExpanded ? (
+            <div className={`rounded-3xl p-4 ${theme.cardBg} border ${theme.cardBorder} shadow-xl`}>
               <button
                 type="button"
-                data-no-swipe
-                aria-label={`按科学建议采用作息：${suggestion.bed} 入睡，${suggestion.wake} 醒来`}
-                onClick={() => onUpdateProfile({
-                  targetBedtime: suggestion.bed,
-                  targetWakeTime: suggestion.wake,
-                  targetDurationHours: suggestion.durationHours,
-                })}
-                className={`w-full flex items-center justify-between gap-2 min-h-10 px-3.5 rounded-xl border ${theme.cardInnerBorder} ${theme.cardInnerBg} cursor-pointer active:scale-[0.98] transition-transform`}
+                onClick={() => setSleepExpanded(true)}
+                aria-label="展开昨晚睡眠详情"
+                className="w-full flex items-center gap-3 text-left cursor-pointer active:scale-[0.99] transition-transform"
               >
-                <span className="text-[11px] font-bold text-slate-200">
-                  按科学建议采用 <span className="font-display">{suggestion.bed} – {suggestion.wake}</span>
-                </span>
-                <span className={`text-[10px] font-bold ${theme.accentText}`}>
-                  {suggestion.basis === 'msf' ? 'MSFsc 锚定 ›' : '需求推算 ›'}
-                </span>
+                <SleepDial
+                  record={latestRecord}
+                  scoreHex={scoreInfo.stroke}
+                  scoreLabel={scoreInfo.label}
+                  size={64}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-black text-xs">昨晚睡眠</span>
+                    <span className="font-mono text-slate-400 text-[10px]">{latestRecord.date}</span>
+                  </div>
+                  <p className="font-mono text-slate-200 text-[11px] mt-1">
+                    {formatDurationChinese(latestRecord.durationMinutes)} · {latestRecord.bedtime} → {latestRecord.wakeTime}
+                  </p>
+                </div>
+                <ChevronDown className={`w-4 h-4 ${theme.accentText}`} />
               </button>
-            );
-          })()}
-          <div className="grid grid-cols-2 gap-3">
-            <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 shadow-inner`}>
-              <span className="text-xs font-bold text-slate-200 block mb-1">目标就寝</span>
-              <input
-                type="time"
-                value={userProfile.targetBedtime}
-                onChange={(e) => {
-                  // 清空的 <input type="time"> 会产出 "" → NaN 持久化成
-                  // "NaN:NaN" 并流入原生 nightRescueSet（第 51 轮审计 P1）
-                  if (!e.target.value) return;
-                  onUpdateProfile({
-                    targetBedtime: e.target.value,
-                    targetWakeTime: toClock(toMin(e.target.value) + Math.round(userProfile.targetDurationHours * 60)),
-                  });
-                }}
-                className={`w-full bg-transparent text-2xl font-black text-white font-mono focus:outline-none ${theme?.focusRing} cursor-pointer`}
-              />
             </div>
-            <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 shadow-inner`}>
-              <span className="text-xs font-bold text-slate-200 block mb-1">目标醒来</span>
-              <input
-                type="time"
-                value={userProfile.targetWakeTime}
-                onChange={(e) => {
-                  if (!e.target.value) return;   // 清空不落库（NaN 防护）
-                  const durH = Math.min(12, Math.max(4, Math.round(((toMin(e.target.value) - toMin(userProfile.targetBedtime) + 1440) % 1440) / 30) * 0.5));
-                  if (!Number.isFinite(durH)) return;
-                  onUpdateProfile({ targetWakeTime: e.target.value, targetDurationHours: durH });
-                }}
-                className={`w-full bg-transparent text-2xl font-black text-white font-mono focus:outline-none ${theme?.focusRing} cursor-pointer`}
-              />
-            </div>
-          </div>
-
-          <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 shadow-inner space-y-2`}>
-            <div className="flex justify-between text-xs font-bold">
-              <span className="text-slate-200">目标睡眠时长</span>
-              <span className={`${theme.accentText} font-display text-sm`}>{userProfile.targetDurationHours} 小时</span>
-            </div>
-            <input
-              type="range"
-              min={4}
-              max={12}
-              step={0.5}
-              value={userProfile.targetDurationHours}
-              onChange={(e) => {
-                const h = Number(e.target.value);
-                onUpdateProfile({
-                  targetDurationHours: h,
-                  targetWakeTime: toClock(toMin(userProfile.targetBedtime) + Math.round(h * 60)),
-                });
-              }}
-              className="w-full cursor-pointer h-2 bg-slate-700 rounded-lg"
-              style={{ accentColor: theme.accentHex }}
-            />
-          </div>
-
-          <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 space-y-1.5`}>
-            <p className={`text-xs font-mono font-bold ${theme.accentText}`}>
-              {userProfile.targetBedtime} 入睡 · {userProfile.targetDurationHours} 小时 · {userProfile.targetWakeTime} 醒来
-            </p>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              {(() => {
-                const now = new Date();
-                const nowMin = now.getHours() * 60 + now.getMinutes();
-                let untilBed = toMin(userProfile.targetBedtime) - nowMin;
-                if (untilBed < 0) untilBed += 1440;
-                if (untilBed <= 90) {
-                  return untilBed <= 15
-                    ? `⏰ 距目标就寝仅剩约 ${untilBed} 分钟——该开始减速了`
-                    : `🌙 距目标就寝约 ${Math.floor(untilBed / 60)}小时${untilBed % 60}分——适合现在启动睡前流程`;
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="查看最近一晚睡眠详情，跳转到趋势"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onNavigateToTrends?.();
                 }
-                return `🕐 距今晚目标就寝约 ${Math.floor(untilBed / 60)} 小时${untilBed % 60} 分`;
-              })()}
-            </p>
-          </div>
-        </div>
+              }}
+              onClick={() => onNavigateToTrends?.()}
+              className={`rounded-3xl p-5 ${theme.cardBg} border ${theme.cardBorder} shadow-xl transition-all cursor-pointer hover:border-white/20 active:scale-[0.99]`}
+            >
+              <div className="flex items-center justify-between text-xs mb-3 font-medium">
+                <span className="text-white font-black flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${theme.dot}`}></span>
+                  昨晚睡眠
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="font-mono text-slate-300 font-bold">{latestRecord.date}</span>
+                  <ChevronRight className={`w-3.5 h-3.5 ${theme.accentText}`} />
+                </span>
+              </div>
+
+              <div className="flex items-center gap-5 my-1">
+                <SleepDial
+                  record={latestRecord}
+                  scoreHex={scoreInfo.stroke}
+                  scoreLabel={scoreInfo.label}
+                  size={96}
+                />
+
+                <div className="flex-1 min-w-0 space-y-2.5 text-xs">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-slate-300 font-bold whitespace-nowrap">总睡眠时长</span>
+                    <span className="font-bold text-white font-display text-sm whitespace-nowrap">
+                      {formatDurationChinese(latestRecord.durationMinutes)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-slate-300 font-bold whitespace-nowrap">入睡 / 醒来</span>
+                    <span className="font-display text-slate-100 font-bold whitespace-nowrap">
+                      {latestRecord.bedtime} - {latestRecord.wakeTime}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-slate-300 font-bold whitespace-nowrap">睡眠效率</span>
+                    <span className="font-display text-emerald-400 font-bold whitespace-nowrap">
+                      {latestRecord.sleepEfficiency}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {targetCompare && (
+                <div className="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between gap-3 text-[11px]">
+                  <span className="text-slate-400 font-mono whitespace-nowrap">目标 {targetCompare.target}</span>
+                  <span className={`font-bold whitespace-nowrap ${targetCompare.tone}`}>{targetCompare.text}</span>
+                </div>
+              )}
+
+              {latestRecord.dreamNotes && (
+                <div className="mt-3 pt-3 border-t border-slate-700/80 text-xs text-slate-200">
+                  <span className={`${theme.accentText} font-bold`}>梦境记录：</span>
+                  <span className="line-clamp-3 break-words">{latestRecord.dreamNotes}</span>
+                </div>
+              )}
+            </div>
+          )
+        ) : (
+          <EmptyState
+            theme={theme}
+            illustration="no-data"
+            title="暂无睡眠记录"
+            hint="点下方「晨起手动补录」记下第一晚"
+          />
         )}
+
+        {windDown && windDown.apps.length > 0 && (() => {
+          const totalMin = windDown.apps.reduce((a, x) => a + x.minutes, 0);
+          const wNeed = computeSleepNeed(
+            records,
+            Math.round(userProfile.targetDurationHours * 60),
+            userProfile.chronotype ?? 'night',
+          );
+          const wDebt =
+            wNeed.basis === 'personal'
+              ? computeSleepDebt(records, wNeed.baselineMinutes, userProfile.chronotype ?? 'night')
+              : null;
+          const debtNudge =
+            wDebt && wDebt.debtMinutes >= 60
+              ? `近 7 晚欠下 ${formatDurationChinese(wDebt.debtMinutes)} 睡债——今晚建议提前 30 分钟放下手机。`
+              : null;
+          const putDown = new Date(windDown.windowEnd);
+          const hm = `${String(putDown.getHours()).padStart(2, '0')}:${String(putDown.getMinutes()).padStart(2, '0')}`;
+          return (
+            <div
+              className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}
+              data-testid="winddown-card"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Hourglass className={`w-4 h-4 ${theme.accentText}`} />
+                  <h3 className="text-sm font-bold text-white">放下手机前的一小时</h3>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0">{hm} 放下</span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-3xl font-bold font-display tabular-nums ${theme.accentText}`}>{totalMin}</span>
+                <span className="text-xs text-slate-300">分钟还在亮屏</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {windDown.apps.slice(0, 4).map((a) => (
+                  <span
+                    key={a.pkg}
+                    className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-full px-2.5 py-1 text-[11px] text-slate-200 font-bold`}
+                  >
+                    {a.label}
+                    <span className={`ml-1 font-mono ${theme.accentText}`}>{a.minutes}m</span>
+                  </span>
+                ))}
+              </div>
+              {totalMin >= 55 && (
+                <p className="text-[10px] text-amber-300 leading-relaxed">
+                  放下前手机几乎没停过——大脑可能需要更久才能平静下来。
+                </p>
+              )}
+              {debtNudge && (
+                <p className={`text-[10px] ${theme.accentText} leading-relaxed`} data-testid="winddown-debt">
+                  {debtNudge}
+                </p>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* 6. 统一快捷入口区（2×2 紧凑网格 + 单行作息与闹钟入口） */}
+      <div style={{ order: sectionOrder.actions }} className="space-y-3">
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={onOpenManualLog}
+            className={`p-3.5 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-white/20 text-left transition-all active:scale-[0.98] flex items-center gap-3 cursor-pointer shadow-md`}
+          >
+            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <Plus className="w-4 h-4 stroke-[3]" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-black text-white block truncate">晨起手动补录</span>
+              <span className="text-[10px] text-slate-400 block truncate">补记或补小睡</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenActiveSleep}
+            className={`p-3.5 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-white/20 text-left transition-all active:scale-[0.98] flex items-center gap-3 cursor-pointer shadow-md`}
+          >
+            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <Play className="w-4 h-4 fill-current ml-0.5" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-black text-white block truncate">床头夜钟伴眠</span>
+              <span className="text-[10px] text-slate-400 block truncate">极暗时钟守护</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMixerOpen(true)}
+            className={`p-3.5 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-white/20 text-left transition-all active:scale-[0.98] flex items-center gap-3 cursor-pointer shadow-md`}
+          >
+            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <Music2 className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-black text-white block truncate">助眠音景</span>
+              <span className="text-[10px] text-slate-400 block truncate">多层混音定时</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => pushSubpage('intervention/wind-down')}
+            className={`p-3.5 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-white/20 text-left transition-all active:scale-[0.98] flex items-center gap-3 cursor-pointer shadow-md`}
+          >
+            <div className={`w-8 h-8 rounded-xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <Wind className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-black text-white block truncate">睡前仪式</span>
+              <span className="text-[10px] text-slate-400 block truncate">呼吸与微习惯</span>
+            </div>
+          </button>
+        </div>
+
+        {/* 单行作息速览与调整直达（完整设置已收纳至偏好 → 我的作息与闹钟） */}
+        <button
+          type="button"
+          onClick={() => pushSubpage('settings/schedule')}
+          className={`w-full px-4 py-3 rounded-3xl ${theme.cardBg} border ${theme.cardBorder} hover:border-white/20 flex items-center justify-between gap-2 text-left cursor-pointer active:scale-[0.99] transition-all shadow-md`}
+        >
+          <span className="flex items-center gap-2 text-xs font-bold text-slate-200 min-w-0">
+            <Clock className="w-4 h-4 text-amber-300 shrink-0" />
+            <span className="truncate">
+              作息目标 <span className="font-mono text-white">{userProfile.targetBedtime} – {userProfile.targetWakeTime}</span>
+              {enabledAlarms > 0 ? ` · ${enabledAlarms} 个闹钟` : ''}
+            </span>
+          </span>
+          <span className={`flex items-center gap-0.5 text-[11px] font-bold ${theme.accentText} shrink-0`}>
+            调整与提醒 <ChevronRight className="w-3.5 h-3.5" />
+          </span>
+        </button>
+
+        {mixerOpen && <SoundscapePlayer theme={theme} onClose={() => setMixerOpen(false)} />}
       </div>
     </div>
   );
 };
 
-// memo（第 84 轮性能）：App 级状态变化（toast/横幅/键盘/庆祝信号之外的
-// 任意 setState）此前会把所有已挂载分区连同最重的首页/AI 面板全量重渲染；
-// props 已在 App 侧全部稳定（useCallback/useMemo/常量）
 export const TodayTab = React.memo(TodayTabInner);

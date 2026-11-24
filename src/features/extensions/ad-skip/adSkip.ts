@@ -1,8 +1,5 @@
 /**
- * 摇一摇/开屏广告跳过（第 59 轮，native-only）。
- *
- * 实际扫描与点击在 Android 无障碍服务 AdSkipService 里；这里只做三件事：
- * 读状态、写开关、跳系统无障碍设置。默认关闭，用户显式打开后才工作。
+ * 摇一摇/开屏广告跳过（native-only，Phase 6 新增按应用排除不跳名单）。
  *
  * 隐私：服务只匹配「跳过」类文字，不读取输入内容、不截图、不联网。
  */
@@ -12,11 +9,23 @@ export interface AdSkipStatus {
   enabled: boolean;
   serviceEnabled: boolean;
   hits: number;
-  /** 最近运行时诊断（包切换/扫描/命中/点击），设置页展示用于远程定位问题 */
   diag: string[];
+  excludedPkgs: string[];
 }
 
-const EMPTY: AdSkipStatus = { enabled: false, serviceEnabled: false, hits: 0, diag: [] };
+export interface AdSkipInstalledApp {
+  pkg: string;
+  label: string;
+  excluded: boolean;
+}
+
+const EMPTY: AdSkipStatus = {
+  enabled: false,
+  serviceEnabled: false,
+  hits: 0,
+  diag: [],
+  excludedPkgs: [],
+};
 
 function plugin(): any {
   return nativePlugin('AdSkip');
@@ -26,6 +35,21 @@ function sleepCorePlugin(): any {
   return nativePlugin('SleepCore');
 }
 
+export function normalizeExcludedPkgs(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== 'string') continue;
+    const trimmed = v.trim();
+    if (trimmed && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 function parseStatus(res: any): AdSkipStatus {
   const rawDiag = res?.diag;
   return {
@@ -33,6 +57,7 @@ function parseStatus(res: any): AdSkipStatus {
     serviceEnabled: res?.serviceEnabled === true,
     hits: typeof res?.hits === 'number' ? res.hits : 0,
     diag: Array.isArray(rawDiag) ? rawDiag.map((v: unknown) => String(v)).slice(-12) : [],
+    excludedPkgs: normalizeExcludedPkgs(res?.excludedPkgs),
   };
 }
 
@@ -56,6 +81,37 @@ export async function setAdSkipEnabled(enabled: boolean): Promise<AdSkipStatus> 
   }
 }
 
+export async function setAdSkipPackageExcluded(pkg: string, excluded: boolean): Promise<string[]> {
+  const cleanPkg = pkg.trim();
+  if (!cleanPkg) return [];
+  const pl = plugin();
+  if (!pl?.adSkipSetPackageExcluded) return [];
+  try {
+    const res = await pl.adSkipSetPackageExcluded({ pkg: cleanPkg, excluded });
+    return normalizeExcludedPkgs(res?.excludedPkgs);
+  } catch {
+    return [];
+  }
+}
+
+export async function getInstalledAppsForAdSkip(): Promise<AdSkipInstalledApp[]> {
+  const pl = plugin();
+  if (!pl?.adSkipInstalledApps) return [];
+  try {
+    const res = await pl.adSkipInstalledApps();
+    if (!Array.isArray(res?.apps)) return [];
+    return res.apps
+      .filter((a: any) => typeof a?.pkg === 'string' && a.pkg.trim().length > 0)
+      .map((a: any) => ({
+        pkg: String(a.pkg).trim(),
+        label: typeof a.label === 'string' && a.label.trim() ? a.label.trim() : String(a.pkg).trim(),
+        excluded: a?.excluded === true,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export async function openAdSkipAccessibilitySettings(): Promise<void> {
   const pl = plugin();
   if (!pl?.adSkipOpenSettings) return;
@@ -66,12 +122,13 @@ export async function openAdSkipAccessibilitySettings(): Promise<void> {
   }
 }
 
-// ── 按应用命中统计 + 一键复制诊断（第 74 轮） ─────────────────────
+// ── 按应用命中统计 + 一键复制诊断 ─────────────────────
 
 export interface AdSkipAppStat {
   pkg: string;
   label: string;
   hits: number;
+  excluded?: boolean;
 }
 
 export async function getAdSkipStats(): Promise<AdSkipAppStat[]> {
@@ -86,6 +143,7 @@ export async function getAdSkipStats(): Promise<AdSkipAppStat[]> {
         pkg: String(a.pkg),
         label: typeof a.label === 'string' && a.label ? a.label : String(a.pkg),
         hits: typeof a.hits === 'number' ? a.hits : 0,
+        excluded: a?.excluded === true,
       }))
       .filter((a: AdSkipAppStat) => a.hits > 0)
       .sort((x: AdSkipAppStat, y: AdSkipAppStat) => y.hits - x.hits);
@@ -94,7 +152,6 @@ export async function getAdSkipStats(): Promise<AdSkipAppStat[]> {
   }
 }
 
-/** 诊断文本（版本/状态/最近日志/按应用统计）复制到剪贴板，发给开发者定位问题 */
 export async function copyAdSkipDiag(): Promise<boolean> {
   const pl = plugin();
   if (!pl?.adSkipCopyDiag) return false;
@@ -106,10 +163,7 @@ export async function copyAdSkipDiag(): Promise<boolean> {
   }
 }
 
-// ── Shizuku 守护（第 61 轮，可选） ───────────────────────────────
-// Shizuku 以 shell 身份运行，能写回 secure settings；但它本身必须在运行，
-// 而且无法阻止 OEM 的电池/自启动清理。这里只提供"用户点一下修回来"，
-// 绝不在后台自动改系统设置。
+// ── Shizuku 守护（可选） ───────────────────────────────
 
 export interface ShizukuStatus {
   installed: boolean;
@@ -136,7 +190,6 @@ export async function getShizukuStatus(): Promise<ShizukuStatus> {
   }
 }
 
-/** 弹 Shizuku 授权框；结果通过轮询 getShizukuStatus 读取。 */
 export async function requestShizukuPermission(): Promise<boolean> {
   const pl = plugin();
   if (!pl?.shizukuRequestPermission) return false;
@@ -179,9 +232,7 @@ export async function openShizukuApp(): Promise<void> {
   }
 }
 
-// ── 电池优化白名单（第 61 轮） ──────────────────────────────────
-// 目标 APK 的常驻差异之一：它申请了 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS。
-// 这里优先弹系统"允许后台运行"对话框，失败再退回电池优化列表。
+// ── 电池优化白名单 ──────────────────────────────────
 
 export async function isBatteryOptimizationIgnored(): Promise<boolean | null> {
   const pl = sleepCorePlugin();
@@ -197,7 +248,6 @@ export async function isBatteryOptimizationIgnored(): Promise<boolean | null> {
 export async function requestBatteryOptimizationExemption(): Promise<boolean | null> {
   const pl = sleepCorePlugin();
   if (!pl?.batteryOptimizationRequest) {
-    // 旧 APK 没有新方法：退回原有的电池优化列表入口，状态未知
     try {
       await sleepCorePlugin()?.openBatteryOptimizationSettings?.();
     } catch {

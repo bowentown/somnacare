@@ -306,11 +306,18 @@ ok('保持开启：开机/时间变更时若服务被关闭 → 通知可点回'
   boot.includes('postAdSkipReminder')
   && boot.includes('ad_skip_enabled')
   && boot.includes('AdSkipService.isAccessibilityEnabled'));
-ok('清单与 CI：插件 Manifest 声明无障碍服务 + 权限/配置 meta-data + CI 命中断言',
+ok('清单与 CI：插件 Manifest 声明无障碍服务 + 快捷磁贴 + 外部切换广播 + CI 命中断言',
   pluginManifest.includes('com.somnacare.gemmallm.AdSkipService')
+  && pluginManifest.includes('com.somnacare.gemmallm.AdSkipTileService')
+  && pluginManifest.includes('com.somnacare.gemmallm.AdSkipToggleReceiver')
   && pluginManifest.includes('BIND_ACCESSIBILITY_SERVICE')
+  && pluginManifest.includes('BIND_QUICK_SETTINGS_TILE')
   && pluginManifest.includes('@xml/ad_skip_accessibility')
   && pluginManifest.includes('android:exported="true"')
+  && service.includes('KEY_EXCLUDED_PKGS')
+  && service.includes('isUserExcludedPackage')
+  && plugin.includes('adSkipSetPackageExcluded')
+  && plugin.includes('adSkipInstalledApps')
   && workflow.includes('./plugins/cap-ad-skip')
   && workflow.includes("grep -q 'com.somnacare.gemmallm.AdSkipService'"));
 

@@ -120,9 +120,12 @@ test('旅程34 科学建议作息：需求卡一键采用 → 目标落库双入
   expect(profile.targetWakeTime).toBe('09:00');
   expect(profile.targetDurationHours).toBe(8);
 
-  // 睡眠页作息目标卡：同源建议入口（此时一致 → 不出现），摘要显示新目标
+  // 睡眠页作息目标速览条与二级子页：同源建议入口（此时一致 → 不出现），摘要显示新目标
   await navTo(page, '睡眠');
-  await expect(page.getByText('01:00 · 8h · 09:00')).toBeVisible();
+  await expect(page.getByText('01:00 – 09:00')).toBeVisible();
+  await page.getByRole('button', { name: /作息目标.*调整与提醒/ }).click();
+  await expect(page.getByText('01:00 入睡 · 8h · 09:00 醒来')).toBeVisible();
+  await expect(page.getByRole('button', { name: /按科学建议采用作息/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -153,9 +156,10 @@ test('旅程36 记录编辑：预填全字段 + 幂等保存不产生第二条',
   await expect(page.getByText('23:10 - 07:10')).toHaveCount(0);
   await expect(page.getByText(/1\s*夜/).first()).toBeVisible();
 
-  // 再次打开补录（非编辑）：标题回"补录睡眠"、默认值回落（editTarget 已清）
+  // 退出历史记录二级子页，再次打开补录（非编辑）：标题回"补录睡眠"、默认值回落（editTarget 已清）
+  await page.getByRole('button', { name: '返回' }).click();
   await navTo(page, '睡眠');
-  await page.getByRole('button', { name: '手动补录' }).click();
+  await page.getByRole('button', { name: /手动补录/ }).click();
   await expect(page.getByText('补录睡眠')).toBeVisible();
   await page.keyboard.press('Escape');
 
@@ -190,22 +194,17 @@ test('旅程33 睡眠日历：点选日期出当夜详情，无记录日诚实�
 
   const base = await openAt(page, 21, 0);
   await navTo(page, '趋势');
-
-  const cal = page.getByTestId('sleep-calendar');
-  await expect(cal).toBeVisible();
   await expect(page.getByTestId('rhythm-chart')).toBeVisible();
 
+  // 进入睡眠日历二级子页
+  await page.getByRole('button', { name: /睡眠日历/ }).click();
+  const cal = page.getByTestId('sleep-calendar');
+  await expect(cal).toBeVisible();
+
   const detail = page.getByTestId('calendar-detail');
-  // 默认选中最近一夜：详情即开即见。分值会被 v2 口径重算（seed ≠ 展示值），
-  // 所以锚定就寝/起床时刻而非分值
+  // 默认选中最近一夜：详情即开即见
   await expect(detail).toContainText('评分');
   await expect(detail).toContainText('就寝 23:10 · 起床 07:10');
-
-  // 一体化（第 113 轮）：点历史行 → 选中夜全局切换，详情/月历同源联动
-  await page.getByRole('button', { name: /历史记录/ }).click();
-  await page.getByTestId('history-list').getByText(dstr(-2, base)).click();
-  await expect(detail).toContainText('就寝 23:40 · 起床 06:50');
-  await expect(detail).not.toContainText('就寝 23:10');
 
   // 月历默认打开在【有数据的那个月】（最近一夜所在月），不是空洞的当前月；
   // 首条记录月即下界。导航可用性按实际月份关系断言（日期滚动鲁棒）：

@@ -10,7 +10,12 @@ export type SubpageId =
   | 'settings/widgets'
   | 'settings/data'
   | 'settings/extensions'
-  | 'intervention/wind-down';
+  | 'intervention/wind-down'
+  | 'trends/history'
+  | 'trends/calendar'
+  | 'trends/usage'
+  | 'eyecare/schedule'
+  | 'eyecare/health';
 
 export interface SubpageEntry {
   id: SubpageId;
@@ -161,8 +166,6 @@ export function closeMoments(): void {
 
 /**
  * 统一 DeepLink 路由入口（供桌面小组件、桌宠点击、通知栏拉起调用）。
- * 支持格式：'sleep/start' | 'intervention/wind-down' | 'trends' | 'coach' | 'eyecare'
- *           | 'pet/moments' | 'pet/codex' | 'settings/data?autoCheck=1' | 'settings/widgets'
  */
 export function handleDeepLink(rawRoute: string): boolean {
   const cleaned = rawRoute.replace(/^somnacare:\/\//, '').replace(/^open\//, '').trim();
@@ -182,11 +185,26 @@ export function handleDeepLink(rawRoute: string): boolean {
     case 'trends':
       setActiveTab('trends');
       return true;
+    case 'trends/history':
+    case 'trends/calendar':
+    case 'trends/usage':
+      uiStore.setState({
+        activeTab: 'trends',
+        subpageStack: [{ id: path as SubpageId }],
+      });
+      return true;
     case 'coach':
       setActiveTab('coach');
       return true;
     case 'eyecare':
       setActiveTab('eyecare');
+      return true;
+    case 'eyecare/schedule':
+    case 'eyecare/health':
+      uiStore.setState({
+        activeTab: 'eyecare',
+        subpageStack: [{ id: path as SubpageId }],
+      });
       return true;
     case 'settings':
       setActiveTab('settings');

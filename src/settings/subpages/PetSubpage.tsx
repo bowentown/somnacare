@@ -1,24 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { Fish } from 'lucide-react';
+import { Fish, MoonStar } from 'lucide-react';
 import { SubpageShell } from '../../shared/ui/SubpageShell';
 import { Switch } from '../../shared/ui';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import { useSleepStore } from '../../features/sleep/store/sleepStore';
 import { petSayFingerprint } from '../../features/pet/utils/petMoments';
 import {
+  BUILTIN_STIMULUS_APPS,
   buildPetSayLines,
   getBubbleEvery,
   getCachedLlmSay,
   getPetSkin,
+  getPetStimulusGuard,
   isPetEnabled,
   isPetNative,
   petOpenPermissionSettings,
   petPermissionGranted,
+  savePetStimulusGuard,
   setBubbleEvery,
   setPetSkin,
   startPet,
   stopPet,
   syncPet,
+  type PetStimulusGuardConfig,
+  type StimulusThresholdMin,
 } from '../../features/pet/utils/petOverlay';
 
 export const PetSubpage: React.FC = () => {
@@ -33,6 +38,7 @@ export const PetSubpage: React.FC = () => {
   const [petHint, setPetHint] = useState<string | null>(null);
   const [petEvery, setPetEvery] = useState(() => getBubbleEvery());
   const [petSkin, setPetSkinState] = useState(() => getPetSkin());
+  const [stimGuard, setStimGuard] = useState<PetStimulusGuardConfig>(() => getPetStimulusGuard());
 
   useEffect(() => {
     if (!petNative) return;
@@ -54,6 +60,20 @@ export const PetSubpage: React.FC = () => {
     setPetEvery(v);
     setBubbleEvery(v);
     if (petOn) void syncPet(records, userProfile);
+  };
+
+  const updateStimulusGuard = (patch: Partial<PetStimulusGuardConfig>) => {
+    const next = { ...stimGuard, ...patch };
+    setStimGuard(next);
+    void savePetStimulusGuard(next, userProfile);
+  };
+
+  const toggleStimulusPkg = (pkg: string) => {
+    const has = stimGuard.pkgs.includes(pkg);
+    const nextPkgs = has
+      ? stimGuard.pkgs.filter((p) => p !== pkg)
+      : [...stimGuard.pkgs, pkg];
+    updateStimulusGuard({ pkgs: nextPkgs });
   };
 
   const handlePetToggle = async (next: boolean) => {
@@ -85,7 +105,8 @@ export const PetSubpage: React.FC = () => {
   };
 
   return (
-    <SubpageShell title="大肥鱼桌宠" subtitle="桌面悬浮陪伴、换装与傲娇播报" theme={theme}>
+    <SubpageShell title="大肥鱼桌宠" subtitle="桌面悬浮陪伴、4键快捷扇面与深夜刷屏提醒" theme={theme}>
+      {/* 1. 大肥鱼桌宠主卡 */}
       <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
         <div className="flex items-center justify-between gap-3 p-5">
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -100,8 +121,8 @@ export const PetSubpage: React.FC = () => {
               <p className="text-[10px] text-slate-400 truncate" aria-live="polite">
                 {petNative
                   ? petOn
-                    ? '常驻桌面 · 点她看消息或开护眼'
-                    : '已关闭'
+                    ? '常驻桌面 · 点她弹消息 / 护眼 / 跳广告 / 缩放菜单'
+                    : '已关闭（也可在控制中心磁贴一键唤出）'
                   : '网页预览不可用，安装 APK 后生效'}
               </p>
             </div>
@@ -200,6 +221,88 @@ export const PetSubpage: React.FC = () => {
             </button>
           )}
         </div>
+      </div>
+
+      {/* 2. 深夜刷屏超时大肥鱼轻提醒 */}
+      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-4`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <MoonStar className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-black text-white">深夜刷屏超时提醒</h3>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                夜间（{userProfile.targetBedtime}–{userProfile.targetWakeTime}）连刷超时后大肥鱼轻吐气泡劝睡，每晚最多 2 次
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={stimGuard.enabled}
+            onChange={(next) => updateStimulusGuard({ enabled: next })}
+            ariaLabel="开启或关闭深夜刷屏超时提醒"
+            onClass={theme.accentBg}
+          />
+        </div>
+
+        {stimGuard.enabled && (
+          <div className="space-y-3.5 pt-1">
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold text-slate-200">连续刷屏提醒阈值</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([15, 20, 30] as StimulusThresholdMin[]).map((min) => {
+                  const active = stimGuard.thresholdMin === min;
+                  return (
+                    <button
+                      key={min}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => updateStimulusGuard({ thresholdMin: min })}
+                      className={`py-2 rounded-xl text-xs font-bold border cursor-pointer active:scale-95 transition-all ${
+                        active
+                          ? `${theme.accentText} border ${theme.accentBorder}`
+                          : 'bg-slate-800 border-slate-600 text-slate-400'
+                      }`}
+                      style={active ? { background: `${theme.accentHex}18` } : undefined}
+                    >
+                      {min} 分钟
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-bold text-slate-200">监控高刺激应用</p>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  已选 {stimGuard.pkgs.length} 款
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {BUILTIN_STIMULUS_APPS.map((app) => {
+                  const selected = stimGuard.pkgs.includes(app.pkg);
+                  return (
+                    <button
+                      key={app.pkg}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => toggleStimulusPkg(app.pkg)}
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-bold border cursor-pointer active:scale-95 transition-all ${
+                        selected
+                          ? `${theme.accentText} border ${theme.accentBorder}`
+                          : 'bg-slate-800/80 border-slate-600 text-slate-400'
+                      }`}
+                      style={selected ? { background: `${theme.accentHex}16` } : undefined}
+                    >
+                      {app.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </SubpageShell>
   );

@@ -7,66 +7,43 @@ import {
   ChevronUp,
   Moon,
   Music2,
-  Plus,
   Sparkles,
-  Tag,
-  Trash2,
 } from 'lucide-react';
 import { SubpageShell } from '../../shared/ui/SubpageShell';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import { useSleepStore } from '../sleep/store/sleepStore';
-import { openActiveSleepModal, popSubpage, showToast } from '../../shared/store/uiStore';
+import { openActiveSleepModal, popSubpage } from '../../shared/store/uiStore';
 import { BreathingExercise } from './BreathingExercise';
 import { SoundscapePlayer } from './SoundscapePlayer';
 import { CBTI_LESSONS } from './data/cbtiCatalog';
 import { computeCbtiPrescription } from './utils/cbtiEngine';
 import {
-  addCustomDiaryTag,
-  removeCustomDiaryTag,
   RITUAL_ITEMS,
   toggleLessonCompleted,
   toggleRitualItem,
   useInterventionStore,
 } from './store/interventionStore';
 
-const TAG_EMOJIS = ['🍵', '📖', '🛁', '🏃', '📱', '🌙', '🎵', '🥛', '🧘', '💊'];
-
 /**
- * 睡前仪式与 CBT-I 行为干预主页（Phase 5 完整闭环，独立懒加载 chunk）：
+ * 睡前仪式与 CBT-I 行为干预子页（精简版，独立懒加载 chunk）：
  * ① 3 模式呼吸引导 + 白噪音混音器；
  * ② 今晚睡前仪式打卡清单；
- * ③ CBT-I 动态行为建议与 6 节科普微课；
- * ④ 自定义睡眠日记标签管理（与手动补录和趋势关联分析联动）。
+ * ③ CBT-I 动态行为建议与 6 节科普微课。
  */
 export const WindDownSubpage: React.FC = () => {
   const userProfile = useProfileStore((s) => s.profile);
   const records = useSleepStore((s) => s.records);
   const completedLessonIds = useInterventionStore((s) => s.completedLessonIds);
   const completedRitualIds = useInterventionStore((s) => s.completedRitualIds);
-  const customTags = useInterventionStore((s) => s.customTags);
 
   const theme = getCurrentTheme(userProfile);
   const [soundscapeOpen, setSoundscapeOpen] = useState(false);
   const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null);
-  const [tagLabel, setTagLabel] = useState('');
-  const [tagEmoji, setTagEmoji] = useState('🍵');
-  const [tagPolarity, setTagPolarity] = useState<'positive' | 'negative'>('positive');
 
   const prescription = useMemo(
     () => computeCbtiPrescription(records, userProfile),
     [records, userProfile],
   );
-
-  const handleAddTag = (e: React.FormEvent) => {
-    e.preventDefault();
-    const created = addCustomDiaryTag(tagLabel, tagEmoji, tagPolarity);
-    if (!created) {
-      showToast('请输入未重复的标签名称（最多保留 16 个自定义标签）');
-      return;
-    }
-    setTagLabel('');
-    showToast(`已添加睡眠标签「${created.emoji} ${created.label}」，可在补录页勾选`);
-  };
 
   const handleRoundComplete = () => {
     if (!completedRitualIds.includes('breathing')) {
@@ -165,7 +142,6 @@ export const WindDownSubpage: React.FC = () => {
           </span>
         </div>
 
-        {/* 动态行为建议卡 */}
         <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 space-y-2`}>
           <p className="text-xs font-bold text-slate-100">{prescription.headline}</p>
           {prescription.ready ? (
@@ -199,7 +175,6 @@ export const WindDownSubpage: React.FC = () => {
           </p>
         </div>
 
-        {/* 6 节可折叠微课 */}
         <div className="space-y-2">
           {CBTI_LESSONS.map((lesson) => {
             const expanded = expandedLessonId === lesson.id;
@@ -268,106 +243,7 @@ export const WindDownSubpage: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. 自定义睡眠日记标签管理 */}
-      <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3.5`}>
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Tag className={`w-4 h-4 ${theme.accentText}`} />
-            <h3 className="text-sm font-black text-white">自定义睡眠日记标签</h3>
-          </div>
-          <span className="text-[10px] text-slate-400">{customTags.length}/16</span>
-        </div>
-        <p className="text-[11px] text-slate-400 leading-relaxed">
-          添加你个人关心的睡前习惯或事件（如「泡脚」「加班」「喝洋甘菊」），补录睡眠时一键勾选；同标签满 5 晚后会在趋势页自动解锁睡眠评分与时长关联对比。
-        </p>
-
-        <form onSubmit={handleAddTag} className="space-y-2.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {TAG_EMOJIS.map((em) => (
-              <button
-                key={em}
-                type="button"
-                onClick={() => setTagEmoji(em)}
-                className={`w-8 h-8 rounded-xl border text-sm flex items-center justify-center cursor-pointer ${
-                  tagEmoji === em
-                    ? 'bg-indigo-500/25 border-indigo-400/60'
-                    : 'bg-slate-900/70 border-slate-800'
-                }`}
-              >
-                {em}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={tagLabel}
-              onChange={(e) => setTagLabel(e.target.value)}
-              maxLength={14}
-              placeholder="输入标签名，如 热水泡脚"
-              aria-label="自定义睡眠标签名称"
-              className={`flex-1 ${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none`}
-            />
-            <button
-              type="submit"
-              className={`px-3.5 py-2 rounded-xl ${theme.accentBg} ${theme.accentFg} text-xs font-black flex items-center gap-1 cursor-pointer shrink-0`}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              添加
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setTagPolarity('positive')}
-              className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
-                tagPolarity === 'positive'
-                  ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200 font-bold'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
-              }`}
-            >
-              助眠习惯
-            </button>
-            <button
-              type="button"
-              onClick={() => setTagPolarity('negative')}
-              className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
-                tagPolarity === 'negative'
-                  ? 'bg-amber-500/20 border-amber-400/40 text-amber-200 font-bold'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
-              }`}
-            >
-              可能干扰项
-            </button>
-          </div>
-        </form>
-
-        {customTags.length > 0 && (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {customTags.map((tag) => (
-              <span
-                key={tag.id}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-slate-200 font-bold"
-              >
-                <span>{tag.emoji}</span>
-                <span>{tag.label}</span>
-                <button
-                  type="button"
-                  aria-label={`删除标签 ${tag.label}`}
-                  onClick={() => removeCustomDiaryTag(tag.id)}
-                  className="text-slate-400 hover:text-rose-300 cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 6. 仪式收尾：一键进入睡眠监测 */}
+      {/* 5. 仪式收尾：一键进入睡眠监测 */}
       <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
         <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
           <Sparkles className={`w-4 h-4 ${theme.accentText}`} />

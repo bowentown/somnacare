@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.provider.Settings;
 
@@ -16,14 +17,18 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.text.Collator;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import rikka.shizuku.Shizuku;
 
 /**
- * 开屏/摇一摇广告跳过与 Shizuku 守护插件（Phase 3 从 GemmaLLM 拆分独立）。
+ * 开屏/摇一摇广告跳过与 Shizuku 守护插件（Phase 3 从 GemmaLLM 拆分独立，Phase 6 支持按应用排除）。
  */
 @CapacitorPlugin(name = "AdSkip")
 public class AdSkipPlugin extends Plugin {
@@ -65,6 +70,12 @@ public class AdSkipPlugin extends Plugin {
         return AdSkipService.isAccessibilityEnabled(getContext());
     }
 
+    private static JSArray toJsArray(List<String> list) {
+        JSArray arr = new JSArray();
+        for (String item : list) arr.put(item);
+        return arr;
+    }
+
     @PluginMethod
     public void adSkipStatus(PluginCall call) {
         JSObject ret = new JSObject();
@@ -77,6 +88,7 @@ public class AdSkipPlugin extends Plugin {
         JSArray diag = new JSArray();
         for (String line : AdSkipService.diagSnapshot()) diag.put(line);
         ret.put("diag", diag);
+        ret.put("excludedPkgs", toJsArray(AdSkipService.getExcludedPackages(ctx)));
         call.resolve(ret);
     }
 
@@ -89,7 +101,71 @@ public class AdSkipPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("enabled", enabled);
         ret.put("serviceEnabled", isAdSkipServiceEnabled());
+        ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(AdSkipService.KEY_HITS, 0));
+        ret.put("excludedPkgs", toJsArray(AdSkipService.getExcludedPackages(ctx)));
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipSetPackageExcluded(PluginCall call) {
+        String pkg = call.getString("pkg", "");
+        boolean excluded = Boolean.TRUE.equals(call.getBoolean("excluded", false));
+        Context ctx = getContext();
+        List<String> updated = AdSkipService.setPackageExcluded(ctx, pkg, excluded);
+        JSObject ret = new JSObject();
+        ret.put("ok", true);
+        ret.put("excludedPkgs", toJsArray(updated));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipInstalledApps(PluginCall call) {
+        final Context ctx = getContext();
+        new Thread(() -> {
+            JSArray apps = new JSArray();
+            try {
+                PackageManager pm = ctx.getPackageManager();
+                Intent mainIntent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+                List<ResolveInfo> resolves = pm.queryIntentActivities(mainIntent, 0);
+                Set<String> seen = new HashSet<>();
+                String ownPkg = ctx.getPackageName();
+                Set<String> excludedSet = new HashSet<>(AdSkipService.getExcludedPackages(ctx));
+                List<JSObject> items = new ArrayList<>();
+                if (resolves != null) {
+                    for (ResolveInfo ri : resolves) {
+                        if (ri == null || ri.activityInfo == null) continue;
+                        String pkg = ri.activityInfo.packageName;
+                        if (pkg == null || pkg.isEmpty() || pkg.equals(ownPkg) || seen.contains(pkg)) continue;
+                        if ("com.android.settings".equals(pkg) || "com.android.systemui".equals(pkg)) continue;
+                        seen.add(pkg);
+                        String label = pkg;
+                        try {
+                            CharSequence cs = ri.loadLabel(pm);
+                            if (cs != null && cs.length() > 0) label = cs.toString().trim();
+                        } catch (Exception ignored) {
+                        }
+                        JSObject obj = new JSObject();
+                        obj.put("pkg", pkg);
+                        obj.put("label", label);
+                        obj.put("excluded", excludedSet.contains(pkg));
+                        items.add(obj);
+                    }
+                }
+                Collator collator = Collator.getInstance(Locale.CHINA);
+                items.sort((a, b) -> {
+                    boolean exA = a.optBoolean("excluded", false);
+                    boolean exB = b.optBoolean("excluded", false);
+                    if (exA != exB) return exA ? -1 : 1;
+                    return collator.compare(a.optString("label", ""), b.optString("label", ""));
+                });
+                for (JSObject item : items) apps.put(item);
+            } catch (Exception ignored) {
+            }
+            JSObject ret = new JSObject();
+            ret.put("apps", apps);
+            call.resolve(ret);
+        }, "adskip-apps").start();
     }
 
     @PluginMethod
@@ -97,6 +173,7 @@ public class AdSkipPlugin extends Plugin {
         Context ctx = getContext();
         JSArray apps = new JSArray();
         Map<String, Integer> hits = AdSkipService.hitsByPackage(ctx);
+        Set<String> excludedSet = new HashSet<>(AdSkipService.getExcludedPackages(ctx));
         List<String> sorted = new ArrayList<>(hits.keySet());
         sorted.sort((a, b) -> hits.get(b) - hits.get(a));
         PackageManager pm = ctx.getPackageManager();
@@ -114,6 +191,7 @@ public class AdSkipPlugin extends Plugin {
             }
             item.put("label", label);
             item.put("hits", hits.get(pkg));
+            item.put("excluded", excludedSet.contains(pkg));
             apps.put(item);
         }
         JSObject ret = new JSObject();
@@ -142,6 +220,10 @@ public class AdSkipPlugin extends Plugin {
                     .append(" / 服务: ").append(isAdSkipServiceEnabled()).append('\n');
             sb.append("累计点击: ").append(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getInt(AdSkipService.KEY_HITS, 0)).append('\n');
+            List<String> excluded = AdSkipService.getExcludedPackages(ctx);
+            if (!excluded.isEmpty()) {
+                sb.append("排除应用: ").append(String.join(", ", excluded)).append('\n');
+            }
             sb.append("\n最近日志:\n");
             for (String line : AdSkipService.diagSnapshot()) sb.append(line).append('\n');
             sb.append("\n按应用命中:\n");

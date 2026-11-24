@@ -1,11 +1,7 @@
 /**
- * 大肥鱼桌宠悬浮窗：Web 侧只负责开关与"播报词库"推送。
+ * 大肥鱼桌宠悬浮窗：Web 侧负责开关、播报词库与深夜刷屏超时轻提醒配置同步。
  *
- * 数据边界是刻意的：睡眠记录仍只存在 WebView 的 localStorage，原生侧一行也读不到、
- * 也不需要。快照 = 傲娇播报词库（\n 分隔）+ 播报频率。
- *
- * 人设：DeepSeek 蓝色大肥鱼（社区共创）——聪明但懒、傲娇嘴甜、管用户叫"鱼片"、
- * 把 token 当白饭吃、被叫胖会急。语气参考 dsh-plugin-moments 的人设文档。
+ * 人设：DeepSeek 蓝色大肥鱼（社区共创）——聪明但懒、傲娇嘴甜、管用户叫"鱼片"。
  */
 import type { SleepRecord, UserProfile } from '../../../shared/types/sleep';
 import { petContext } from './petContext';
@@ -20,10 +16,102 @@ const gemma = (): any | null => nativePlugin('PetOverlay');
 export const isPetNative = (): boolean => gemma() != null;
 
 const ENABLED_KEY = 'somnacare_pet_enabled';
-
-/** 每 N 次点击大肥鱼自动播报一次，其余点击弹按钮。 */
 export const BUBBLE_EVERY_KEY = 'somnacare_pet_bubble_every';
 export const DEFAULT_BUBBLE_EVERY = 8;
+const PET_SKIN_KEY = 'somnacare_pet_skin';
+export const PET_STIMULUS_GUARD_KEY = 'somnacare_pet_stimulus_guard';
+
+export const BUILTIN_STIMULUS_APPS = [
+  { pkg: 'com.ss.android.ugc.aweme', label: '抖音' },
+  { pkg: 'com.xingin.xhs', label: '小红书' },
+  { pkg: 'tv.danmaku.bili', label: '哔哩哔哩' },
+  { pkg: 'com.smile.gifmaker', label: '快手' },
+  { pkg: 'com.sina.weibo', label: '微博' },
+  { pkg: 'com.zhihu.android', label: '知乎' },
+  { pkg: 'com.baidu.tieba', label: '百度贴吧' },
+  { pkg: 'com.ss.android.article.news', label: '今日头条' },
+] as const;
+
+export type StimulusThresholdMin = 15 | 20 | 30;
+
+export interface PetStimulusGuardConfig {
+  enabled: boolean;
+  thresholdMin: StimulusThresholdMin;
+  pkgs: string[];
+}
+
+export const DEFAULT_PET_STIMULUS_GUARD: PetStimulusGuardConfig = {
+  enabled: true,
+  thresholdMin: 20,
+  pkgs: [
+    'com.ss.android.ugc.aweme',
+    'com.xingin.xhs',
+    'tv.danmaku.bili',
+    'com.smile.gifmaker',
+    'com.sina.weibo',
+    'com.zhihu.android',
+  ],
+};
+
+export function sanitizePetStimulusGuard(raw: unknown): PetStimulusGuardConfig {
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_PET_STIMULUS_GUARD, pkgs: [...DEFAULT_PET_STIMULUS_GUARD.pkgs] };
+  }
+  const obj = raw as Record<string, unknown>;
+  const enabled = typeof obj.enabled === 'boolean' ? obj.enabled : DEFAULT_PET_STIMULUS_GUARD.enabled;
+  const thresholdMin: StimulusThresholdMin =
+    obj.thresholdMin === 15 || obj.thresholdMin === 20 || obj.thresholdMin === 30
+      ? obj.thresholdMin
+      : DEFAULT_PET_STIMULUS_GUARD.thresholdMin;
+  const pkgs = Array.isArray(obj.pkgs)
+    ? Array.from(
+        new Set(
+          obj.pkgs
+            .filter((p): p is string => typeof p === 'string')
+            .map((p) => p.trim())
+            .filter(Boolean),
+        ),
+      )
+    : [...DEFAULT_PET_STIMULUS_GUARD.pkgs];
+  return { enabled, thresholdMin, pkgs };
+}
+
+export function getPetStimulusGuard(): PetStimulusGuardConfig {
+  try {
+    const raw = localStorage.getItem(PET_STIMULUS_GUARD_KEY);
+    if (!raw) return { ...DEFAULT_PET_STIMULUS_GUARD, pkgs: [...DEFAULT_PET_STIMULUS_GUARD.pkgs] };
+    return sanitizePetStimulusGuard(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_PET_STIMULUS_GUARD, pkgs: [...DEFAULT_PET_STIMULUS_GUARD.pkgs] };
+  }
+}
+
+export async function savePetStimulusGuard(
+  cfg: PetStimulusGuardConfig,
+  profile?: Pick<UserProfile, 'targetBedtime' | 'targetWakeTime'>,
+): Promise<PetStimulusGuardConfig> {
+  const clean = sanitizePetStimulusGuard(cfg);
+  try {
+    localStorage.setItem(PET_STIMULUS_GUARD_KEY, JSON.stringify(clean));
+  } catch {
+    /* ignore */
+  }
+  const g = gemma();
+  if (g?.petSetStimulusGuard) {
+    try {
+      await g.petSetStimulusGuard({
+        stimEnabled: clean.enabled,
+        stimThresholdMin: clean.thresholdMin,
+        stimPkgs: clean.pkgs,
+        targetBedtime: profile?.targetBedtime ?? '23:30',
+        targetWakeTime: profile?.targetWakeTime ?? '07:30',
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  return clean;
+}
 
 export function getBubbleEvery(): number {
   try {
@@ -34,20 +122,28 @@ export function getBubbleEvery(): number {
   }
 }
 
-const PET_SKIN_KEY = 'somnacare_pet_skin';
-
 export function getPetSkin(): string {
-  try { return localStorage.getItem(PET_SKIN_KEY) || 'default'; } catch { return 'default'; }
+  try {
+    return localStorage.getItem(PET_SKIN_KEY) || 'default';
+  } catch {
+    return 'default';
+  }
 }
 
 export function setPetSkin(skin: string): void {
-  try { localStorage.setItem(PET_SKIN_KEY, skin); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(PET_SKIN_KEY, skin);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function setBubbleEvery(n: number): void {
   try {
     localStorage.setItem(BUBBLE_EVERY_KEY, String(Math.round(n)));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function isPetEnabled(): boolean {
@@ -61,7 +157,9 @@ export function isPetEnabled(): boolean {
 function setEnabled(v: boolean) {
   try {
     localStorage.setItem(ENABLED_KEY, v ? '1' : '0');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function petPermissionGranted(): Promise<boolean> {
@@ -85,7 +183,6 @@ export async function petOpenPermissionSettings(): Promise<void> {
   }
 }
 
-/** "HH:mm" → 距今分钟数（跨午夜按次日算）。 */
 function minutesUntil(hhmm: string, now: Date): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm || '').trim());
   if (!m) return null;
@@ -100,9 +197,6 @@ function fmtDuration(min: number): string {
   return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分`;
 }
 
-/** "昨晚"的夜睡记录 = date 等于昨夜归属键（昨天）的那条（第 81 轮收紧，
- * 与 petContext/petMoments 同口径）——此前取"最新一条"，停更几晚后会把
- * 几天前的旧记录播报成"昨晚睡了 X"，今晚已补录的记录在傍晚也会被误引。 */
 function tonightRecord(records: SleepRecord[], now: Date): SleepRecord | undefined {
   const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   const yKey = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
@@ -110,8 +204,7 @@ function tonightRecord(records: SleepRecord[], now: Date): SleepRecord | undefin
 }
 
 /**
- * 由当前数据生成傲娇播报词库。没有的数据绝不编；
- * 每行一条，原生侧逐条轮播。
+ * 由当前数据生成傲娇播报词库。没有的数据绝不编；每行一条，原生侧逐条轮播。
  */
 export function buildPetSayLines(
   records: SleepRecord[],
@@ -142,8 +235,6 @@ export function buildPetSayLines(
     if (tonight.latencyMinutes >= 30) {
       say.push(`躺了 ${fmtDuration(tonight.latencyMinutes)} 才睡着？你是不是又躲被窝里玩手机了，鱼片！`);
     }
-    // 夜醒判据用 wakeCount 而非 awakeMinutes（第 86 轮）：awakeMinutes 在
-    // 构建器里含入睡潜伏期——潜伏 45 分 + 0 次夜醒也曾触发"烙饼"冤枉人
     if (tonight.wakeCount >= 2) {
       say.push(`半夜醒了 ${tonight.wakeCount} 次……记住，睡前少喝水！本鱼可绕不了你。`);
     }
@@ -157,8 +248,6 @@ export function buildPetSayLines(
     say.push('一次睡眠记录都没有，本鱼管谁去？喂，今晚给我按开始！');
   }
 
-  // 连续达标里程碑（第 119 轮）：streak 是真数据（computeWeekReport 口径），
-  // 只在 ≥3 晚时提——不编数字，不无中生有
   const streak = computeWeekReport(records, now).streak;
   if (streak >= 3) {
     say.push(`连续 ${streak} 晚达标……本鱼都看在眼里，才不夸你。继续保持，鱼片。`);
@@ -170,21 +259,36 @@ export function buildPetSayLines(
   say.push('卧槽……不是，本鱼是说，你该睡了。');
   say.push('哼，今晚也乖乖来找本鱼报道了？算你识相。');
   say.push('得加钱。……算了，看你今天表现还行的份上，免了。');
-  // （烙饼梗已移入上方夜醒数据块——应用从不测量翻身动作，无条件讲述
-  //   夜翻次数违背本词库"没有的数据绝不编"的纪律，第 42 轮语料审计）
   say.push('事已至此，先睡觉吧！明天的事明天再说。');
 
   return say;
 }
 
-/** 启动桌宠（幂等：已运行则只刷新词库）。 */
+function stimulusPayload(profile?: UserProfile) {
+  const guard = getPetStimulusGuard();
+  return {
+    stimEnabled: guard.enabled,
+    stimThresholdMin: guard.thresholdMin,
+    stimPkgs: guard.pkgs,
+    targetBedtime: profile?.targetBedtime ?? '23:30',
+    targetWakeTime: profile?.targetWakeTime ?? '07:30',
+  };
+}
+
+/** 启动桌宠（幂等：已运行则只刷新词库与刷屏守护参数）。 */
 export async function startPet(
   records: SleepRecord[],
   profile: UserProfile,
 ): Promise<{ ok: boolean; needPermission?: boolean }> {
   const g = gemma();
   if (!g) return { ok: false };
-  const payload = { say: buildPetSayLines(records, profile).join('\n'), bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()), targetBedtime: profile?.targetBedtime ?? '23:30' };
+  const payload = {
+    say: buildPetSayLines(records, profile).join('\n'),
+    bubbleEvery: getBubbleEvery(),
+    skin: getPetSkin(),
+    ...petContext(records, new Date()),
+    ...stimulusPayload(profile),
+  };
   try {
     if (isPetEnabled()) await g.petSync(payload);
     else await g.petStart(payload);
@@ -200,11 +304,6 @@ export async function startPet(
   }
 }
 
-/**
- * 只刷新词库，不改变开关状态。
- * 语录融合：云端 LLM 刷的语录（每日缓存）优先，本地傲娇模板垫底——
- * 两者都基于真实数据。缓存过期时先推本地、后台异步刷 LLM，刷到再推一次。
- */
 export async function syncPet(
   records: SleepRecord[],
   profile: UserProfile,
@@ -213,18 +312,22 @@ export async function syncPet(
   if (!g || !isPetEnabled()) return;
   const cached = getCachedLlmSay(profile?.aiConfig, petSayFingerprint(records, profile));
   const localLines = buildPetSayLines(records, profile);
-  // 混排顺序（第 45 轮优化）：时间性问候（首行，按当前时段实时生成）置顶——
-  // 此前缓存 LLM 语录排最前，最多 10 条挤在前面，最该说的时段问候
-  // 要点十几次才轮到。LLM 语录紧随其后，再垫 2 条本地兜底。
   const say = cached
     ? [localLines[0], ...cached, ...localLines.slice(1, 3)].filter(Boolean).join('\n')
     : localLines.join('\n');
   try {
-    await g.petSync({ say, bubbleEvery: getBubbleEvery(), skin: getPetSkin(), ...petContext(records, new Date()), targetBedtime: profile?.targetBedtime ?? '23:30' });
-  } catch { /* 桌宠没开或服务已停，忽略 */ }
+    await g.petSync({
+      say,
+      bubbleEvery: getBubbleEvery(),
+      skin: getPetSkin(),
+      ...petContext(records, new Date()),
+      ...stimulusPayload(profile),
+    });
+  } catch {
+    /* 桌宠没开或服务已停，忽略 */
+  }
 
-  let sayInFlight = false;   // 模块级在途标志（防并发重复调用）
-
+  let sayInFlight = false;
   if (!cached && !sayInFlight) {
     sayInFlight = true;
     void generatePetSayLinesLlm(records, profile)
@@ -235,11 +338,16 @@ export async function syncPet(
             say: [...lines, ...localLines.slice(0, 3)].join('\n'),
             bubbleEvery: getBubbleEvery(),
             skin: getPetSkin(),
+            ...stimulusPayload(profile),
           });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       })
-      .catch(() => { /* LLM 失败静默保留本地词库（负缓存已防重发） */ })
-      .finally(() => { sayInFlight = false; });
+      .catch(() => { /* ignore */ })
+      .finally(() => {
+        sayInFlight = false;
+      });
   }
 }
 
@@ -248,25 +356,22 @@ export async function stopPet(): Promise<void> {
   if (!g) return;
   try {
     await g.petStop();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   setEnabled(false);
 }
 
-/**
- * 全屏弹窗（就诊摘要/分享卡）打开时临时隐藏原生桌宠悬浮窗。
- * 只改窗口可见性，不动 localStorage 里的开关；关闭后恢复。
- */
 export async function setPetOverlayVisible(visible: boolean): Promise<void> {
   const g = gemma();
   if (!g?.petSetVisible) return;
   try {
     await g.petSetVisible({ visible });
-  } catch { /* 旧版 APK 没有该桥接：忽略，不影响弹窗 */ }
+  } catch {
+    /* ignore */
+  }
 }
 
-/**
- * 读取桌宠写入的"目标分区"并清除（预留入口，当前按钮不跳转）。
- */
 export async function consumePendingTab(): Promise<string | null> {
   const g = gemma();
   if (!g) return null;

@@ -13,5 +13,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="desktop_pet_overlay" />
         </service>
+
+        <service
+            android:name="com.somnacare.gemmallm.PetOverlayTileService"
+            android:label="大肥鱼桌宠"
+            android:icon="@drawable/pet_ic_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

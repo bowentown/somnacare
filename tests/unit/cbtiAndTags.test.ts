@@ -4,19 +4,20 @@ import { createDefaultProfile } from '../../src/shared/store/profileStore';
 import type { SleepRecord } from '../../src/shared/types/sleep';
 import { computeCbtiPrescription } from '../../src/features/intervention/utils/cbtiEngine';
 import {
-  computeTagCorrelations,
-  MIN_TAGGED_NIGHTS,
-} from '../../src/features/intervention/utils/tagCorrelation';
-import {
-  addCustomDiaryTag,
   hydrateInterventionStore,
   interventionStore,
-  removeCustomDiaryTag,
   resetInterventionStore,
   setPreferredBreathMode,
   toggleLessonCompleted,
   toggleRitualItem,
 } from '../../src/features/intervention/store/interventionStore';
+import { normalizeExcludedPkgs } from '../../src/features/extensions/ad-skip/adSkip';
+import {
+  DEFAULT_PET_STIMULUS_GUARD,
+  getPetStimulusGuard,
+  sanitizePetStimulusGuard,
+  savePetStimulusGuard,
+} from '../../src/features/pet/utils/petOverlay';
 import { buildFullBackup, restoreFullBackup } from '../../src/shared/storage/backup';
 
 const storage = installMemoryStorage();
@@ -47,7 +48,7 @@ function mkNight(
   };
 }
 
-describe('Phase 5: CBT-I 行为引擎、标签关联统计与 Backup v3 集成', () => {
+describe('Phase 5 & 6: CBT-I 行为引擎、广告排除归一化、深夜刷屏轻提醒与 Backup v3', () => {
   beforeEach(() => {
     storage.clear();
     resetInterventionStore();
@@ -90,68 +91,64 @@ describe('Phase 5: CBT-I 行为引擎、标签关联统计与 Backup v3 集成',
     expect(steadyRx.nudges[0].priority).toBe('steady');
   });
 
-  it('标签关联分析严格执行 ≥5 晚门槛，达到门槛后精确计算评分/时长/潜伏期差值', () => {
-    const custom = addCustomDiaryTag('热水泡脚', '🛁', 'positive')!;
-    expect(custom).not.toBeNull();
+  it('广告跳过排除名单去重清洗 + 深夜高刺激刷屏超时配置校验与回退', () => {
+    expect(normalizeExcludedPkgs([' com.cmbchina.ccd.pluto.cmbActivity ', '', 'com.cmbchina.ccd.pluto.cmbActivity', 123])).toEqual([
+      'com.cmbchina.ccd.pluto.cmbActivity',
+    ]);
+    expect(normalizeExcludedPkgs(null)).toEqual([]);
 
-    // 仅 4 晚带 custom 标签 → 必须留在 locked，绝不解锁
-    const underThreshold: SleepRecord[] = [
-      mkNight('2026-10-19', { sleepScore: 92, preSleepHabits: [custom.id] }),
-      mkNight('2026-10-18', { sleepScore: 90, preSleepHabits: [custom.id] }),
-      mkNight('2026-10-17', { sleepScore: 91, preSleepHabits: [custom.id] }),
-      mkNight('2026-10-16', { sleepScore: 89, preSleepHabits: [custom.id] }),
-      mkNight('2026-10-15', { sleepScore: 70, preSleepHabits: [] }),
-      mkNight('2026-10-14', { sleepScore: 72, preSleepHabits: [] }),
-      // 白天小睡不得计入夜睡样本数
-      mkNight('2026-10-19', { id: 'nap', kind: 'nap', sleepScore: 95, preSleepHabits: [custom.id] }),
-    ];
-    const reportLocked = computeTagCorrelations(underThreshold, [custom]);
-    expect(reportLocked.unlocked).toHaveLength(0);
-    expect(reportLocked.locked).toHaveLength(1);
-    expect(reportLocked.locked[0].taggedNights).toBe(4);
-    expect(reportLocked.locked[0].neededNights).toBe(MIN_TAGGED_NIGHTS - 4);
+    // 缺省返回默认 20 分钟 + 6 款常见高刺激应用
+    const def = getPetStimulusGuard();
+    expect(def.enabled).toBe(true);
+    expect(def.thresholdMin).toBe(20);
+    expect(def.pkgs).toEqual(DEFAULT_PET_STIMULUS_GUARD.pkgs);
 
-    // 补齐第 5 晚 → 解锁精确差值
-    const atThreshold: SleepRecord[] = [
-      ...underThreshold,
-      mkNight('2026-10-13', { sleepScore: 93, durationMinutes: 510, latencyMinutes: 8, preSleepHabits: [custom.id] }),
-    ];
-    const reportUnlocked = computeTagCorrelations(atThreshold, [custom]);
-    expect(reportUnlocked.unlocked).toHaveLength(1);
-    const item = reportUnlocked.unlocked[0];
-    expect(item.id).toBe(custom.id);
-    expect(item.taggedNights).toBe(5);
-    expect(item.untaggedNights).toBe(2);
-    expect(item.avgScoreWith).toBe(91);
-    expect(item.avgScoreWithout).toBe(71);
-    expect(item.scoreDelta).toBe(20);
+    // 非法阈值自动回退到 20，包名自动去重裁剪
+    const cleaned = sanitizePetStimulusGuard({
+      enabled: false,
+      thresholdMin: 99,
+      pkgs: [' tv.danmaku.bili ', 'tv.danmaku.bili', ''],
+    });
+    expect(cleaned.enabled).toBe(false);
+    expect(cleaned.thresholdMin).toBe(20);
+    expect(cleaned.pkgs).toEqual(['tv.danmaku.bili']);
   });
 
-  it('interventionStore 状态自动纳入 Backup v3 切片并可完整恢复', () => {
+  it('interventionStore 与深夜刷屏提醒配置自动纳入 Backup v3 切片并可完整恢复', async () => {
     toggleLessonCompleted('stimulus-control');
     toggleRitualItem('phone_down');
     setPreferredBreathMode('box');
-    const tag = addCustomDiaryTag('洋甘菊茶', '🍵', 'positive');
-    expect(tag).not.toBeNull();
+    await savePetStimulusGuard({
+      enabled: true,
+      thresholdMin: 15,
+      pkgs: ['com.ss.android.ugc.aweme', 'com.xingin.xhs'],
+    });
 
     const backup = buildFullBackup();
     expect(backup.schema).toBe(3);
     expect(backup.slices?.intervention).toBeTruthy();
+    expect(backup.slices?.petStimulusGuard).toEqual({
+      enabled: true,
+      thresholdMin: 15,
+      pkgs: ['com.ss.android.ugc.aweme', 'com.xingin.xhs'],
+    });
 
     storage.clear();
     resetInterventionStore();
     expect(interventionStore.getState().completedLessonIds).toHaveLength(0);
+    expect(getPetStimulusGuard().thresholdMin).toBe(20);
 
     const restored = restoreFullBackup(backup);
     expect(restored.slices).toContain('intervention');
+    expect(restored.slices).toContain('petStimulusGuard');
     hydrateInterventionStore();
     const state = interventionStore.getState();
     expect(state.completedLessonIds).toEqual(['stimulus-control']);
     expect(state.preferredBreathMode).toBe('box');
-    expect(state.customTags).toHaveLength(1);
-    expect(state.customTags[0].label).toBe('洋甘菊茶');
-
-    removeCustomDiaryTag(state.customTags[0].id);
-    expect(interventionStore.getState().customTags).toHaveLength(0);
+    expect(getPetStimulusGuard()).toEqual({
+      enabled: true,
+      thresholdMin: 15,
+      pkgs: ['com.ss.android.ugc.aweme', 'com.xingin.xhs'],
+    });
   });
 });

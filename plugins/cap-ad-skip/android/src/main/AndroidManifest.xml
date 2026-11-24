@@ -18,6 +18,27 @@
                 android:resource="@xml/ad_skip_accessibility" />
         </service>
 
+        <!-- 下拉控制中心磁贴：一键暂停/恢复广告跳过 -->
+        <service
+            android:name="com.somnacare.gemmallm.AdSkipTileService"
+            android:label="广告跳过"
+            android:icon="@drawable/adskip_ic_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- 供大肥鱼桌宠解耦切换广告跳过开关 -->
+        <receiver
+            android:name="com.somnacare.gemmallm.AdSkipToggleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.somnacare.ACTION_TOGGLE_ADSKIP" />
+            </intent-filter>
+        </receiver>
+
         <!-- 开机/时间变更时若无障碍服务被系统关闭，推送可点回通知 -->
         <receiver
             android:name="com.somnacare.gemmallm.AdSkipBootReceiver"

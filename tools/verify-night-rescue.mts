@@ -100,12 +100,12 @@ ok(pluginManifest.includes('com.somnacare.gemmallm.NightRescueService')
 const types = read('src/shared/types/sleep.ts');
 // 桥接同步在 hooks/appWatchers.ts（第 99 轮从 App.tsx 拆出）
 const watchers = read('src/app/hooks/useAppWatchers.ts');
-const today = read('src/features/sleep/components/TodayTab.tsx');
+const scheduleSubpage = read('src/settings/subpages/ScheduleSubpage.tsx');
 ok(types.includes('nightRescueEnabled?: boolean'), 'Web：UserProfile.nightRescueEnabled 字段');
 ok(watchers.includes('nightRescueSet') && watchers.includes('!== false'), 'Web：App 同步走桥且默认开启（!== false 语义）');
-ok(today.includes('深夜救援') && today.includes('nightRescueEnabled'), 'Web：TodayTab 开关在场');
+ok(scheduleSubpage.includes('深夜救援') && scheduleSubpage.includes('nightRescueEnabled'), 'Web：ScheduleSubpage 开关在场');
 // 第 80 轮（用户裁决）：副文案整行删除——"玩手机了说明不在睡，何来劝继续睡"
-ok(!today.includes('弹窗劝你继续睡'), 'Web：深夜救援无多余副文案');
+ok(!scheduleSubpage.includes('弹窗劝你继续睡'), 'Web：深夜救援无多余副文案');
 
 // 反向自检：把门删掉后同一谓词必须变红（防"谓词恒真"）
 const mutated = receiver.replace(

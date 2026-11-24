@@ -222,7 +222,7 @@ test('旅程38 分区跟手滑动：横向拖拽翻页，纵向滚动不劫持',
   expect(await page.evaluate(() => document.documentElement.classList.contains('gesture-live'))).toBe(false);
   await expect(navBtn('趋势')).toHaveAttribute('aria-current', 'page', { timeout: 5000 });
   // 趋势分区内容真挂载（懒 chunk 加载窗口给足）
-  await expect(page.getByTestId('sleep-calendar')).toBeVisible({ timeout: 8000 });
+  await expect(page.getByText('趋势与结构')).toBeVisible({ timeout: 8000 });
 
   // ③ 反向拖拽：trends → today，翻页可逆
   const p2 = await safePoint('right');

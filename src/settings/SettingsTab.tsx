@@ -109,22 +109,29 @@ const SettingsTabInner: React.FC = () => {
     {
       id: 'settings/schedule',
       title: '我的作息与闹钟',
-      subtitle: '主睡时段、晨间关怀与定制闹钟',
+      subtitle: '作息目标、夜间守护与定制闹钟',
       badge: `${chronotypeText} · ${enabledAlarms} 个闹钟`,
       icon: Moon,
     },
     {
       id: 'settings/pet',
       title: '大肥鱼桌宠',
-      subtitle: '桌面悬浮陪伴、换装与傲娇播报',
+      subtitle: '桌面悬浮陪伴、深夜刷屏提醒与傲娇播报',
       badge: petStatus,
       icon: Fish,
+    },
+    {
+      id: 'settings/extensions',
+      title: '摇一摇广告跳过',
+      subtitle: '开屏自动跳过、排除应用名单与 Shizuku 守护',
+      badge: adSkipSummary,
+      icon: MousePointerClick,
     },
     {
       id: 'settings/widgets',
       title: '桌面小组件',
       subtitle: '实时预览与桌面添加指南',
-      badge: '2×1 速览卡',
+      badge: '4 款组件',
       icon: LayoutGrid,
     },
     {
@@ -139,7 +146,7 @@ const SettingsTabInner: React.FC = () => {
 
   return (
     <div className={`space-y-4 pb-28 ${theme.textPrimary}`}>
-      {/* 核心偏好导航菜单 */}
+      {/* 核心偏好导航菜单（单卡整洁收纳） */}
       <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl divide-y divide-slate-700/50 overflow-hidden`}>
         {coreEntries.map((item) => {
           const Icon = item.icon;
@@ -200,37 +207,6 @@ const SettingsTabInner: React.FC = () => {
         </div>
       </div>
 
-      {/* 可选工具扩展：与核心睡眠能力视觉分离 */}
-      <div className="space-y-2">
-        <p className="px-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-          可选扩展
-        </p>
-        <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl overflow-hidden`}>
-          <button
-            type="button"
-            onClick={() => openPage('settings/extensions')}
-            className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left hover:bg-white/[0.03] active:bg-white/[0.06] transition-colors cursor-pointer"
-          >
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
-                <MousePointerClick className="w-4 h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-black text-white">摇一摇广告跳过</h3>
-                <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                  独立无障碍工具与 Shizuku 守护（默认关闭）
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[10px] font-bold text-slate-400">{adSkipSummary}</span>
-              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* Custom AI Config Modal：portal 到 body 避免被滑动轨道 translate3d 影响 */}
       {createPortal(
         <CustomAISettingsModal
           isOpen={isAIConfigOpen}

@@ -66,6 +66,16 @@ public class PetOverlayService extends Service {
     // 达标祝贺/深夜劝睡的"每天一次"去重键（方案 §5.4 记忆 + §三 事件）
     static final String K_CHEER_DATE = "pet_cheer_date";
     static final String K_NAG_DATE = "pet_nag_date";
+    // 深夜高刺激应用刷屏超时轻提醒配置与每晚封顶计数（Phase 6）
+    static final String K_STIM_ENABLED = "pet_stim_enabled";
+    static final String K_STIM_THRESHOLD = "pet_stim_threshold_min";
+    static final String K_STIM_PKGS = "pet_stim_pkgs";
+    static final String K_BEDTIME_TARGET = "pet_bedtime_target";
+    static final String K_WAKE_TARGET = "pet_wake_target";
+    private static final String K_STIM_NIGHT = "pet_stim_night_id";
+    private static final String K_STIM_COUNT = "pet_stim_count";
+    static final String DEFAULT_STIM_PKGS =
+            ",com.ss.android.ugc.aweme,com.xingin.xhs,tv.danmaku.bili,com.smile.gifmaker,com.sina.weibo,com.zhihu.android,";
     // 拉起 App 时要落的分区，由 Web 侧写入、App 读取后清除（保留给后续入口用）
     static final String K_PENDING_TAB = "somnacare_pending_tab";
 
@@ -82,6 +92,7 @@ public class PetOverlayService extends Service {
     private FrameLayout fanRoot;
     private WindowManager.LayoutParams fanLp;
     private FrameLayout eyeBtn;
+    private FrameLayout adSkipBtn;
     private WhaleGirlView whale;
     /** 在跑的桌宠视图（getPetState 查询用）：同进程同包静态可达，随 whale 生命周期同步置空。 */
     static volatile WhaleGirlView sActiveView;
@@ -99,6 +110,9 @@ public class PetOverlayService extends Service {
     // 排队期间用户主动要的气泡——单槽资源没有优先级，后到会无条件顶掉先到
     private int bubbleSerial;
     private int eyeSerialAtClick;
+    private int adSkipSerialAtClick;
+    private int stimStreakMinutes;
+    private String lastKnownFgPkg = "";
     // ---- 长按去向选择卡 ----
     private FrameLayout pickerRoot;
     private WindowManager.LayoutParams pickerLp;
@@ -121,6 +135,15 @@ public class PetOverlayService extends Service {
             showBubble(isEyeCareActive()
                     ? "护眼滤镜给你开了哦～别再瞪着屏幕啦，鱼片。"
                     : "滤镜关掉了……哼，记得谢本鱼。", FEEDBACK_MS);
+        }
+    };
+    private final Runnable adSkipFeedback = new Runnable() {
+        @Override public void run() {
+            updateAdSkipButton();
+            if (bubbleSerial != adSkipSerialAtClick) return;
+            showBubble(isAdSkipActive()
+                    ? "跳广告重新给你开好啦～烦人的开屏本鱼替你按！"
+                    : "跳广告先暂停咯，这下不怕误触啦，鱼片。", FEEDBACK_MS);
         }
     };
 
@@ -151,6 +174,13 @@ public class PetOverlayService extends Service {
                 // 与 setAppVisible 同一口径（第 100 轮）：只在真正可见时转。
                 // sAppVisible=false（被 App 弹窗遮挡）时亮屏不该把 tick 唤醒。
                 if (on && sAppVisible) whale.start(); else whale.stop();
+            }
+            main.removeCallbacks(stimulusTick);
+            if (on) {
+                main.postDelayed(stimulusTick, 60_000L);
+            } else {
+                stimStreakMinutes = 0;
+                lastKnownFgPkg = "";
             }
         }
     };
@@ -232,13 +262,19 @@ public class PetOverlayService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean("pet_tile_active", false).apply();
             stopSelf();
             return START_NOT_STICKY;
         }
         if (!Settings.canDrawOverlays(this)) {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean("pet_tile_active", false).apply();
             stopSelf();
             return START_NOT_STICKY;
         }
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean("pet_tile_active", true).apply();
         if (petRoot == null) {
             showPet();
         } else {
@@ -264,7 +300,10 @@ public class PetOverlayService extends Service {
                 // 幂等重启：屏幕尺寸可能已变（转屏/折叠/改显示尺寸），重夹一次位置
                 clampToScreen(petParams);
                 safeUpdate(petRoot, petParams);
-                if (fanShown) updateEyeButton();
+                if (fanShown) {
+                    updateEyeButton();
+                    updateAdSkipButton();
+                }
             }
         }
         // 记录感知上下文 → 权重表；昨晚达标且今天未祝贺 → 庆祝一次（幂等：每天一次）
@@ -278,6 +317,7 @@ public class PetOverlayService extends Service {
      *  回调调用；drowsyTick 由 showPet 重新挂。 */
     private void rebuildPetWindow() {
         main.removeCallbacks(drowsyTick);
+        main.removeCallbacks(stimulusTick);
         if (fanShown) hideFan();
         if (bubbleShown) hideBubble();
         if (pickerShown) hideZonePicker();
@@ -343,6 +383,8 @@ public class PetOverlayService extends Service {
             //（第 100 轮：隐藏期间不该空转 30fps 主线程循环）
             if (sAppVisible) whale.start();
             main.post(drowsyTick);
+            main.removeCallbacks(stimulusTick);
+            main.postDelayed(stimulusTick, 60_000L);
         } catch (Throwable e) {
             // OOM（Error）会穿透 catch(Exception)——解码 10MB 精灵图正是重内存路径，
             // 必须降级停服而不是带崩进程
@@ -682,19 +724,18 @@ public class PetOverlayService extends Service {
     private boolean fanOnRight;   // 按钮扇面在角色的哪一侧（镜像弧形偏移用）
 
     /**
-     * 弧形按钮扇面（AutoJs6 式）：三颗 44dp 圆钮沿圆弧排布，
-     * 中间钮最贴身、上下两钮向外偏 14dp——窗口尺寸按内容收紧，
-     * 不留不可点死区。fanOnRight 决定弧的开口朝向。
+     * 弧形按钮扇面（4 键对称弧）：消息播报 / 护眼滤镜 / 跳广告开关 / 最小化或还原。
+     * 中段两钮向外偏 14dp、首尾两钮贴身——窗口尺寸按内容收紧，不留不可点死区。
      */
     private FrameLayout buildFan() {
         FrameLayout wrap = new FrameLayout(this);
-        int offSide = dp(14);        // 上下钮向外偏移
-        int btn = dp(FAN_BTN_DP);    // 尺寸收口在常量：48dp = Android 最小触摸目标
+        int offSide = dp(14);
+        int gapY = dp(9);
+        int btn = dp(FAN_BTN_DP);
         int wrapW = btn + offSide;
-        int wrapH = btn * 3 + dp(10) * 2;
+        int wrapH = btn * 4 + gapY * 3;
         wrap.setPadding(0, 0, 0, 0);
 
-        // 偏移基准：扇面在角色右侧 → 朝角色一侧是窗口左缘；在左侧 → 镜像
         int nearX = fanOnRight ? 0 : offSide;
         int farX = fanOnRight ? offSide : 0;
 
@@ -705,7 +746,7 @@ public class PetOverlayService extends Service {
             }
         });
         FrameLayout.LayoutParams p1 = new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.START);
-        p1.leftMargin = nearX;           // 最贴身
+        p1.leftMargin = nearX;
         p1.topMargin = 0;
         wrap.addView(b1, p1);
 
@@ -713,29 +754,40 @@ public class PetOverlayService extends Service {
             @Override public void onClick(View v) {
                 toggleEyeCare();
                 if (whale != null) whale.cheer();
-                // 记下点击时刻的气泡序号：600ms 排队期间用户若主动弹了气泡
-                // （如点了「看播报」），延迟反馈就让位，不覆盖用户要看的内容
                 eyeSerialAtClick = bubbleSerial;
-                // 服务异步生效，稍等一下再刷新状态点与气泡反馈
                 main.postDelayed(eyeFeedback, 600);
             }
         });
         FrameLayout.LayoutParams p2 = new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.START);
-        p2.leftMargin = farX;            // 弧的中段向外鼓
-        p2.topMargin = btn + dp(10);
+        p2.leftMargin = farX;
+        p2.topMargin = btn + gapY;
         wrap.addView(eyeBtn, p2);
 
-        View b3 = minimized
+        adSkipBtn = fanButton(R.drawable.pet_ic_adskip, "跳广告开关", new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                toggleAdSkip();
+                if (whale != null) whale.cheer();
+                adSkipSerialAtClick = bubbleSerial;
+                main.removeCallbacks(adSkipFeedback);
+                main.postDelayed(adSkipFeedback, 380);
+            }
+        });
+        FrameLayout.LayoutParams p3 = new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.START);
+        p3.leftMargin = farX;
+        p3.topMargin = (btn + gapY) * 2;
+        wrap.addView(adSkipBtn, p3);
+
+        View b4 = minimized
             ? fanButton(R.drawable.pet_ic_restore, "还原大小", new View.OnClickListener() {
                 @Override public void onClick(View v) { restore(); }
               })
             : fanButton(R.drawable.pet_ic_minimize, "最小化", new View.OnClickListener() {
                 @Override public void onClick(View v) { minimize(); }
               });
-        FrameLayout.LayoutParams p3 = new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.START);
-        p3.leftMargin = nearX;
-        p3.topMargin = (btn + dp(10)) * 2;
-        wrap.addView(b3, p3);
+        FrameLayout.LayoutParams p4 = new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.START);
+        p4.leftMargin = nearX;
+        p4.topMargin = (btn + gapY) * 3;
+        wrap.addView(b4, p4);
 
         wrap.setLayoutParams(new FrameLayout.LayoutParams(wrapW, wrapH));
         return wrap;
@@ -754,7 +806,6 @@ public class PetOverlayService extends Service {
         g.setColor(0xF0162036);
         g.setStroke(dp(1), 0x667FD8FF);
         btn.setBackground(g);
-        // 按压手感：performHapticFeedback 跟随系统触感开关，不需要 VIBRATE 权限
         btn.setOnClickListener(v -> {
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
             click.onClick(v);
@@ -767,13 +818,26 @@ public class PetOverlayService extends Service {
         iv.setPadding(pad, pad, pad, pad);
         btn.addView(iv, new FrameLayout.LayoutParams(-1, -1));
 
-        // 护眼钮右上角一个状态点：绿=可开、琥珀=已开
+        // 护眼钮右上角状态点：绿=可开、琥珀=已开
         if (iconRes == R.drawable.pet_ic_eye) {
             View dot = new View(this);
             dot.setTag("pet_eye_dot");
             GradientDrawable dg = new GradientDrawable();
             dg.setShape(GradientDrawable.OVAL);
-            dg.setColor(0xFF37B87B);
+            dg.setColor(isEyeCareActive() ? 0xFFB9822B : 0xFF37B87B);
+            dot.setBackground(dg);
+            FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(dp(7), dp(7),
+                    Gravity.TOP | Gravity.END);
+            dlp.rightMargin = dp(6);
+            dlp.topMargin = dp(6);
+            btn.addView(dot, dlp);
+        } else if (iconRes == R.drawable.pet_ic_adskip) {
+            // 跳广告钮右上角状态点：绿=已开启、灰=已暂停
+            View dot = new View(this);
+            dot.setTag("pet_adskip_dot");
+            GradientDrawable dg = new GradientDrawable();
+            dg.setShape(GradientDrawable.OVAL);
+            dg.setColor(isAdSkipActive() ? 0xFF37B87B : 0xFF64748B);
             dot.setBackground(dg);
             FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(dp(7), dp(7),
                     Gravity.TOP | Gravity.END);
@@ -791,6 +855,16 @@ public class PetOverlayService extends Service {
         GradientDrawable dg = new GradientDrawable();
         dg.setShape(GradientDrawable.OVAL);
         dg.setColor(isEyeCareActive() ? 0xFFB9822B : 0xFF37B87B);
+        dot.setBackground(dg);
+    }
+
+    private void updateAdSkipButton() {
+        if (adSkipBtn == null || !fanShown) return;
+        View dot = adSkipBtn.findViewWithTag("pet_adskip_dot");
+        if (dot == null) return;
+        GradientDrawable dg = new GradientDrawable();
+        dg.setShape(GradientDrawable.OVAL);
+        dg.setColor(isAdSkipActive() ? 0xFF37B87B : 0xFF64748B);
         dot.setBackground(dg);
     }
 
@@ -1065,6 +1139,14 @@ public class PetOverlayService extends Service {
         }
     }
 
+    private boolean isAdSkipActive() {
+        try {
+            return getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("ad_skip_enabled", false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * 就地开关护眼滤镜：通过显式组件广播通知 cap-eye-care 的 EyeCareToggleReceiver，
      * 保持桌宠插件与护眼插件零编译期依赖。
@@ -1075,6 +1157,154 @@ public class PetOverlayService extends Service {
             i.setClassName(getPackageName(), "com.somnacare.gemmallm.EyeCareToggleReceiver");
             sendBroadcast(i);
         } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 就地开关广告跳过：通过显式组件广播通知 cap-ad-skip 的 AdSkipToggleReceiver。
+     */
+    private void toggleAdSkip() {
+        try {
+            Intent i = new Intent("com.somnacare.ACTION_TOGGLE_ADSKIP");
+            i.setClassName(getPackageName(), "com.somnacare.gemmallm.AdSkipToggleReceiver");
+            sendBroadcast(i);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 深夜高刺激应用刷屏超时轻提醒（Phase 6）：
+     * 仅在屏幕亮起时每 60s 采样一次，进入夜间窗口（目标就寝 → 目标醒来）且连续停留在
+     * 监控应用达阈值分钟时，大肥鱼弹出温柔劝睡气泡（每晚封顶 2 次，绝不封锁屏幕）。
+     */
+    private final Runnable stimulusTick = new Runnable() {
+        @Override public void run() {
+            try {
+                checkLateNightStimulus();
+            } catch (Exception ignored) {
+            }
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && pm.isInteractive() && whale != null) {
+                main.postDelayed(this, 60_000L);
+            }
+        }
+    };
+
+    private static int parseClockMinutes(String hhmm, int fallback) {
+        if (hhmm == null) return fallback;
+        int colon = hhmm.indexOf(':');
+        if (colon <= 0 || colon >= hhmm.length() - 1) return fallback;
+        try {
+            int h = Integer.parseInt(hhmm.substring(0, colon).trim());
+            int m = Integer.parseInt(hhmm.substring(colon + 1).trim());
+            if (h >= 0 && h < 24 && m >= 0 && m < 60) return h * 60 + m;
+        } catch (Exception ignored) {
+        }
+        return fallback;
+    }
+
+    private static boolean isInSleepWindow(int nowMin, int bedMin, int wakeMin) {
+        if (bedMin == wakeMin) return false;
+        return bedMin < wakeMin
+                ? (nowMin >= bedMin && nowMin < wakeMin)
+                : (nowMin >= bedMin || nowMin < wakeMin);
+    }
+
+    private String resolveForegroundPackage(android.content.SharedPreferences sp) {
+        // 通道 A：系统使用情况统计事件（若已授权）
+        try {
+            android.app.AppOpsManager ops = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            int mode = ops != null
+                    ? ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                            android.os.Process.myUid(), getPackageName())
+                    : android.app.AppOpsManager.MODE_IGNORED;
+            if (mode == android.app.AppOpsManager.MODE_ALLOWED) {
+                android.app.usage.UsageStatsManager usm =
+                        (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+                if (usm != null) {
+                    long now = System.currentTimeMillis();
+                    android.app.usage.UsageEvents events = usm.queryEvents(now - 10 * 60_000L, now);
+                    if (events != null) {
+                        android.app.usage.UsageEvents.Event ev = new android.app.usage.UsageEvents.Event();
+                        String latestFg = "";
+                        while (events.hasNextEvent()) {
+                            events.getNextEvent(ev);
+                            int type = ev.getEventType();
+                            if (type == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                                String p = ev.getPackageName();
+                                if (p != null && !p.isEmpty() && !"com.android.systemui".equals(p)) {
+                                    latestFg = p;
+                                }
+                            }
+                        }
+                        if (!latestFg.isEmpty()) {
+                            lastKnownFgPkg = latestFg;
+                            return latestFg;
+                        }
+                        if (!lastKnownFgPkg.isEmpty()) return lastKnownFgPkg;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        // 通道 B：复用 AdSkipService 在窗口状态切换时写入的前台包名（零额外权限）
+        String fallbackPkg = sp.getString("fg_pkg", "");
+        long fallbackSince = sp.getLong("fg_pkg_since", 0L);
+        if (fallbackPkg != null && !fallbackPkg.isEmpty()
+                && System.currentTimeMillis() - fallbackSince <= 2 * 3600_000L) {
+            return fallbackPkg;
+        }
+        return "";
+    }
+
+    private void checkLateNightStimulus() {
+        if (whale == null) return;
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm == null || !pm.isInteractive()) {
+            stimStreakMinutes = 0;
+            return;
+        }
+        android.content.SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!sp.getBoolean(K_STIM_ENABLED, true)) {
+            stimStreakMinutes = 0;
+            return;
+        }
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int nowMin = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE);
+        int bedMin = parseClockMinutes(sp.getString(K_BEDTIME_TARGET, "23:30"), 23 * 60 + 30);
+        int wakeMin = parseClockMinutes(sp.getString(K_WAKE_TARGET, "07:30"), 7 * 60 + 30);
+        if (!isInSleepWindow(nowMin, bedMin, wakeMin)) {
+            stimStreakMinutes = 0;
+            return;
+        }
+
+        String curNight = nightKey();
+        int countTonight = curNight.equals(sp.getString(K_STIM_NIGHT, ""))
+                ? sp.getInt(K_STIM_COUNT, 0) : 0;
+        if (countTonight >= 2) return;
+
+        String fg = resolveForegroundPackage(sp);
+        String watched = sp.getString(K_STIM_PKGS, DEFAULT_STIM_PKGS);
+        if (fg.isEmpty() || fg.equals(getPackageName())
+                || watched == null || !watched.contains("," + fg + ",")) {
+            stimStreakMinutes = 0;
+            return;
+        }
+
+        stimStreakMinutes++;
+        int threshold = Math.max(10, Math.min(60, sp.getInt(K_STIM_THRESHOLD, 20)));
+        if (stimStreakMinutes >= threshold && !bubbleShown) {
+            stimStreakMinutes = 0;
+            int nextCount = countTonight + 1;
+            sp.edit()
+                    .putString(K_STIM_NIGHT, curNight)
+                    .putInt(K_STIM_COUNT, nextCount)
+                    .apply();
+            whale.setDrowsy(0.9f);
+            String msg = nextCount == 1
+                    ? ("鱼片，已经连刷 " + threshold + " 分钟啦～越刷越精神的，收起来歇眼睛好不好？")
+                    : ("又刷了 " + threshold + " 分钟咯……本鱼困得尾巴都抬不动啦，陪我一起睡吧，晚安～");
+            showBubble(msg, 7500);
         }
     }
 
@@ -1265,7 +1495,9 @@ public class PetOverlayService extends Service {
         if (sInstance == this) sInstance = null;
         sAppVisible = true;
         main.removeCallbacks(drowsyTick);
+        main.removeCallbacks(stimulusTick);
         main.removeCallbacks(eyeFeedback);
+        main.removeCallbacks(adSkipFeedback);
         main.removeCallbacks(longPressBuzz);
         hideZonePicker();
         try {

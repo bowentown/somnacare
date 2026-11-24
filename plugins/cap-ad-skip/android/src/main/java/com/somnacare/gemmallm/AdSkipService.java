@@ -55,6 +55,12 @@ public class AdSkipService extends AccessibilityService {
     static final String PREFS = "somnacare_prefs";
     static final String KEY_ENABLED = "ad_skip_enabled";
     static final String KEY_HITS = "ad_skip_hits";
+    /** 用户显式排除不跳过的应用包名集合（首尾逗号包裹 `,pkg1,pkg2,` 存储，避免 getStringSet 并发坑） */
+    static final String KEY_EXCLUDED_PKGS = "ad_skip_excluded_pkgs";
+    /** 顺带记录当前前台包名，供深夜刷屏超时提醒在无 UsageStats 权限时零成本复用 */
+    static final String KEY_FG_PKG = "fg_pkg";
+    static final String KEY_FG_SINCE = "fg_pkg_since";
+    private String lastReportedFgPkg = "";
 
     private static final long CLICK_COOLDOWN_MS = 1200;
     private static final long EVENT_THROTTLE_MS = 200;
@@ -253,6 +259,47 @@ public class AdSkipService extends AccessibilityService {
         return false;
     }
 
+    /** 读取用户排除不跳过的应用包名列表 */
+    static java.util.List<String> getExcludedPackages(Context context) {
+        java.util.List<String> out = new ArrayList<>();
+        try {
+            String raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY_EXCLUDED_PKGS, "");
+            if (raw == null || raw.isEmpty()) return out;
+            for (String p : raw.split(",")) {
+                String trimmed = p.trim();
+                if (!trimmed.isEmpty()) out.add(trimmed);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    static boolean isUserExcludedPackage(Context context, String pkg) {
+        if (pkg == null || pkg.isEmpty()) return false;
+        try {
+            String raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY_EXCLUDED_PKGS, "");
+            return raw != null && raw.contains("," + pkg + ",");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    static java.util.List<String> setPackageExcluded(Context context, String pkg, boolean excluded) {
+        java.util.List<String> cur = getExcludedPackages(context);
+        if (pkg != null && !pkg.trim().isEmpty()) {
+            String target = pkg.trim();
+            cur.remove(target);
+            if (excluded) cur.add(target);
+            java.util.Collections.sort(cur);
+            String joined = cur.isEmpty() ? "" : ("," + android.text.TextUtils.join(",", cur) + ",");
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_EXCLUDED_PKGS, joined).apply();
+        }
+        return cur;
+    }
+
     private boolean isExcludedPackage(String pkg) {
         return pkg.isEmpty()
                 || pkg.equals(getPackageName())
@@ -263,12 +310,25 @@ public class AdSkipService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event == null || !enabled()) return;
+        if (event == null) return;
+        boolean stateChange = event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+        if (stateChange) {
+            CharSequence fgCs = event.getPackageName();
+            String fg = fgCs == null ? "" : fgCs.toString();
+            if (!fg.isEmpty() && !fg.equals("com.android.systemui")
+                    && !fg.contains("inputmethod") && !fg.equals(lastReportedFgPkg)) {
+                lastReportedFgPkg = fg;
+                getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putString(KEY_FG_PKG, fg)
+                        .putLong(KEY_FG_SINCE, System.currentTimeMillis())
+                        .apply();
+            }
+        }
+        if (!enabled()) return;
 
         long now = SystemClock.uptimeMillis();
         // 窗口状态变化是低频高价值信号（新 Activity/新窗口出现），不节流；
         // 只有高频的内容变化才限流
-        boolean stateChange = event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         if (!stateChange && now - lastEventAt < EVENT_THROTTLE_MS) return;
         if (now - lastClickAt < CLICK_COOLDOWN_MS) return;
         lastEventAt = now;
@@ -276,6 +336,14 @@ public class AdSkipService extends AccessibilityService {
         CharSequence pkgCs = event.getPackageName();
         String pkg = pkgCs == null ? "" : pkgCs.toString();
         if (isExcludedPackage(pkg)) return;
+        if (isUserExcludedPackage(this, pkg)) {
+            if (!pkg.equals(lastPackage)) {
+                lastPackage = pkg;
+                handler.removeCallbacks(splashPoller);
+                diag("skip " + pkg + " reason=user-excluded");
+            }
+            return;
+        }
 
         if (!pkg.equals(lastPackage)) {
             diag("switch " + pkg + " (was " + lastPackage + ")");
@@ -315,7 +383,7 @@ public class AdSkipService extends AccessibilityService {
     private boolean pollOnce() {
         if (!enabled()) return false;
         String pkg = lastPackage;
-        if (pkg.isEmpty()) return false;
+        if (pkg.isEmpty() || isUserExcludedPackage(this, pkg)) return false;
         long now = SystemClock.uptimeMillis();
         long elapsed = now - packageSince;
         if (elapsed > SPLASH_POLL_WINDOW_MS) return false;

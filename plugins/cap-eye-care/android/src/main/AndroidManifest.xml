@@ -17,6 +17,18 @@
         <service
             android:name="com.somnacare.gemmallm.EyeCareTileService"
             android:label="护眼滤镜"
+            android:icon="@drawable/eyecare_ic_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="com.somnacare.gemmallm.NightReadTileService"
+            android:label="极暗夜读"
+            android:icon="@drawable/eyecare_ic_night_read"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:exported="true">
             <intent-filter>
