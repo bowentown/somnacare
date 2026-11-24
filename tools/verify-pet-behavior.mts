@@ -294,6 +294,16 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
       view.includes('predecodeAsync') && view.includes('decodeSheet')
       && svc.includes('WhaleGirlView.predecodeAsync')
       && svc.includes('pendingSkinBitmaps')],
+    ['桌宠防闪帧：stateLock 跨线程原子快照 + drawnAnim 防未上屏鬼影 + 夜间过渡恢复 30fps',
+      view.includes('synchronized (stateLock)')
+      && view.includes('drawnAnim')
+      && view.includes('activeTransition')
+      && view.includes('nudgeRender()')],
+    ['气泡防闪帧：禁用系统默认窗口动画 + 硬件图层缓存 + 在途退场窗清理',
+      svc.includes('bubbleLp.windowAnimations = 0')
+      && svc.includes('fanLp.windowAnimations = 0')
+      && svc.includes('flushClosingBubble()')
+      && svc.includes('.withLayer()')],
     ['广告跳过：整树扫描后台化（adskip-scan 线程 + 单飞闸 + 点击记账回主线程）',
       adskip.includes('new HandlerThread("adskip-scan")')
       && adskip.includes('scanInFlight')

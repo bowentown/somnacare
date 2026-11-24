@@ -90,6 +90,7 @@ public class PetOverlayService extends Service {
     private WindowManager wm;
     private FrameLayout petRoot;
     private FrameLayout fanRoot;
+    private FrameLayout closingFan;
     private WindowManager.LayoutParams fanLp;
     private FrameLayout eyeBtn;
     private FrameLayout adSkipBtn;
@@ -104,6 +105,7 @@ public class PetOverlayService extends Service {
 
     // ---- 女仆播报气泡（与按钮窗是两个窗口、两种动画）----
     private FrameLayout bubbleRoot;
+    private FrameLayout closingBubble;
     private WindowManager.LayoutParams bubbleLp;
     private boolean bubbleShown;
     // 气泡序号：每次弹气泡自增。600ms 延迟反馈（护眼开关）据此让位给
@@ -359,6 +361,7 @@ public class PetOverlayService extends Service {
                             | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             petParams.gravity = Gravity.TOP | Gravity.START;
+            petParams.windowAnimations = 0;
             petParams.setTitle("大肥鱼");
             minimized = sp.getBoolean("pet_minimized", false);
             if (minimized) {
@@ -473,9 +476,11 @@ public class PetOverlayService extends Service {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             pickerLp.gravity = Gravity.TOP | Gravity.START;
+            pickerLp.windowAnimations = 0;
             pickerLp.setTitle("大肥鱼去向");
 
             wrap.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -583,27 +588,23 @@ public class PetOverlayService extends Service {
                     dockToEdge();
                 } else if (whale != null) {
                     petRoot.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-                    // 顺序不能反：hideBubble() 会 setTalking(false) → pick(idle)，
-                    // 若先庆祝，刚起的庆祝会被这一下顶掉（删掉 pendingCheer 后
-                    // 不再补，表现为"点了只有震动、没有动作"）
                     final boolean wasBubble = bubbleShown;
                     if (wasBubble) {
-                        hideBubble();   // 播报期间再点：先收气泡
-                    }
-                    whale.cheer();
-                    if (!wasBubble) {
+                        // 先立住欢呼再收气泡：setTalking(false) 检测到正在欢呼便不会先闪切一次 idle
+                        whale.cheer();
+                        hideBubble();
+                    } else {
                         tapCount++;
                         int every = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                                 .getInt(K_BUBBLE_EVERY, 8);
-                        // 「关」优先于「弹」：扇面开着时用户点角色是想收起它——
-                        // 若让"每 N 次弹气泡"插队，会出现"冒出一句话、菜单还开着"，
-                        // 要再点一下才能真正关上
                         if (fanShown) {
+                            whale.cheer();
                             hideFan();
                         } else if (every > 0 && tapCount % every == 0) {
-                            // 播报气泡本身就是这次点击的回应（talking 动画接管庆祝）
+                            // 直接进入播报态，不在同一毫秒内先调 cheer() 再切 headtilt 造成双切闪帧
                             showBubble(nextSayLine(), BUBBLE_MS);
                         } else {
+                            whale.cheer();
                             showFan();
                         }
                     }
@@ -641,20 +642,17 @@ public class PetOverlayService extends Service {
 
     private void showFan() {
         if (fanShown) return;
+        flushClosingFan();
         // 不再 hideBubble：气泡在角色上方、按钮在侧面，位置不重叠，
         // 强制收气泡会中断角色的说话姿态——两个窗口完全独立
         FrameLayout v = null;
         try {
-            // 弧形镜像：角色中心在屏幕左半 → 扇面开在右侧（与 placeBeside 同判据）。
-            // 必须在 buildFan 之前赋值——近/远侧偏移由它决定
             DisplayInfo diPre = displayInfo();
             fanOnRight = (petParams.x + petParams.width / 2) < diPre.width / 2;
             v = buildFan();
             v.setOnTouchListener((vv, e) -> {
                 if (PetOverlayGuard.isObscuredTouch(e)) return true;   // A5
                 if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
-                    // 落点在气泡上的外部触摸让气泡自己处理——否则点一下播报，
-                    // 扇面跟着一起消失，像"莫名其妙闪退"
                     if (!insideWindow(bubbleLp, bubbleW, bubbleH, e.getRawX(), e.getRawY())) hideFan();
                 }
                 return false;
@@ -664,9 +662,11 @@ public class PetOverlayService extends Service {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             fanLp.gravity = Gravity.TOP | Gravity.START;
+            fanLp.windowAnimations = 0;
             fanLp.setTitle("大肥鱼按钮");
 
             v.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -674,9 +674,6 @@ public class PetOverlayService extends Service {
             fanW = v.getMeasuredWidth();
             fanH = v.getMeasuredHeight();
             placeBeside(fanW, fanH);
-            // 首帧透明：初始 alpha/scale 在 addView 之前设好，避免闪一帧
-            // 按钮 direct 挂在 wrap 上（弧形布局），遍历容器自身子视图——
-            // 此前强转 LinearLayout 抛 CCE 被 catch 吞掉，按钮从未 addView
             java.util.ArrayList<View> btns = new java.util.ArrayList<>();
             for (int i = 0; i < v.getChildCount(); i++) btns.add(v.getChildAt(i));
             for (View b : btns) {
@@ -689,16 +686,14 @@ public class PetOverlayService extends Service {
             fanRoot = v;
             fanShown = true;
 
-            // 逐个带回弹弹出，比面板的整卡滑入轻快
             for (int i = 0; i < btns.size(); i++) {
                 View b = btns.get(i);
-                b.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(i * 55L)
-                        .setDuration(210)
-                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.8f))
+                b.animate().withLayer().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(i * 45L)
+                        .setDuration(200)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.6f))
                         .start();
             }
         } catch (Exception e) {
-            // addView 半途失败会留下已挂上的孤儿窗口（与 showBubble 同款收尾）
             if (v != null) {
                 try { wm.removeViewImmediate(v); } catch (Exception ignored) { }
             }
@@ -707,16 +702,31 @@ public class PetOverlayService extends Service {
         }
     }
 
+    private void flushClosingFan() {
+        final FrameLayout old = closingFan;
+        closingFan = null;
+        if (old != null) {
+            try { old.animate().cancel(); } catch (Exception ignored) { }
+            try { wm.removeViewImmediate(old); } catch (Exception ignored) { }
+        }
+    }
+
     private void hideFan() {
         final FrameLayout v = fanRoot;
         fanRoot = null;
         fanShown = false;
         if (v == null) return;
+        flushClosingFan();
+        closingFan = v;
         try {
-            v.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(120)
-                    .withEndAction(() -> { try { wm.removeView(v); } catch (Exception ignored) { } })
+            v.animate().withLayer().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(120)
+                    .withEndAction(() -> {
+                        if (closingFan == v) closingFan = null;
+                        try { wm.removeViewImmediate(v); } catch (Exception ignored) { }
+                    })
                     .start();
         } catch (Exception e) {
+            if (closingFan == v) closingFan = null;
             try { wm.removeViewImmediate(v); } catch (Exception ignored) { }
         }
     }
@@ -925,28 +935,37 @@ public class PetOverlayService extends Service {
 
     // ================= 大肥鱼播报气泡 =================
 
+    private void flushClosingBubble() {
+        final FrameLayout old = closingBubble;
+        closingBubble = null;
+        if (old != null) {
+            try { old.animate().cancel(); } catch (Exception ignored) { }
+            try { wm.removeViewImmediate(old); } catch (Exception ignored) { }
+        }
+    }
+
     private void showBubble(String msg, long durationMs) {
-        // 停留时长随字数自适应：固定 7s 时最长的语录（60 字）看不完就消失；
-        // 中文舒适阅读约 60ms/字，60 字 ≈ 10.6s
         final long dur = durationMs + msg.length() * 60L;
         try {
             bubbleSerial++;
             if (bubbleShown && bubbleRoot != null) {
-                // 已经在播：只换词、重新计时，不闪窗
+                // 已经在播：只换词并重算窗口尺寸/锚点，不销毁重建窗口，零闪烁
                 TextView body = bubbleRoot.findViewWithTag("pet_body");
                 if (body != null) body.setText(msg);
+                repositionExistingBubble();
+                if (whale != null) whale.setTalking(true);
                 main.removeCallbacks(bubbleHide);
                 main.postDelayed(bubbleHide, dur);
                 return;
             }
+            // 若旧气泡尚在 130ms 退场动画途中，先立即摘净，杜绝新旧双气泡同屏闪叠
+            flushClosingBubble();
             DisplayInfo di = displayInfo();
-            boolean above = petParams.y - dp(150) >= dp(4);   // 预估放得下就贴头上，否则贴脚下来
+            boolean above = petParams.y - dp(150) >= dp(4);
             FrameLayout v = buildBubble(msg, above);
             v.setOnTouchListener((vv, e) -> {
                 if (PetOverlayGuard.isObscuredTouch(e)) return true;   // A5
                 if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
-                    // 落点在扇面按钮上的外部触摸让扇面自己处理——
-                    // 点一个按钮不该把气泡也一起收掉
                     if (!insideWindow(fanLp, fanW, fanH, e.getRawX(), e.getRawY())) hideBubble();
                 }
                 return false;
@@ -957,16 +976,16 @@ public class PetOverlayService extends Service {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             bubbleLp.gravity = Gravity.TOP | Gravity.START;
+            bubbleLp.windowAnimations = 0;   // 禁用 ROM 默认窗口过渡动画，防止与 View 动画打架闪帧
             bubbleLp.setTitle("大肥鱼播报");
 
             int bw = dp(204);
             v.measure(View.MeasureSpec.makeMeasureSpec(bw, View.MeasureSpec.AT_MOST),
                     View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-            // 定位必须用真实宽度：抬到 140dp 会让短文案的气泡相对角色横向偏移、
-            // 尾巴尖对不上她（窗口是 WRAP_CONTENT，测量失败才兜底）
             bw = v.getMeasuredWidth() > 0 ? v.getMeasuredWidth() : dp(140);
             int bh = v.getMeasuredHeight();
             bubbleW = bw;
@@ -974,13 +993,10 @@ public class PetOverlayService extends Service {
             int m = dp(4);
             int cx = petParams.x + petParams.width / 2;
 
-            // 气泡底(顶)边直接压在角色窗内 14dp 处：尾巴尖正好点到她头顶/脚边，
-            // 之前"卡片悬在半空"就是因为整块气泡被推到了角色窗上方还留了 10dp
             if (above) bubbleLp.y = Math.max(m, petParams.y - bh + dp(14));
             else bubbleLp.y = Math.min(di.height - bh - m, petParams.y + petParams.height - dp(14));
             bubbleLp.x = Math.max(m, Math.min(cx - bw / 2, di.width - bw - m));
 
-            // 尾巴尖对准角色头顶中心
             View tail = v.findViewWithTag("pet_tail");
             int tailCx = 0;
             if (tail != null) {
@@ -990,31 +1006,58 @@ public class PetOverlayService extends Service {
                 tailCx = tlp.leftMargin + dp(8);
             }
 
-            // 首帧必须是透明的：alpha/scale 必须在 addView 之前设好，
-            // 否则窗口先以不透明态上屏一帧（用户看到的"白帧"就是这个竞态）
             v.setAlpha(0f);
             v.setPivotX(Math.max(dp(1), tailCx));
             v.setPivotY(above ? bh - dp(9) : dp(9));
-            v.setScaleX(0.55f);
-            v.setScaleY(0.55f);
+            v.setScaleX(0.68f);
+            v.setScaleY(0.68f);
             PetOverlayGuard.apply(v);   // A5：气泡可点击关闭
             wm.addView(v, bubbleLp);
             bubbleRoot = v;
             bubbleShown = true;
             if (whale != null) whale.setTalking(true);
-            // 播报动画：从尾巴处带回弹放大弹出
-            v.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(230)
-                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.7f))
+            // 硬件离屏层缓存 + 柔和回弹弹出，避免文字缩放期逐帧重栅格化抖动
+            v.animate().withLayer().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.35f))
                     .start();
             main.postDelayed(bubbleHide, dur);
         } catch (Exception e) {
-            // addView 之后的失败：移除已上屏窗口，并回滚角色的说话姿态
             if (bubbleRoot != null) {
                 try { wm.removeViewImmediate(bubbleRoot); } catch (Exception ignored) { }
                 bubbleRoot = null;
             }
             bubbleShown = false;
             if (whale != null) whale.setTalking(false);
+        }
+    }
+
+    /** 气泡已在显示时直接换文案后的原地位置微调：字数变长/变短时保持尾巴尖对准头顶 */
+    private void repositionExistingBubble() {
+        if (bubbleRoot == null || bubbleLp == null || petParams == null) return;
+        try {
+            DisplayInfo di = displayInfo();
+            int maxBw = dp(204);
+            bubbleRoot.measure(View.MeasureSpec.makeMeasureSpec(maxBw, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int bw = bubbleRoot.getMeasuredWidth() > 0 ? bubbleRoot.getMeasuredWidth() : dp(140);
+            int bh = bubbleRoot.getMeasuredHeight();
+            bubbleW = bw;
+            bubbleH = bh;
+            int m = dp(4);
+            int cx = petParams.x + petParams.width / 2;
+            boolean above = petParams.y - dp(150) >= m;
+            bubbleLp.y = above
+                    ? Math.max(m, petParams.y - bh + dp(14))
+                    : Math.min(di.height - bh - m, petParams.y + petParams.height - dp(14));
+            bubbleLp.x = Math.max(m, Math.min(cx - bw / 2, di.width - bw - m));
+            View tail = bubbleRoot.findViewWithTag("pet_tail");
+            if (tail != null) {
+                FrameLayout.LayoutParams tlp = (FrameLayout.LayoutParams) tail.getLayoutParams();
+                tlp.leftMargin = Math.max(dp(12), Math.min(cx - bubbleLp.x - dp(8), bw - dp(24)));
+                tail.setLayoutParams(tlp);
+            }
+            safeUpdate(bubbleRoot, bubbleLp);
+        } catch (Exception ignored) {
         }
     }
 
@@ -1025,11 +1068,17 @@ public class PetOverlayService extends Service {
         bubbleShown = false;
         if (whale != null) whale.setTalking(false);
         if (v == null) return;
+        flushClosingBubble();
+        closingBubble = v;
         try {
-            v.animate().alpha(0f).scaleX(0.72f).scaleY(0.72f).setDuration(130)
-                    .withEndAction(() -> { try { wm.removeView(v); } catch (Exception ignored) { } })
+            v.animate().withLayer().alpha(0f).scaleX(0.76f).scaleY(0.76f).setDuration(120)
+                    .withEndAction(() -> {
+                        if (closingBubble == v) closingBubble = null;
+                        try { wm.removeViewImmediate(v); } catch (Exception ignored) { }
+                    })
                     .start();
         } catch (Exception e) {
+            if (closingBubble == v) closingBubble = null;
             try { wm.removeViewImmediate(v); } catch (Exception ignored) { }
         }
     }
@@ -1509,7 +1558,9 @@ public class PetOverlayService extends Service {
         try { unregisterReceiver(screenReceiver); } catch (Exception ignored) { }
         if (whale != null) whale.stop();
         hideBubble();
+        flushClosingBubble();
         hideFan();
+        flushClosingFan();
         if (petRoot != null) {
             try { wm.removeViewImmediate(petRoot); } catch (Exception ignored) { }
             petRoot = null;
