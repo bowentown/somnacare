@@ -232,8 +232,12 @@ export function clearUsageData(): void {
 // ── 原始亮屏事件（SensibleSleep 模型输入，第 26 轮）──
 
 export interface ScreenOnEvents {
-  /** 亮屏起始事件 epoch ms（只数次数，时长在原生层已丢弃） */
+  /** 屏幕活跃事件 epoch ms（含真实亮屏与持续亮屏活跃心跳，纯内存计算不落盘） */
   events: number[];
+  /** 近 3 天真实熄屏时刻 epoch ms（用于边界分钟级精准对齐） */
+  offEvents?: number[];
+  /** 近 3 天真实亮屏起始 epoch ms（用于起床边界对齐与真实拿起次数统计） */
+  rawOnEvents?: number[];
   /** 观测截止 epoch（= 查询时刻） */
   observedUntil: number;
 }
@@ -255,9 +259,15 @@ export async function queryScreenOnEvents(days = 14, force = false): Promise<Scr
       lastUsageError = '亮屏事件查询返回为空（可能内核不支持或事件日志被系统裁剪）';
       return null;
     }
+    const cleanNums = (raw: unknown): number[] | undefined =>
+      Array.isArray(raw)
+        ? raw.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+        : undefined;
     const data: ScreenOnEvents = {
       events: (res.events as unknown[]).filter((n): n is number =>
         typeof n === 'number' && Number.isFinite(n)),
+      offEvents: cleanNums(res.offEvents),
+      rawOnEvents: cleanNums(res.rawOnEvents),
       observedUntil: typeof res.observedUntil === 'number' ? res.observedUntil : Date.now(),
     };
     eventsCache = { at: Date.now(), data };

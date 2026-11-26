@@ -411,4 +411,150 @@ describe('SensibleSleep 贝叶斯切换点模型', () => {
       expect(runAt(rollAt + 3 * 60000).proposal?.targetDate).toBe('2026-10-13');
     });
   });
+
+  describe('F 组：持续亮屏活跃心跳与分钟级熄屏对齐回归 (v1.43.2)', () => {
+    function buildContinuousPreBedScenario(opts?: { nightPickupMin?: number }) {
+      const now = atTime(10, 30);
+      const nd = new Date(now);
+      const todayMidnight = new Date(nd.getFullYear(), nd.getMonth(), nd.getDate(), 0, 0, 0, 0).getTime();
+      const events: number[] = [];
+      const offEvents: number[] = [];
+      const rawOnEvents: number[] = [];
+
+      // 模拟连续 14 天：每晚 23:40 解锁后持续亮屏刷手机至次日 01:12 才熄屏，09:03 首次亮屏起床
+      // 原生层会在 23:40→01:12 期间每 6 分钟注入活跃心跳并在 01:12 记入熄屏端点
+      for (let d = 0; d < 14; d++) {
+        const midnight = todayMidnight - d * 86400000;
+        const wakeAt = midnight + 9 * 3600000 + 3 * 60000; // 09:03
+        const preBedStart = midnight - 20 * 60000; // 前一天 23:40
+        const bedAt = midnight + 72 * 60000; // 当天 01:12
+
+        // 睡前持续亮屏段：23:40 真实亮屏 + 每 6 分钟活跃心跳 + 01:12 真实熄屏
+        if (preBedStart <= now) {
+          events.push(preBedStart);
+          if (d < 3) rawOnEvents.push(preBedStart);
+        }
+        for (let t = preBedStart + 6 * 60000; t < bedAt; t += 6 * 60000) {
+          if (t <= now) events.push(t);
+        }
+        if (bedAt <= now) {
+          events.push(bedAt);
+          if (d < 3) offEvents.push(bedAt);
+        }
+
+        // 目标夜可选短暂起夜（如 03:40 亮屏 1 分钟后 03:41 熄屏）
+        if (d === 0 && opts?.nightPickupMin !== undefined) {
+          const pOn = midnight + opts.nightPickupMin * 60000;
+          const pOff = pOn + 60000;
+          events.push(pOn);
+          rawOnEvents.push(pOn);
+          offEvents.push(pOff);
+        }
+
+        // 09:03 真实亮屏起床 + 日间活跃（每 7 分钟一次，持续到 22:30）
+        if (wakeAt <= now) {
+          events.push(wakeAt);
+          if (d < 3) rawOnEvents.push(wakeAt);
+          const dayEnd = Math.min(midnight + 22 * 3600000 + 30 * 60000, now);
+          for (let t = wakeAt + 7 * 60000; t <= dayEnd; t += 7 * 60000) {
+            events.push(t);
+          }
+        }
+      }
+      events.sort((a, b) => a - b);
+      offEvents.sort((a, b) => a - b);
+      rawOnEvents.sort((a, b) => a - b);
+      return { now, events, offEvents, rawOnEvents };
+    }
+
+    it('F1 睡前连续刷手机至 01:12 熄屏、09:03 起床，即便先验被污染为 00:00 仍精准对齐到分钟', () => {
+      const sc = buildContinuousPreBedScenario();
+      const res = fitSleepModel({
+        events: sc.events,
+        offEvents: sc.offEvents,
+        rawOnEvents: sc.rawOnEvents,
+        observedUntil: sc.now,
+        chronotype: 'night',
+        habitBedMin: 0, // 模拟此前误记 00:00 形成的污染先验
+        habitWakeMin: 9 * 60,
+        now: sc.now,
+      });
+      expect(res.status).toBe('ok');
+      if (res.status !== 'ok') return;
+      expect(res.bedtime).toBe('01:12');
+      expect(res.wakeTime).toBe('09:03');
+      expect(res.sleepEventsInTarget).toBe(0);
+    });
+
+    it('F2 夜间 03:40 短暂起夜不会带偏 01:12 就寝边界，且 computeModelProposal 透传对齐与真实起夜计数', () => {
+      const sc = buildContinuousPreBedScenario({ nightPickupMin: 3 * 60 + 40 });
+      const res = fitSleepModel({
+        events: sc.events,
+        offEvents: sc.offEvents,
+        rawOnEvents: sc.rawOnEvents,
+        observedUntil: sc.now,
+        chronotype: 'night',
+        habitBedMin: 0,
+        habitWakeMin: 9 * 60,
+        now: sc.now,
+      });
+      expect(res.status).toBe('ok');
+      if (res.status !== 'ok') return;
+      expect(res.bedtime).toBe('01:12');
+      expect(res.wakeTime).toBe('09:03');
+      expect(res.sleepEventsInTarget).toBe(1);
+
+      // 同时验证经由 computeModelProposal 且历史记录全部被污染为 00:00–09:00 时仍能纠正为 01:12–09:03
+      const nd = new Date(sc.now);
+      const pollutedRecords = Array.from({ length: 7 }, (_, i) => {
+        const dt = new Date(nd.getFullYear(), nd.getMonth(), nd.getDate() - (i + 2));
+        const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        return {
+          id: 'p' + i,
+          date: iso,
+          bedtime: '00:00',
+          wakeTime: '09:00',
+          durationMinutes: 540,
+          deepSleepMinutes: 130,
+          lightSleepMinutes: 350,
+          remSleepMinutes: 50,
+          awakeMinutes: 10,
+          sleepScore: 85,
+          sleepEfficiency: 92,
+          latencyMinutes: 10,
+          wakeCount: 0,
+        };
+      });
+      const prop = computeModelProposal({
+        events: sc.events,
+        offEvents: sc.offEvents,
+        rawOnEvents: sc.rawOnEvents,
+        observedUntil: sc.now,
+        chronotype: 'night',
+        records: pollutedRecords as any,
+        sessionActive: false,
+        handledDate: null,
+        now: new Date(sc.now),
+      });
+      expect(prop.proposal).not.toBeNull();
+      expect(prop.proposal?.bedtime).toBe('01:12');
+      expect(prop.proposal?.wakeTime).toBe('09:03');
+    });
+
+    it('F3 缺失 offEvents/rawOnEvents 时向下兼容 15 分钟桶粗边界且不误判 00:00', () => {
+      const sc = buildContinuousPreBedScenario();
+      const res = fitSleepModel({
+        events: sc.events,
+        observedUntil: sc.now,
+        chronotype: 'night',
+        habitBedMin: 0,
+        habitWakeMin: 9 * 60,
+        now: sc.now,
+      });
+      expect(res.status).toBe('ok');
+      if (res.status !== 'ok') return;
+      expect(circularDiff(minutesOf(res.bedtime), 72)).toBeLessThanOrEqual(15);
+      expect(circularDiff(minutesOf(res.wakeTime), 9 * 60 + 3)).toBeLessThanOrEqual(15);
+    });
+  });
 });

@@ -163,6 +163,8 @@ export function computeProposal(input: ProposalInput): Proposal | null {
  */
 export interface ModelProposalInput {
   events: number[];
+  offEvents?: number[];
+  rawOnEvents?: number[];
   observedUntil: number;
   chronotype: 'night' | 'day' | 'irregular';
   records: SleepRecord[];
@@ -198,7 +200,7 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
   // 拟合缓存：events 数组在 usageSignal 的 30min TTL 内是同一引用，而
   // records/handledDate 的每次变化都会触发 effect 重跑——坐标上升不必重跑。
   // 缓存命中后 gate 4/6/窗口闸仍全量复查（它们不进缓存键，语义不变）
-  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${input.observedUntil}|${modelWindowStart((input.now ?? new Date()).getTime(), input.chronotype === 'day' ? 'day' : 'night', habitBedMin, habitWakeMin)}`;
+  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${input.observedUntil}|${modelWindowStart((input.now ?? new Date()).getTime(), input.chronotype === 'day' ? 'day' : 'night', habitBedMin, habitWakeMin)}|${input.offEvents?.length ?? 0}|${input.rawOnEvents?.length ?? 0}`;
   let fit: ReturnType<typeof fitSleepModel>;
   // 精确命中：events 同引用且键全同。近似命中（第 51 轮审计 P1）：后台恢复
   // 的 force 刷新总换出新 events 引用，但观测端点只前进 <30min 时（夜睡段
@@ -213,6 +215,8 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
   } else {
     fit = fitSleepModel({
       events: input.events,
+      offEvents: input.offEvents,
+      rawOnEvents: input.rawOnEvents,
       observedUntil: input.observedUntil,
       chronotype: input.chronotype === 'day' ? 'day' : 'night',
       habitBedMin,

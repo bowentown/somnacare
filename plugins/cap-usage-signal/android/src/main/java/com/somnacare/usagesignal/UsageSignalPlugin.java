@@ -198,12 +198,18 @@ public class UsageSignalPlugin extends Plugin {
     }
 
     /**
-     * 导出原始亮屏事件时间戳（SensibleSleep 模型输入，第 26 轮）。
+     * 导出屏幕活跃事件时间戳（SensibleSleep 模型输入，v1.43.2 升级持续亮屏活跃感知）：
      *
-     * 只回传「亮屏起始」事件（SCREEN_INTERACTIVE / KEYGUARD_HIDDEN）的 epoch ms——
-     * 模型只数次数、刻意丢弃时长（论文：事件时长中位 ≈26.5s，无信息量）。
-     * 隐私边界更新：事件流此前"不出本类"，现允许到 JS 内存中参与模型计算——
-     * 仍不落盘、不进备份、不上传，全程留在本机。
+     * 问题背景：早期只回传「亮屏起始」（SCREEN_INTERACTIVE / KEYGUARD_HIDDEN），当用户睡前
+     * 连续亮屏刷手机 1–2 小时不熄屏时，中间没有任何新的亮屏起始事件，模型会把整段连续
+     * 玩手机的时间当成 0 事件空白并把就寝时刻误判提前到 00:00。
+     *
+     * 升级口径：
+     *  1) events：真实亮屏起始 + 持续亮屏区间内每 6 分钟的活跃心跳（单段上限 3h，排除本应用
+     *     床头夜钟常亮场景）+ 非本应用前台切换（5min 去重）+ 合理亮屏段的熄屏端点；
+     *  2) offEvents / rawOnEvents（近 3 天纯时间戳）：供前端在模型锁定主睡眠段后做分钟级
+     *     边界对齐（吸附到真实熄屏与首次亮屏分钟）与真实夜间亮屏计数。
+     * 隐私边界不变：全量事件只进 JS 内存参与计算，不落盘、不进备份、不上传。
      */
     @PluginMethod
     public void queryScreenOnEvents(PluginCall call) {
@@ -224,24 +230,117 @@ public class UsageSignalPlugin extends Plugin {
             }
             long now = System.currentTimeMillis();
             long begin = now - days * DAY_MS;
+            long detailCutoff = now - 3 * DAY_MS;
+            String ownPkg = ctx.getPackageName();
+
             UsageEvents events = usm.queryEvents(begin, now);
             UsageEvents.Event ev = new UsageEvents.Event();
-            JSArray arr = new JSArray();
+            java.util.ArrayList<Long> modelEvents = new java.util.ArrayList<>();
+            java.util.ArrayList<Long> offEvents = new java.util.ArrayList<>();
+            java.util.ArrayList<Long> rawOnEvents = new java.util.ArrayList<>();
+
+            final long HEARTBEAT_STEP_MS = 6 * 60_000L;     // ~2.5 事件/15min，对齐模型清醒先验 A_W=2.5
+            final long MAX_CONT_SCREEN_MS = 3 * 3600_000L;  // 单段连续亮屏心跳封顶 3h（防忘锁屏挂机误判通宵）
+            final long FG_DEDUP_MS = 5 * 60_000L;
+
             long lastOnTs = -1;
+            long lastOffTs = -1;
+            long currentOnStart = -1;
+            long lastFgAddedTs = -1;
+            long lastOtherFgTs = -1;
+            String currentFgPkg = "";
+
             while (events.hasNextEvent()) {
                 events.getNextEvent(ev);
+                long t = ev.getTimeStamp();
                 int type = ev.getEventType();
-                boolean on = type == EVT_SCREEN_INTERACTIVE || type == EVT_KEYGUARD_HIDDEN;
-                if (!on) continue;
-                // 与 queryDailyUsage 同口径：一次拿起通常同时产生亮屏+解锁两事件，
-                // 5s 内合并计 1——不去重会把清醒段密度系统性放大约 2 倍，
-                // 模型的 λ 对比度闸门（≥8）实际放水一半
-                if (lastOnTs >= 0 && ev.getTimeStamp() - lastOnTs < 5000) continue;
-                lastOnTs = ev.getTimeStamp();
-                arr.put(ev.getTimeStamp());
+
+                if (type == EVT_SCREEN_INTERACTIVE || type == EVT_KEYGUARD_HIDDEN) {
+                    boolean reopenedAfterOff = currentOnStart < 0;
+                    // SCREEN_INTERACTIVE 明确代表屏幕由灭变亮：重设段起点，防止此前 OEM 漏发熄屏事件或短熄再亮导致漏记起点
+                    if (type == EVT_SCREEN_INTERACTIVE || reopenedAfterOff) {
+                        currentOnStart = t;
+                    }
+                    if (!reopenedAfterOff && lastOnTs >= 0 && t - lastOnTs < 5000) continue;
+                    lastOnTs = t;
+                    modelEvents.add(t);
+                    if (t >= detailCutoff) rawOnEvents.add(t);
+                } else if (type == EVT_SCREEN_NON_INTERACTIVE || type == EVT_KEYGUARD_SHOWN) {
+                    if (lastOffTs >= 0 && t - lastOffTs < 5000) continue;
+                    lastOffTs = t;
+                    if (t >= detailCutoff) offEvents.add(t);
+
+                    if (currentOnStart >= 0 && t > currentOnStart) {
+                        long span = t - currentOnStart;
+                        // 保护床头夜钟：若整段长亮屏超过 15 分钟且始终停在本应用无其他 App 切换，不补清醒心跳
+                        boolean ownClockOnly = ownPkg.equals(currentFgPkg)
+                                && span > 15 * 60_000L
+                                && (lastOtherFgTs < currentOnStart);
+                        if (!ownClockOnly && span >= 2 * 60_000L) {
+                            long effectiveEnd = Math.min(t, currentOnStart + MAX_CONT_SCREEN_MS);
+                            // 超过 3h 的长亮若中途仍有其他应用切换，延展到末次切换后 30 分钟内
+                            if (t > effectiveEnd && lastOtherFgTs > currentOnStart) {
+                                effectiveEnd = Math.min(t, Math.max(effectiveEnd, lastOtherFgTs + 30 * 60_000L));
+                            }
+                            for (long hb = currentOnStart + HEARTBEAT_STEP_MS; hb < effectiveEnd; hb += HEARTBEAT_STEP_MS) {
+                                modelEvents.add(hb);
+                            }
+                            // 熄屏端点本身标记清醒段结束时刻（避免最后一截不足 6 分钟落空）
+                            if (effectiveEnd == t) {
+                                modelEvents.add(t);
+                            }
+                        }
+                    } else if (currentOnStart < 0) {
+                        // 跨查询起点刚熄屏：记入熄屏端点
+                        modelEvents.add(t);
+                    }
+                    currentOnStart = -1;
+                } else if (type == EVT_FG_START) {
+                    String pkg = ev.getPackageName();
+                    if (pkg == null || pkg.isEmpty() || "com.android.systemui".equals(pkg)) continue;
+                    currentFgPkg = pkg;
+                    if (!ownPkg.equals(pkg)) {
+                        lastOtherFgTs = t;
+                        if (lastFgAddedTs < 0 || t - lastFgAddedTs >= FG_DEDUP_MS) {
+                            lastFgAddedTs = t;
+                            modelEvents.add(t);
+                        }
+                    }
+                }
             }
+
+            // 若查询此刻屏幕仍处于亮起状态（如早起或深夜正在连续刷手机），把截至此刻的连续亮屏心跳补齐
+            if (currentOnStart >= 0 && now > currentOnStart) {
+                long span = now - currentOnStart;
+                boolean ownClockOnly = ownPkg.equals(currentFgPkg)
+                        && span > 15 * 60_000L
+                        && (lastOtherFgTs < currentOnStart);
+                if (!ownClockOnly && span >= 2 * 60_000L) {
+                    long effectiveEnd = Math.min(now, currentOnStart + MAX_CONT_SCREEN_MS);
+                    for (long hb = currentOnStart + HEARTBEAT_STEP_MS; hb <= effectiveEnd; hb += HEARTBEAT_STEP_MS) {
+                        modelEvents.add(hb);
+                    }
+                }
+            }
+
+            java.util.Collections.sort(modelEvents);
+            JSArray arr = new JSArray();
+            long prevEmitted = -1;
+            for (Long ts : modelEvents) {
+                // 相邻事件按 60s 温和去重，防止前台切换与心跳落在同一秒导致单桶异常爆炸
+                if (prevEmitted >= 0 && ts - prevEmitted < 60_000L) continue;
+                prevEmitted = ts;
+                arr.put(ts);
+            }
+            JSArray offArr = new JSArray();
+            for (Long ts : offEvents) offArr.put(ts);
+            JSArray rawOnArr = new JSArray();
+            for (Long ts : rawOnEvents) rawOnArr.put(ts);
+
             JSObject ret = new JSObject();
             ret.put("events", arr);
+            ret.put("offEvents", offArr);
+            ret.put("rawOnEvents", rawOnArr);
             ret.put("observedUntil", now);
             call.resolve(ret);
         } catch (Exception e) {

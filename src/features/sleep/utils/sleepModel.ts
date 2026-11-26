@@ -52,8 +52,12 @@ const RECENTRE_MAX_BINS = 12;         // 中位数重估偏离先验 > 3h = 作�
 const MAX_ITERS = 12;
 
 export interface SleepModelInput {
-  /** 亮屏事件 epoch ms（只数次数；时长在事件层就丢弃） */
+  /** 屏幕活跃事件 epoch ms（v1.43.2 起含持续亮屏心跳，杜绝睡前连刷被当成 0 事件空白） */
   events: number[];
+  /** 可选：真实熄屏时间戳 epoch ms（用于将 15 分钟粗桶入睡边界精确对齐到分钟级放下时刻） */
+  offEvents?: number[];
+  /** 可选：未经心跳补点的真实亮屏起始 epoch ms（用于起床边界对齐与真实夜间亮屏次数统计） */
+  rawOnEvents?: number[];
   /** 观测截止 epoch（= 查询时刻；未观测桶从似然中剔除，绝不当 0 事件） */
   observedUntil: number;
   chronotype: 'night' | 'day';
@@ -418,9 +422,55 @@ export function fitSleepModel(input: SleepModelInput): SleepModelOutcome {
   const targetDay = days[targetIdx];
   const target = assigns[activeIdx.indexOf(targetIdx)];
 
-  const bedtimeMs = windowStart0 - targetIdx * 86400000 + target.ts * BIN_MS;
-  const wakeMs = windowStart0 - targetIdx * 86400000 + target.ta * BIN_MS;
-  const sleepEventsInTarget = targetDay.Kp[target.ta] - targetDay.Kp[target.ts];
+  const rawBedMs = windowStart0 - targetIdx * 86400000 + target.ts * BIN_MS;
+  const rawWakeMs = windowStart0 - targetIdx * 86400000 + target.ta * BIN_MS;
+
+  // ── 6) 分钟级边界精准对齐（v1.43.2）──
+  // 贝叶斯切换点只输出 15 分钟整桶边界（:00/:15/:30/:45）。在全局锁定主睡眠段（已抗起夜）后，
+  // 若原生提供了真实熄屏/亮屏时间戳，将入睡边界吸附到窗口附近最后一次真实熄屏、将起床边界
+  // 吸附到首次真实亮屏，把误差从 ±15min 压缩到 1 分钟内。
+  let bedtimeMs = rawBedMs;
+  let wakeMs = rawWakeMs;
+  const offEvents = input.offEvents;
+  if (offEvents && offEvents.length > 0) {
+    // 覆盖粗桶左侧 30 分钟与右侧 15 分钟：精准吸附真实放下手机时刻，同时不被半夜起夜看表事件带偏
+    const lo = rawBedMs - 30 * 60_000;
+    const hi = Math.min(rawBedMs + 15 * 60_000, rawWakeMs - 180 * 60_000);
+    let snappedOff = -1;
+    for (const t of offEvents) {
+      if (t >= lo && t <= hi && t > snappedOff) {
+        snappedOff = t;
+      }
+    }
+    if (snappedOff > 0) bedtimeMs = snappedOff;
+  }
+
+  const rawOnEvents = input.rawOnEvents;
+  if (rawOnEvents && rawOnEvents.length > 0) {
+    // 起床边界：在粗边界前 15 分钟至后 30 分钟内寻找第一次真实亮屏（且满足 ≥3h 睡眠底线）
+    const lo = Math.max(bedtimeMs + 180 * 60_000, rawWakeMs - 15 * 60_000);
+    const hi = Math.min(observedUntil, rawWakeMs + 30 * 60_000);
+    let snappedOn = -1;
+    for (const t of rawOnEvents) {
+      if (t >= lo && t <= hi && (snappedOn < 0 || t < snappedOn)) {
+        snappedOn = t;
+      }
+    }
+    if (snappedOn > 0) wakeMs = snappedOn;
+  }
+
+  // 安全护栏：精调后仍保证严格满足合法睡眠窗下限（≥3h）且不越过观测截止时刻
+  if (!(wakeMs - bedtimeMs >= 180 * 60_000 && wakeMs <= observedUntil + 45 * 60_000)) {
+    bedtimeMs = rawBedMs;
+    wakeMs = rawWakeMs;
+  }
+
+  // 真实夜间亮屏次数：有 rawOnEvents 时严格统计 (bedtimeMs+1min, wakeMs-1min) 内的真实亮屏，
+  // 避免把持续亮屏心跳点误计为起夜次数；无 rawOnEvents 时兼容旧口径
+  const sleepEventsInTarget =
+    rawOnEvents && rawOnEvents.length > 0
+      ? rawOnEvents.filter((t) => t > bedtimeMs + 60_000 && t < wakeMs - 60_000).length
+      : targetDay.Kp[target.ta] - targetDay.Kp[target.ts];
 
   return {
     status: 'ok',

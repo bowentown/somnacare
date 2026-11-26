@@ -186,6 +186,8 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(
       }
       const res = computeModelProposal({
         events: ev.events,
+        offEvents: ev.offEvents,
+        rawOnEvents: ev.rawOnEvents,
         observedUntil: ev.observedUntil,
         chronotype,
         records,

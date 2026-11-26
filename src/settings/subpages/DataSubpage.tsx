@@ -92,6 +92,8 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
         : '⓪ 监测会话：无';
       const model = computeModelProposal({
         events: ev?.events ?? [],
+        offEvents: ev?.offEvents,
+        rawOnEvents: ev?.rawOnEvents,
         observedUntil: ev?.observedUntil ?? Date.now(),
         chronotype,
         records,
