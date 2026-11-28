@@ -18,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 鲸鱼娘桌宠悬浮窗原生插件（Phase 3 拆分独立，Phase 6 新增深夜刷屏超时轻提醒同步）。
+ * 鲸鱼娘桌宠悬浮窗原生插件（v1.44.0 补齐外部磁贴/通知关闭双向同步，杜绝 petSync 复活已关闭的桌宠）。
  */
 @CapacitorPlugin(name = "PetOverlay")
 public class PetOverlayPlugin extends Plugin {
@@ -63,33 +63,51 @@ public class PetOverlayPlugin extends Plugin {
 
     @PluginMethod
     public void petStart(PluginCall call) {
-        if (!Settings.canDrawOverlays(getContext())) {
+        Context ctx = getContext();
+        if (!Settings.canDrawOverlays(ctx)) {
             call.reject("OVERLAY_PERMISSION_REQUIRED");
             return;
         }
         try {
-            writePetSnapshot(call);
-            Intent intent = new Intent(getContext(), PetOverlayService.class)
+            writePetSnapshot(call, true);
+            Intent intent = new Intent(ctx, PetOverlayService.class)
                     .setAction(PetOverlayService.ACTION_START);
             if (Build.VERSION.SDK_INT >= 26) {
-                getContext().startForegroundService(intent);
+                ctx.startForegroundService(intent);
             } else {
-                getContext().startService(intent);
+                ctx.startService(intent);
             }
+            PetOverlayTileService.requestRefresh(ctx);
             call.resolve();
         } catch (Exception e) {
             call.reject("启动桌宠失败: " + e.getMessage());
         }
     }
 
+    /**
+     * 同步文案/上下文/皮肤/深夜刷屏参数。
+     * 严守双向开关契约：若用户已通过控制中心磁贴或通知栏关闭桌宠（pet_enabled=false），
+     * 绝不再复活拉起服务，并把 enabled=false 回传给前端同步关掉开关。
+     */
     @PluginMethod
     public void petSync(PluginCall call) {
         try {
-            writePetSnapshot(call);
-            Intent intent = new Intent(getContext(), PetOverlayService.class)
-                    .setAction(PetOverlayService.ACTION_START);
-            getContext().startService(intent);
-            call.resolve();
+            Context ctx = getContext();
+            boolean nativeEnabled = PetOverlayService.isNativeEnabled(ctx);
+            writePetSnapshot(call, false);
+            if (nativeEnabled && Settings.canDrawOverlays(ctx)) {
+                Intent intent = new Intent(ctx, PetOverlayService.class)
+                        .setAction(PetOverlayService.ACTION_START);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    ctx.startForegroundService(intent);
+                } else {
+                    ctx.startService(intent);
+                }
+            }
+            JSObject ret = new JSObject();
+            ret.put("enabled", nativeEnabled);
+            ret.put("running", PetOverlayService.sActiveView != null || nativeEnabled);
+            call.resolve(ret);
         } catch (Exception e) {
             call.reject("同步桌宠文案失败: " + e.getMessage());
         }
@@ -112,10 +130,13 @@ public class PetOverlayPlugin extends Plugin {
 
     @PluginMethod
     public void getPetState(PluginCall call) {
+        Context ctx = getContext();
         JSObject ret = new JSObject();
         WhaleGirlView v = PetOverlayService.sActiveView;
         String anim = v != null ? v.currentAnimName() : null;
+        boolean nativeEnabled = PetOverlayService.isNativeEnabled(ctx);
         ret.put("running", anim != null);
+        ret.put("enabled", nativeEnabled);
         ret.put("anim", anim == null ? "" : anim);
         call.resolve(ret);
     }
@@ -143,7 +164,7 @@ public class PetOverlayPlugin extends Plugin {
         if (wake != null && !wake.isEmpty()) ed.putString(PetOverlayService.K_WAKE_TARGET, wake);
     }
 
-    private void writePetSnapshot(PluginCall call) {
+    private void writePetSnapshot(PluginCall call, boolean markEnabled) {
         int every = 8;
         try {
             Integer e = call.getInt("bubbleEvery");
@@ -160,8 +181,11 @@ public class PetOverlayPlugin extends Plugin {
                 .putInt(PetOverlayService.K_CTX_SCORE, ctxScore != null ? ctxScore : -1)
                 .putInt(PetOverlayService.K_CTX_MISSED, ctxMissed != null ? ctxMissed : 0)
                 .putBoolean(PetOverlayService.K_CTX_LAST_NIGHT, Boolean.TRUE.equals(call.getBoolean("lastNightRecorded")))
-                .putInt(PetOverlayService.K_CTX_STREAK, ctxStreak != null ? ctxStreak : 0)
-                .putBoolean("pet_tile_active", true);
+                .putInt(PetOverlayService.K_CTX_STREAK, ctxStreak != null ? ctxStreak : 0);
+        if (markEnabled) {
+            ed.putBoolean(PetOverlayService.K_PET_ENABLED, true)
+                    .putBoolean(PetOverlayTileService.KEY_PET_TILE_ACTIVE, true);
+        }
         applyStimulusFields(call, ed);
         ed.apply();
     }
@@ -169,14 +193,15 @@ public class PetOverlayPlugin extends Plugin {
     @PluginMethod
     public void petStop(PluginCall call) {
         try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            Context ctx = getContext();
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .remove("pet_minimized")
-                    .putBoolean("pet_tile_active", false)
+                    .putBoolean(PetOverlayService.K_PET_ENABLED, false)
+                    .putBoolean(PetOverlayTileService.KEY_PET_TILE_ACTIVE, false)
                     .apply();
-            Intent intent = new Intent(getContext(), PetOverlayService.class)
-                    .setAction(PetOverlayService.ACTION_STOP);
-            getContext().startService(intent);
+            ctx.stopService(new Intent(ctx, PetOverlayService.class));
+            PetOverlayTileService.requestRefresh(ctx);
         } catch (Exception ignored) {
         }
         call.resolve();

@@ -8,6 +8,7 @@ import { useMinuteTick } from '../../../shared/hooks/useMinuteTick';
 import {
   getEyeRestStatus,
   isEyeCareNative,
+  parseTodayMaxContinuousMin,
   setEyeRestEnabled,
   type EyeRestStatus,
 } from '../utils/eyeCare';
@@ -45,14 +46,7 @@ export const EyeCareHealthSubpage: React.FC = () => {
 
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const todayHealth = dailyHealth.find((d) => d.date === todayKey) ?? null;
-  const maxToday = (() => {
-    try {
-      const obj = JSON.parse(rest.maxTodayRaw || '{}');
-      return typeof obj.maxMin === 'number' ? obj.maxMin : null;
-    } catch {
-      return null;
-    }
-  })();
+  const maxToday = parseTodayMaxContinuousMin(rest.maxTodayRaw, todayKey);
 
   const healthChart = dailyHealth.map((d) => ({
     label: d.date.slice(5),

@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
@@ -20,30 +21,28 @@ import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
  * 摇一摇 / 开屏 / 应用内广告跳过（第 59 轮，第 63 轮接入 GKD 规则子集，
- * 第 66 轮扩展到全屏/局部广告，第 67 轮改为完整关系链求值）。
+ * 第 66 轮扩展到全屏/局部广告，第 67 轮改为完整关系链求值，v1.44.0 根治防误点与省电门控）。
  *
  * 规则来源：Lin-arm/GKD_subscription 的“开屏广告-全局”、各应用“开屏/全屏/局部广告”
  * 组与全局选择器库（字节/腾讯/京东/快手卡片关闭），由 tools/import-gkd-splash.mts
  * 归一化为 assets/ad_skip_rules.json（关系链 AST，非降级子集）。用户已明确要求
  * 参考该订阅并自行承担版权责任。
  *
- * 第 67 轮修复误点：此前关系选择器被降级成“目标 + 窗口任意位置关键词”，
- * 常驻 SDK 卡片规则会在正常内容里乱点。现在整链逐节点校验（@/</>/+/-/距离），
- * 点击目标只向“紧凑包裹”的祖先攀登（≤2.2×宽/3×高），常驻规则另加
- * 广告词锚点门槛 + 更小尺寸上限，并排除常见桌面。
- *
  * 执行边界（任何一条都不可绕过）：
- *  - 只在本应用开启开关后工作；默认关闭；
+ *  - 只在本应用开启开关后工作；默认关闭；暂停态自动关闭内容变化事件接收；
+ *  - 页面级 excludes：基于整页节点快照预判并缓存，出现排除特征则跳过整条规则；
+ *  - 未收录普通 App 走智能门控：仅在切页/弹窗状态变化与切入前 15 秒扫描，普通滑动不抓整树；
  *  - 开屏规则（splash）：只在目标应用启动后的 matchTime 内执行（最长 15s），
- *    30s 后完全停止；“跳过 3”这类倒计时可在 30s 内兜底；
- *  - 应用内规则（inApp / 全局 always）：目标应用前台期间持续生效，
- *    但受滚动窗口限次（3 分钟内最多 4 次、每次前台会话最多 8 次）；
+ *    30s 后完全停止；“跳过 3”这类倒计时可在 30s 内兜底；解锁回到原 App 重开 8s 窗口；
+ *  - 应用内规则（inApp / 全局 always）：预算与开屏点击分离，
+ *    受滚动窗口限次（3 分钟内最多 4 次、每次前台会话最多 8 次）；
  *  - 目标必须是可点击、可见、小尺寸节点（开屏规则 ≤55%×30%，
  *    应用内 ≤40%×25%，全局常驻 ≤25%×12%）；
  *  - 排除自身、系统 UI、系统设置、输入法、常见桌面等包；
@@ -57,7 +56,10 @@ public class AdSkipService extends AccessibilityService {
     static final String KEY_HITS = "ad_skip_hits";
     /** 用户显式排除不跳过的应用包名集合（首尾逗号包裹 `,pkg1,pkg2,` 存储，避免 getStringSet 并发坑） */
     static final String KEY_EXCLUDED_PKGS = "ad_skip_excluded_pkgs";
-    /** 顺带记录当前前台包名，供深夜刷屏超时提醒在无 UsageStats 权限时零成本复用 */
+    /** 最近 5 条成功跳过事件 JSONArray（含 pkg/label/at/source/text），供误触后一键排除 */
+    static final String KEY_RECENT_HITS = "ad_skip_recent_hits";
+    private static final int RECENT_HITS_MAX = 5;
+    /** 顺带记录当前前台包名，供深夜刷屏超时提醒与护眼相机避让零成本复用 */
     static final String KEY_FG_PKG = "fg_pkg";
     static final String KEY_FG_SINCE = "fg_pkg_since";
     private String lastReportedFgPkg = "";
@@ -80,6 +82,8 @@ public class AdSkipService extends AccessibilityService {
     /** 应用启动后主动轮询窗口的时长与间隔：部分开屏 SDK 只渲染一次、不再发事件 */
     private static final long SPLASH_POLL_WINDOW_MS = 8_000;
     private static final long SPLASH_POLL_INTERVAL_MS = 400;
+    /** 跳过原因诊断日志节流间隔：避免微信/支付宝等排除应用每 200ms 刷满 24 条环形缓冲 */
+    private static final long SKIP_DIAG_THROTTLE_MS = 30_000;
 
     /** 「跳过 3」「跳过3s」这类倒计时是强广告信号：不受 15s 通用窗口限制 */
     private static final Pattern COUNTDOWN = Pattern.compile("^跳[过過]\\s*(广告|廣告)?\\s*\\d+\\s*[sS秒]?\\s*(广告|廣告)?$");
@@ -112,29 +116,35 @@ public class AdSkipService extends AccessibilityService {
         "count_down_view", "tv_counter", "advert_countdown_view",
     };
 
-    private AdSkipRuleStore.Store rules = AdSkipRuleStore.Store.empty();
-    // 扫描后台化（第 133 轮）：无障碍树的收集/匹配整体挪出主线程——此前
-    // 400ms 轮询与事件触发的整树扫描与桌宠渲染节拍、WebView 输入回调同一
-    // 主 Looper 串行，扫描窗口期就是"桌宠/页面偶尔卡一下"的窗口期。主线程
+    private static volatile AdSkipService sInstance;
+
+    private volatile AdSkipRuleStore.Store rules = AdSkipRuleStore.Store.empty();
+    // 扫描后台化（第 133 轮）：无障碍树的收集/匹配整体挪出主线程——主线程
     // 只保留廉价闸门检查与最终点击执行；单飞闸（scanInFlight）保持旧同步
     // 路径"同一时刻至多一次扫描"的语义，线程随服务销毁回收。
     private HandlerThread scanThread;
     private volatile Handler scanHandler;
     private volatile boolean scanInFlight = false;
+    /** 仅在单线程 adskip-scan 扫描期间使用：追踪本次扫描持有的全部节点以在 API<33 安全回收 */
+    private IdentityHashMap<AccessibilityNodeInfo, Boolean> currentScanOwned;
     private long lastEventAt = 0;
     private long lastClickAt = 0;
     private long packageSince = 0;
     private long lastPkgEventAt = 0;
-    private String lastPackage = "";
-    private String lastActivity = "";
-    private int clicksThisLaunch = 0;
-    private int globalClicksThisLaunch = 0;
+    private volatile String lastPackage = "";
+    private volatile String lastActivity = "";
+    /** 经过 com.android.systemui（息屏/锁屏/下拉通知）后返回原 App 时重开 8s 开屏窗 */
+    private boolean returnedFromSystemUi = false;
+    private volatile int clicksThisLaunch = 0;
+    private volatile int globalClicksThisLaunch = 0;
+    /** 应用内广告本次前台会话点击次数（与开屏 clicksThisLaunch 预算分离） */
+    private volatile int inAppClicksThisSession = 0;
     /** 应用内广告滚动窗口的点击时间戳（随前台包切换/空闲清零） */
     private final ArrayDeque<Long> inAppClickTimes = new ArrayDeque<>();
+    private String lastSkipDiagKey = "";
+    private long lastSkipDiagAt = 0;
 
-    // ── 运行时诊断（第 69 轮）：环形缓冲最近 24 条，供设置页展示。
-    // 远程排查“某应用跳不过去”时，这段日志能直接区分：服务没收到事件 /
-    // 扫描了但没命中 / 命中了但点击失败 —— 不再靠猜。 ──
+    // ── 运行时诊断（第 69 轮）：环形缓冲最近 24 条，供设置页展示 ──
     private static final ArrayDeque<String> DIAG = new ArrayDeque<>();
     private static final int DIAG_MAX = 24;
 
@@ -152,11 +162,67 @@ public class AdSkipService extends AccessibilityService {
         }
     }
 
+    private void diagSkipThrottled(String pkg, String reason) {
+        long now = SystemClock.uptimeMillis();
+        String key = pkg + "|" + reason;
+        if (key.equals(lastSkipDiagKey) && now - lastSkipDiagAt < SKIP_DIAG_THROTTLE_MS) {
+            return;
+        }
+        lastSkipDiagKey = key;
+        lastSkipDiagAt = now;
+        diag("skip " + pkg + " reason=" + reason);
+    }
+
     /** 设置页读取用（最新在最后） */
     static java.util.List<String> diagSnapshot() {
         synchronized (DIAG) {
             return new ArrayList<>(DIAG);
         }
+    }
+
+    /** 读取当前已加载规则版本/应用数元数据（若服务未连接则按偏好/内置兜底） */
+    static int currentRulesVersion(Context context) {
+        AdSkipService svc = sInstance;
+        if (svc != null && svc.rules.sourceVersion > 0) return svc.rules.sourceVersion;
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(AdSkipRuleUpdater.KEY_RULES_VERSION, 0);
+    }
+
+    static int currentRulesAppCount(Context context) {
+        AdSkipService svc = sInstance;
+        if (svc != null && !svc.rules.apps.isEmpty()) return svc.rules.apps.size();
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(AdSkipRuleUpdater.KEY_RULES_APP_COUNT, 0);
+    }
+
+    static boolean isHotRulesActive(Context context) {
+        AdSkipService svc = sInstance;
+        if (svc != null && !svc.rules.apps.isEmpty()) return svc.rules.hotLoaded;
+        return AdSkipRuleStore.hotRuleFile(context).isFile();
+    }
+
+    /** 手动刷新规则落盘后通知运行中的服务异步热重载 */
+    static void reloadRulesAsync(Context context) {
+        final AdSkipService svc = sInstance;
+        if (svc == null) return;
+        Handler scan = svc.scanHandler;
+        if (scan == null) return;
+        final Context app = context.getApplicationContext();
+        scan.post(() -> {
+            AdSkipRuleStore.Store loaded = AdSkipRuleStore.load(app);
+            if (!loaded.apps.isEmpty()) {
+                svc.rules = loaded;
+                diag("rules reloaded v" + loaded.sourceVersion + " apps=" + loaded.apps.size()
+                        + (loaded.hotLoaded ? " hot" : " bundled"));
+            }
+        });
+    }
+
+    /** 开关变更后同步更新事件订阅（暂停态关闭 TYPE_WINDOW_CONTENT_CHANGED，省电零空转） */
+    static void syncEventFilter(Context context) {
+        final AdSkipService svc = sInstance;
+        if (svc == null) return;
+        svc.handler.post(() -> svc.updateServiceEventTypes(svc.enabled()));
     }
 
     /** 按应用累计命中次数（第 74 轮）：设置页展示 + 随诊断一起复制给开发者 */
@@ -171,7 +237,6 @@ public class AdSkipService extends AccessibilityService {
             org.json.JSONObject obj = raw.isEmpty() ? new org.json.JSONObject() : new org.json.JSONObject(raw);
             obj.put(pkg, obj.optInt(pkg, 0) + 1);
             if (obj.length() > HITS_BY_PKG_MAX) {
-                // 超限时丢掉计数最少的条目，保持常驻体积可控
                 java.util.List<String> keys = new ArrayList<>();
                 java.util.Iterator<String> it = obj.keys();
                 while (it.hasNext()) keys.add(it.next());
@@ -182,6 +247,71 @@ public class AdSkipService extends AccessibilityService {
         } catch (Exception ignored) {
             // 统计失败不影响跳过本身
         }
+    }
+
+    private void recordRecentHit(String pkg, String source, String matchedText) {
+        if (pkg == null || pkg.isEmpty()) return;
+        try {
+            String label = resolveAppLabel(this, pkg);
+            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String raw = sp.getString(KEY_RECENT_HITS, "[]");
+            org.json.JSONArray prev;
+            try {
+                prev = new org.json.JSONArray(raw);
+            } catch (Exception e) {
+                prev = new org.json.JSONArray();
+            }
+            org.json.JSONObject entry = new org.json.JSONObject();
+            entry.put("pkg", pkg);
+            entry.put("label", label);
+            entry.put("at", System.currentTimeMillis());
+            entry.put("source", source == null ? "" : source);
+            entry.put("text", matchedText == null ? "" : matchedText);
+
+            org.json.JSONArray next = new org.json.JSONArray();
+            next.put(entry);
+            for (int i = 0; i < prev.length() && next.length() < RECENT_HITS_MAX; i++) {
+                org.json.JSONObject item = prev.optJSONObject(i);
+                if (item != null && !item.optString("pkg", "").isEmpty()) {
+                    next.put(item);
+                }
+            }
+            sp.edit().putString(KEY_RECENT_HITS, next.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    static org.json.JSONArray recentHits(Context context) {
+        try {
+            String raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY_RECENT_HITS, "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(raw);
+            org.json.JSONArray out = new org.json.JSONArray();
+            for (int i = 0; i < arr.length() && out.length() < RECENT_HITS_MAX; i++) {
+                org.json.JSONObject item = arr.optJSONObject(i);
+                if (item == null) continue;
+                String pkg = item.optString("pkg", "");
+                if (pkg.isEmpty()) continue;
+                if (item.optString("label", "").isEmpty() || pkg.equals(item.optString("label", ""))) {
+                    item.put("label", resolveAppLabel(context, pkg));
+                }
+                out.put(item);
+            }
+            return out;
+        } catch (Exception ignored) {
+            return new org.json.JSONArray();
+        }
+    }
+
+    static String resolveAppLabel(Context context, String pkg) {
+        if (pkg == null || pkg.isEmpty()) return "";
+        try {
+            PackageManager pm = context.getPackageManager();
+            CharSequence cs = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
+            if (cs != null && cs.length() > 0) return cs.toString().trim();
+        } catch (Exception ignored) {
+        }
+        return pkg;
     }
 
     /** 按应用命中统计（package → 次数），供插件回传 */
@@ -201,7 +331,9 @@ public class AdSkipService extends AccessibilityService {
         }
         return out;
     }
+
     private final Handler handler = new Handler(Looper.getMainLooper());
+
     /** 启动窗口内的主动轮询：事件稀疏时保证开屏按钮仍被扫到（窗口外自动停止调度） */
     private final Runnable splashPoller = new Runnable() {
         @Override
@@ -216,23 +348,68 @@ public class AdSkipService extends AccessibilityService {
         }
     };
 
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefListener =
+            (sp, key) -> {
+                if (KEY_ENABLED.equals(key)) {
+                    handler.post(() -> {
+                        boolean on = enabled();
+                        updateServiceEventTypes(on);
+                        if (!on) handler.removeCallbacks(splashPoller);
+                    });
+                }
+            };
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        rules = AdSkipRuleStore.load(this);
+        sInstance = this;
         scanThread = new HandlerThread("adskip-scan");
         scanThread.start();
         scanHandler = new Handler(scanThread.getLooper());
-        AccessibilityServiceInfo info = getServiceInfo();
-        if (info != null) {
-            info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                    | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+        // 608 KB 规则 JSON 移至后台线程解析，不阻塞无障碍主线程连接
+        final Context app = getApplicationContext();
+        scanHandler.post(() -> {
+            AdSkipRuleStore.Store loaded = AdSkipRuleStore.load(app);
+            rules = loaded;
+            try {
+                SharedPreferences sp = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                if (loaded.sourceVersion > 0 && sp.getInt(AdSkipRuleUpdater.KEY_RULES_VERSION, 0) == 0) {
+                    sp.edit()
+                            .putInt(AdSkipRuleUpdater.KEY_RULES_VERSION, loaded.sourceVersion)
+                            .putInt(AdSkipRuleUpdater.KEY_RULES_APP_COUNT, loaded.apps.size())
+                            .apply();
+                }
+            } catch (Exception ignored) {
+            }
+            diag("rules loaded v" + loaded.sourceVersion + " apps=" + loaded.apps.size()
+                    + (loaded.hotLoaded ? " hot" : " bundled"));
+        });
+        try {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .registerOnSharedPreferenceChangeListener(prefListener);
+        } catch (Exception ignored) {
+        }
+        updateServiceEventTypes(enabled());
+    }
+
+    private void updateServiceEventTypes(boolean adSkipOn) {
+        try {
+            AccessibilityServiceInfo info = getServiceInfo();
+            if (info == null) return;
+            // 暂停态关闭 TYPE_WINDOW_CONTENT_CHANGED，仅保留低频 TYPE_WINDOW_STATE_CHANGED
+            // 以维持前台包名记录（供桌宠深夜刷屏提醒与护眼相机避让零成本复用）
+            int desired = adSkipOn
+                    ? (AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                            | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+                    : AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+            info.eventTypes = desired;
             info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
             info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
                     | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
                     | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
             info.notificationTimeout = 50;
             setServiceInfo(info);
+        } catch (Exception ignored) {
         }
     }
 
@@ -300,6 +477,24 @@ public class AdSkipService extends AccessibilityService {
         return cur;
     }
 
+    /** 批量覆写排除名单（供 Backup v3 恢复使用） */
+    static java.util.List<String> setExcludedPackages(Context context, java.util.List<String> pkgs) {
+        java.util.Set<String> set = new java.util.HashSet<>();
+        if (pkgs != null) {
+            for (String p : pkgs) {
+                if (p == null) continue;
+                String t = p.trim();
+                if (!t.isEmpty()) set.add(t);
+            }
+        }
+        java.util.List<String> clean = new ArrayList<>(set);
+        java.util.Collections.sort(clean);
+        String joined = clean.isEmpty() ? "" : ("," + android.text.TextUtils.join(",", clean) + ",");
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_EXCLUDED_PKGS, joined).apply();
+        return clean;
+    }
+
     private boolean isExcludedPackage(String pkg) {
         return pkg.isEmpty()
                 || pkg.equals(getPackageName())
@@ -308,18 +503,48 @@ public class AdSkipService extends AccessibilityService {
                 || pkg.equals("com.android.inputmethod.latin");
     }
 
+    /** 过滤 Dialog/AlertDialog/PopupWindow 等非 Activity 窗口类名，避免覆写 lastActivity 导致规则失配 */
+    static boolean isOverlayWindowClass(String cls) {
+        if (cls == null || cls.isEmpty()) return true;
+        if (cls.startsWith("android.widget.") || cls.startsWith("android.view.")) return true;
+        int dot = cls.lastIndexOf('.');
+        String simple = dot >= 0 ? cls.substring(dot + 1) : cls;
+        String simpleLower = simple.toLowerCase(Locale.ROOT);
+        // 真正的 Activity（含名称里带 Dialog 的 DialogActivity）允许更新 lastActivity
+        if (simpleLower.endsWith("activity")) return false;
+        return simpleLower.contains("dialog")
+                || simpleLower.contains("popupwindow")
+                || simpleLower.equals("popup")
+                || simpleLower.endsWith("popup")
+                || simpleLower.equals("toast")
+                || simpleLower.equals("framelayout")
+                || simpleLower.equals("linearlayout")
+                || simpleLower.equals("relativelayout");
+    }
+
+    /** 未收录普通 App 智能门控：已收录 1,153 App 照常实时检测；未收录仅在状态切换与切入前 15s 扫描 */
+    static boolean shouldScanForPackage(boolean hasAppRules, boolean stateChange, long elapsedMs) {
+        if (hasAppRules) return true;
+        return stateChange || elapsedMs <= GENERIC_WINDOW_MS;
+    }
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
         boolean stateChange = event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+        CharSequence pkgCs = event.getPackageName();
+        String pkg = pkgCs == null ? "" : pkgCs.toString();
+
         if (stateChange) {
-            CharSequence fgCs = event.getPackageName();
-            String fg = fgCs == null ? "" : fgCs.toString();
-            if (!fg.isEmpty() && !fg.equals("com.android.systemui")
-                    && !fg.contains("inputmethod") && !fg.equals(lastReportedFgPkg)) {
-                lastReportedFgPkg = fg;
+            if ("com.android.systemui".equals(pkg)) {
+                // 息屏/锁屏/系统栏覆盖后标记，返回宿主 App 时重开 8s 开屏轮询窗
+                returnedFromSystemUi = true;
+            }
+            if (!pkg.isEmpty() && !"com.android.systemui".equals(pkg)
+                    && !pkg.contains("inputmethod") && !pkg.equals(lastReportedFgPkg)) {
+                lastReportedFgPkg = pkg;
                 getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                        .putString(KEY_FG_PKG, fg)
+                        .putString(KEY_FG_PKG, pkg)
                         .putLong(KEY_FG_SINCE, System.currentTimeMillis())
                         .apply();
             }
@@ -333,14 +558,13 @@ public class AdSkipService extends AccessibilityService {
         if (now - lastClickAt < CLICK_COOLDOWN_MS) return;
         lastEventAt = now;
 
-        CharSequence pkgCs = event.getPackageName();
-        String pkg = pkgCs == null ? "" : pkgCs.toString();
         if (isExcludedPackage(pkg)) return;
         if (isUserExcludedPackage(this, pkg)) {
             if (!pkg.equals(lastPackage)) {
                 lastPackage = pkg;
+                returnedFromSystemUi = false;
                 handler.removeCallbacks(splashPoller);
-                diag("skip " + pkg + " reason=user-excluded");
+                diagSkipThrottled(pkg, "user-excluded");
             }
             return;
         }
@@ -349,34 +573,49 @@ public class AdSkipService extends AccessibilityService {
             diag("switch " + pkg + " (was " + lastPackage + ")");
             lastPackage = pkg;
             lastActivity = "";
+            returnedFromSystemUi = false;
+            lastSkipDiagKey = "";
+            lastSkipDiagAt = 0;
             packageSince = now;
             lastClickAt = 0;
             clicksThisLaunch = 0;
             globalClicksThisLaunch = 0;
-            inAppClickTimes.clear();
+            resetInAppBudget();
             // 新前台应用：启动窗口内开始主动轮询（开屏 SDK 常只渲染一次不发事件）
             handler.removeCallbacks(splashPoller);
             handler.postDelayed(splashPoller, SPLASH_POLL_INTERVAL_MS);
+        } else if (returnedFromSystemUi) {
+            // 息屏/锁屏返回同一宿主 App：很多 App 会触发热启动开屏广告，重开 8s 轮询与开屏预算
+            returnedFromSystemUi = false;
+            packageSince = now;
+            clicksThisLaunch = 0;
+            globalClicksThisLaunch = 0;
+            diag("resume " + pkg + " (from systemui)");
+            handler.removeCallbacks(splashPoller);
+            handler.postDelayed(splashPoller, SPLASH_POLL_INTERVAL_MS);
         }
-        if (now - lastPkgEventAt > IN_APP_IDLE_RESET_MS) inAppClickTimes.clear();
+
+        if (now - lastPkgEventAt > IN_APP_IDLE_RESET_MS) {
+            resetInAppBudget();
+        }
         lastPkgEventAt = now;
 
         if (stateChange) {
             CharSequence cls = event.getClassName();
-            if (cls != null && cls.length() > 0 && !cls.toString().startsWith("android.widget.")) {
-                if (!cls.toString().equals(lastActivity)) {
-                    diag("state " + pkg + " act=" + cls);
-                    lastActivity = cls.toString();
+            String clsStr = cls == null ? "" : cls.toString();
+            if (!clsStr.isEmpty() && !isOverlayWindowClass(clsStr)) {
+                if (!clsStr.equals(lastActivity)) {
+                    diag("state " + pkg + " act=" + clsStr);
+                    lastActivity = clsStr;
                 }
-                // 每个 Activity/窗口切换都重开 8s 轮询窗：从最近任务冷启重开也会
-                // 再放一次开屏/弹窗广告，不能只在“换包”那一刻轮询
+                // 每个真实 Activity 切换都重开 8s 轮询窗：从最近任务热启也会再放开屏/弹窗广告
                 handler.removeCallbacks(splashPoller);
                 handler.postDelayed(splashPoller, SPLASH_POLL_INTERVAL_MS);
             }
         }
 
         long elapsed = now - packageSince;
-        attemptScan(pkg, elapsed, "event");
+        attemptScan(pkg, elapsed, "event", stateChange);
     }
 
     /** 轮询入口：只在启动窗口内、冷却已过时扫描；返回是否继续调度（窗口外停止，省电） */
@@ -387,20 +626,26 @@ public class AdSkipService extends AccessibilityService {
         long now = SystemClock.uptimeMillis();
         long elapsed = now - packageSince;
         if (elapsed > SPLASH_POLL_WINDOW_MS) return false;
-        if (now - lastClickAt >= CLICK_COOLDOWN_MS) attemptScan(pkg, elapsed, "poll");
+        if (now - lastClickAt >= CLICK_COOLDOWN_MS) attemptScan(pkg, elapsed, "poll", false);
         return true;
     }
 
-    private void attemptScan(String pkg, long elapsed, String source) {
+    private void attemptScan(String pkg, long elapsed, String source, boolean stateChange) {
+        // 未收录普通 App 智能门控：普通滑动（!stateChange 且超 15s）直接跳过，避免抓 800 节点整树
+        boolean hasAppRules = rules.appFor(pkg) != null;
+        if (!shouldScanForPackage(hasAppRules, stateChange, elapsed)) {
+            return;
+        }
+
         // 廉价闸门留在调用线程（主线程）；树扫描挪到 scanHandler（第 133 轮）
         boolean splashPossible = elapsed <= APP_RULE_HARD_LIMIT_MS;
         boolean inAppPossible = hasInAppRules(pkg);
         if (!splashPossible && !inAppPossible) {
-            diag("skip " + pkg + " reason=no-rules window");
+            diagSkipThrottled(pkg, "no-rules window");
             return;
         }
         if (!splashPossible && !inAppBudgetOk()) {
-            diag("skip " + pkg + " reason=budget");
+            diagSkipThrottled(pkg, "budget");
             return;
         }
         Handler scan = scanHandler;
@@ -412,11 +657,14 @@ public class AdSkipService extends AccessibilityService {
             Candidate best = null;
             int nodeCount = 0;
             AccessibilityNodeInfo root = null;
+            IdentityHashMap<AccessibilityNodeInfo, Boolean> owned = new IdentityHashMap<>();
+            currentScanOwned = owned;
             try {
                 root = getRootInActiveWindow();
                 if (root == null) {
                     diag("scan " + pkg + " src=" + source + " root=null");
                 } else {
+                    trackOwned(root);
                     AdSkipRuleStore.Snapshot snap = collect(root);
                     nodeCount = snap.nodes.size();
                     best = findBest(pkg, activity, elapsed, snap);
@@ -426,10 +674,14 @@ public class AdSkipService extends AccessibilityService {
             } catch (Exception ignored) {
                 // 节点在遍历中途失效 / ROM 权限异常：静默跳过本次扫描
             } finally {
-                if (root != null) {
-                    try {
-                        root.recycle();
-                    } catch (Exception ignored) {
+                currentScanOwned = null;
+                // 跨线程节点安全：不提前 recycle 胜出目标/匹配节点（留到主线程 executeHit 完毕后释放），
+                // 其余扫描中创建的节点在 API < 33 全部安全回收，杜绝 IPC 节点泄漏与 UAF
+                AccessibilityNodeInfo keepTarget = best != null ? best.target : null;
+                AccessibilityNodeInfo keepMatched = best != null ? best.matchedNode : null;
+                for (AccessibilityNodeInfo n : owned.keySet()) {
+                    if (n != keepTarget && n != keepMatched) {
+                        safeRecycle(n);
                     }
                 }
             }
@@ -437,40 +689,88 @@ public class AdSkipService extends AccessibilityService {
             final int fnodes = nodeCount;
             Handler main = this.handler;
             if (main != null) {
-                // 回主线程：点击执行 + 全部状态记账（与旧同步路径同一线程语义）
+                // 回主线程：二次校验 + 点击执行 + 全部状态记账 + 目标节点回收
                 main.post(() -> {
                     scanInFlight = false;
                     executeHit(fbest, pkg, elapsed, source, fnodes, activity);
                 });
             } else {
+                recycleCandidate(fbest);
                 scanInFlight = false;
             }
         });
     }
 
-    /** 主线程：命中执行（点击）+ 记账 + 诊断。best=null 时保留旧版"扫了没中"诊断。 */
-    private void executeHit(Candidate best, String pkg, long elapsed, String source, int nodeCount, String activity) {
-        if (best == null) {
-            if ("poll".equals(source)) diag("scan " + pkg + " src=poll nodes=" + nodeCount + " hit=none");
-            return;
+    private void trackOwned(AccessibilityNodeInfo node) {
+        if (node != null && currentScanOwned != null) {
+            currentScanOwned.put(node, Boolean.TRUE);
         }
-        boolean clicked = tapTarget(best);
-        diag("scan " + pkg + " src=" + source + " nodes=" + nodeCount
-                + " hit=" + best.source + "[" + best.matchedText + "]"
-                + " tap=" + best.tapPoint + " click=" + (clicked ? "ok" : "fail"));
-        if (clicked) {
-            lastClickAt = SystemClock.uptimeMillis();
-            clicksThisLaunch++;
-            if (best.source.startsWith("global")) globalClicksThisLaunch++;
-            inAppClickTimes.addLast(lastClickAt);
-            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
-            recordHit(pkg);
+    }
+
+    private static void safeRecycle(AccessibilityNodeInfo node) {
+        if (node == null) return;
+        if (Build.VERSION.SDK_INT < 33) {
+            try {
+                node.recycle();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static void recycleCandidate(Candidate best) {
+        if (best == null) return;
+        safeRecycle(best.target);
+        if (best.matchedNode != best.target) {
+            safeRecycle(best.matchedNode);
+        }
+    }
+
+    /** 主线程：命中执行（二次校验 + 点击）+ 记账 + 诊断 + 安全回收目标节点。 */
+    private void executeHit(Candidate best, String pkg, long elapsed, String source, int nodeCount, String activity) {
+        try {
+            if (best == null) {
+                if ("poll".equals(source)) diag("scan " + pkg + " src=poll nodes=" + nodeCount + " hit=none");
+                return;
+            }
+            // 二次核验：扫描在后台线程耗时期间，开关可能已暂停或用户已切换应用
+            if (!enabled() || !pkg.equals(lastPackage) || isUserExcludedPackage(this, pkg)) {
+                diag("drop " + pkg + " reason=stale-or-disabled");
+                return;
+            }
+            if (SystemClock.uptimeMillis() - lastClickAt < CLICK_COOLDOWN_MS) {
+                return;
+            }
+            boolean clicked = tapTarget(best);
+            diag("scan " + pkg + " src=" + source + " nodes=" + nodeCount
+                    + " hit=" + best.source + "[" + best.matchedText + "]"
+                    + " tap=" + best.tapPoint + " click=" + (clicked ? "ok" : "fail"));
+            if (clicked) {
+                lastClickAt = SystemClock.uptimeMillis();
+                if (best.inApp) {
+                    // 应用内广告预算独立记账，不与开屏启动次数互相消耗
+                    recordInAppClick(lastClickAt);
+                } else {
+                    clicksThisLaunch++;
+                    if (best.source.startsWith("global")) globalClicksThisLaunch++;
+                }
+                SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                sp.edit().putInt(KEY_HITS, sp.getInt(KEY_HITS, 0) + 1).apply();
+                recordHit(pkg);
+                recordRecentHit(pkg, best.source, best.matchedText);
+            }
+        } finally {
+            recycleCandidate(best);
         }
     }
 
     @Override
     public void onDestroy() {
+        if (sInstance == this) sInstance = null;
+        try {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .unregisterOnSharedPreferenceChangeListener(prefListener);
+        } catch (Exception ignored) {
+        }
         handler.removeCallbacks(splashPoller);
         if (scanThread != null) {
             scanThread.quitSafely();
@@ -490,38 +790,34 @@ public class AdSkipService extends AccessibilityService {
         return rules.globalAllowed(pkg) && rules.hasAlwaysRules();
     }
 
-    private boolean inAppBudgetOk() {
-        long now = SystemClock.uptimeMillis();
-        while (!inAppClickTimes.isEmpty() && now - inAppClickTimes.peekFirst() > IN_APP_ROLLING_WINDOW_MS) {
-            inAppClickTimes.pollFirst();
+    private void resetInAppBudget() {
+        synchronized (inAppClickTimes) {
+            inAppClickTimes.clear();
+            inAppClicksThisSession = 0;
         }
-        return inAppClickTimes.size() < IN_APP_ROLLING_MAX && clicksThisLaunch < IN_APP_SESSION_MAX;
     }
 
-    /** 扫一棵窗口树并按规则点击；返回是否已点击（点击后本次事件结束） */
-    /** （第 133 轮）旧 scanRoot 的匹配职责已并入 attemptScan 的后台扫描段
-     *  （collect + findBest 内联）；点击与记账拆到 executeHit（主线程）。 */
+    private void recordInAppClick(long atUptimeMs) {
+        synchronized (inAppClickTimes) {
+            inAppClickTimes.addLast(atUptimeMs);
+            inAppClicksThisSession++;
+        }
+    }
+
+    private boolean inAppBudgetOk() {
+        long now = SystemClock.uptimeMillis();
+        synchronized (inAppClickTimes) {
+            while (!inAppClickTimes.isEmpty() && now - inAppClickTimes.peekFirst() > IN_APP_ROLLING_WINDOW_MS) {
+                inAppClickTimes.pollFirst();
+            }
+            return inAppClickTimes.size() < IN_APP_ROLLING_MAX && inAppClicksThisSession < IN_APP_SESSION_MAX;
+        }
+    }
 
     /**
-     * 点击目标：手势点击优先，ACTION_CLICK 兜底。
-     *
-     * 第 70 轮实锤（好游快爆运行日志）：hit=global-splash click=ok 连续 4 次但
-     * 广告毫无反应——开屏 SDK 的跳过按钮是 OnTouchListener 自绘触摸，
-     * ACTION_CLICK 只走 performClick()，压根不触发触摸监听器；而 dispatchGesture
-     * 是一根真实点击手势，完整走 down/up 分发，两类监听器都会触发。
-     * GKD 对这类按钮同样是坐标手势点击。
-     */
-    /**
      * 点击目标 = 手势 + ACTION_CLICK 双保险。
-     *
-     * 第 70 轮实锤：命中跳过按钮 click=ok 但广告毫无反应。两个原因：
-     *  1) 服务 XML 缺 canPerformGestures——dispatchGesture 从未真正生效，
-     *     实际干活的只有 ACTION_CLICK，而开屏 SDK 的跳过按钮多由
-     *     OnTouchListener 自绘，ACTION_CLICK 只走 performClick() 触不到它；
-     *  2) v1.2.6 又把手势顶在前面，把原本有效的 ACTION_CLICK 路径废掉
-     *     （用户实测「全部失灵」）。
-     * 现在两种机制同时发：手势打在【匹配节点正中心】（「跳过」文字必然
-     * 在按钮内，120ms 接近真人点按），ACTION_CLICK 走攀登到的可点击祖先。
+     * 手势打在【匹配节点正中心】（「跳过」文字必然在按钮内，120ms 接近真人点按），
+     * ACTION_CLICK 走攀登到的可点击祖先。
      */
     private boolean tapTarget(Candidate best) {
         boolean dispatched = false;
@@ -551,8 +847,7 @@ public class AdSkipService extends AccessibilityService {
         return dispatched;
     }
 
-    /** 同包兄弟窗口匹配（第 133 轮起纯匹配不点击：点击统一回主线程 executeHit）。
-     *  在扫描线程跑，命中即返回（与旧"首个命中即停"一致）。 */
+    /** 同包兄弟窗口匹配（第 133 轮起纯匹配不点击：点击统一回主线程 executeHit）。 */
     private Candidate findBestInSiblings(String pkg, long elapsed, AccessibilityNodeInfo activeRoot, String activity) {
         try {
             List<AccessibilityWindowInfo> windows = getWindows();
@@ -562,7 +857,9 @@ public class AdSkipService extends AccessibilityService {
                 if (scanned >= MAX_SIBLING_WINDOWS) break;
                 if (window == null) continue;
                 AccessibilityNodeInfo windowRoot = window.getRoot();
-                if (windowRoot == null || windowRoot.equals(activeRoot)) continue;
+                if (windowRoot == null) continue;
+                trackOwned(windowRoot);
+                if (windowRoot.equals(activeRoot)) continue;
                 CharSequence windowPkg = windowRoot.getPackageName();
                 if (windowPkg == null || !pkg.equals(windowPkg.toString())) continue;
                 scanned++;
@@ -601,11 +898,13 @@ public class AdSkipService extends AccessibilityService {
                     pending.node, pending.parentIdx, pending.idxInParent, pending.parentChildCount);
             data.selfIdx = out.size();
             out.add(data);
-            int count = Math.min(pending.node.getChildCount(), MAX_NODES);
+            int childTotal = pending.node.getChildCount();
+            int count = Math.min(childTotal, MAX_NODES);
             for (int i = 0; i < count; i++) {
                 AccessibilityNodeInfo child = pending.node.getChild(i);
                 if (child != null) {
-                    queue.add(new Pending(child, data.selfIdx, i, pending.node.getChildCount()));
+                    trackOwned(child);
+                    queue.add(new Pending(child, data.selfIdx, i, childTotal));
                 }
             }
         }
@@ -624,66 +923,107 @@ public class AdSkipService extends AccessibilityService {
 
     private Candidate findBest(String pkg, String activity, long elapsed,
                                AdSkipRuleStore.Snapshot snap) {
-        AdSkipRuleStore.AppRules appRules = rules.appFor(pkg);
-        boolean allowGlobal = rules.globalAllowed(pkg);
+        AdSkipRuleStore.Store curRules = this.rules;
+        AdSkipRuleStore.AppRules appRules = curRules.appFor(pkg);
+        boolean allowGlobal = curRules.globalAllowed(pkg);
         Candidate best = null;
+
+        // 页面级 excludes 缓存位（0=未算, 1=整页命中排除, 2=整页放行）：
+        // GKD excludeMatches 是整页级排除语义（如“加入购物车/搜索/阅读并同意/设置”），
+        // 必须基于当前 snap.nodes 全页扫描，禁止仅按单个候选按钮匹配。
+        byte[] profileExcludeCache = appRules != null ? new byte[appRules.profiles.size()] : null;
+        byte globalExcludeCache = 0;
+        boolean inAppOk = inAppBudgetOk();
 
         for (AdSkipRuleStore.NodeData node : snap.nodes) {
             if (!node.visible) continue;
             if (isExcludedText(node.text) || isExcludedText(node.desc)) continue;
 
             if (appRules != null) {
-                for (AdSkipRuleStore.Profile profile : appRules.profiles) {
+                for (int pi = 0; pi < appRules.profiles.size(); pi++) {
+                    if (profileExcludeCache[pi] == 1) continue;
+                    AdSkipRuleStore.Profile profile = appRules.profiles.get(pi);
                     boolean splash = !profile.inApp;
-                    // 开屏：只在启动窗口内；应用内：前台期间持续生效（预算在事件入口统一管）
                     if (splash && elapsed > profile.matchTime) continue;
                     if (splash && clicksThisLaunch >= Math.min(MAX_CLICKS_PER_LAUNCH, profile.actionMaximum)) continue;
+                    if (!splash && !inAppOk) continue;
                     if (!activityMatches(activity, profile.activityIds)) continue;
-                    if (matchesAny(profile.excludes, node, snap)) continue;
                     for (AdSkipRuleStore.RuleSelector selector : profile.selectors) {
                         if (!selector.matches(node, snap)) continue;
+                        if (profileExcludeCache[pi] == 0) {
+                            profileExcludeCache[pi] = pageMatchesAny(profile.excludes, snap) ? (byte) 1 : (byte) 2;
+                        }
+                        if (profileExcludeCache[pi] == 1) break;
                         Candidate cand = candidate(node, splash ? 3 : 2, !splash, false);
                         if (cand == null) continue;
                         cand.source = splash ? "app-splash" : "app-inapp";
+                        cand.inApp = !splash;
                         cand.matchedText = diagText(node);
                         best = better(best, cand);
                     }
                 }
             }
 
-            if (allowGlobal && !matchesAny(rules.globalExcludes, node, snap)) {
+            if (allowGlobal && globalExcludeCache != 1) {
                 if (elapsed <= 12_000 && globalClicksThisLaunch < MAX_GLOBAL_CLICKS_PER_LAUNCH) {
-                    for (AdSkipRuleStore.RuleSelector selector : rules.globalSplashSelectors) {
+                    for (AdSkipRuleStore.RuleSelector selector : curRules.globalSplashSelectors) {
                         if (!selector.matches(node, snap)) continue;
+                        if (globalExcludeCache == 0) {
+                            globalExcludeCache = pageMatchesAny(curRules.globalExcludes, snap) ? (byte) 1 : (byte) 2;
+                        }
+                        if (globalExcludeCache == 1) break;
                         Candidate cand = candidate(node, 2, false, false);
                         if (cand == null) continue;
                         cand.source = "global-splash";
+                        cand.inApp = false;
                         cand.matchedText = diagText(node);
                         best = better(best, cand);
                     }
                 }
-                for (AdSkipRuleStore.RuleSelector selector : rules.globalAlwaysSelectors) {
-                    if (!selector.matches(node, snap)) continue;
-                    Candidate cand = candidate(node, 2, true, true);
-                    if (cand == null) continue;
-                    cand.source = "global-card";
-                    cand.matchedText = diagText(node);
-                    best = better(best, cand);
+                if (globalExcludeCache != 1 && inAppOk) {
+                    for (AdSkipRuleStore.RuleSelector selector : curRules.globalAlwaysSelectors) {
+                        if (!selector.matches(node, snap)) continue;
+                        if (globalExcludeCache == 0) {
+                            globalExcludeCache = pageMatchesAny(curRules.globalExcludes, snap) ? (byte) 1 : (byte) 2;
+                        }
+                        if (globalExcludeCache == 1) break;
+                        Candidate cand = candidate(node, 2, true, true);
+                        if (cand == null) continue;
+                        cand.source = "global-card";
+                        cand.inApp = true;
+                        cand.matchedText = diagText(node);
+                        best = better(best, cand);
+                    }
                 }
             }
 
             boolean countdown = isCountdown(node);
             if ((elapsed <= GENERIC_WINDOW_MS || (countdown && elapsed <= APP_RULE_HARD_LIMIT_MS))
+                    && clicksThisLaunch < MAX_CLICKS_PER_LAUNCH
                     && matchesGeneric(node)) {
                 Candidate cand = candidate(node, 1, false, false);
                 if (cand != null) {
                     cand.source = "generic";
+                    cand.inApp = false;
                     cand.matchedText = diagText(node);
                     best = better(best, cand);
                 }
             }
         }
         return best;
+    }
+
+    /** 整页级排除判定：当前页面任意可见节点命中任一排除选择器，即视为该规则在当前页禁用 */
+    static boolean pageMatchesAny(List<AdSkipRuleStore.RuleSelector> excludes,
+                                  AdSkipRuleStore.Snapshot snap) {
+        if (excludes == null || excludes.isEmpty() || snap == null || snap.nodes == null) return false;
+        for (AdSkipRuleStore.NodeData pageNode : snap.nodes) {
+            if (!pageNode.visible) continue;
+            for (AdSkipRuleStore.RuleSelector selector : excludes) {
+                if (selector.matches(pageNode, snap)) return true;
+            }
+        }
+        return false;
     }
 
     private Candidate better(Candidate current, Candidate candidate) {
@@ -712,6 +1052,7 @@ public class AdSkipService extends AccessibilityService {
             if (target.isClickable()) break;
             AccessibilityNodeInfo parent = target.getParent();
             if (parent == null) break;
+            trackOwned(parent);
             AdSkipRuleStore.NodeData parentData = new AdSkipRuleStore.NodeData(parent);
             if (parentData.bounds.width() > maxW * 1.2f || parentData.bounds.height() > maxH * 1.2f) break;
             if (parentData.bounds.width() > targetData.bounds.width() * 4f
@@ -738,15 +1079,6 @@ public class AdSkipService extends AccessibilityService {
         Candidate cand = new Candidate(target, bounds.width() * (long) bounds.height(), priority);
         cand.matchedNode = matchedNode;
         return cand;
-    }
-
-    private boolean matchesAny(List<AdSkipRuleStore.RuleSelector> selectors,
-                               AdSkipRuleStore.NodeData node,
-                               AdSkipRuleStore.Snapshot snap) {
-        for (AdSkipRuleStore.RuleSelector selector : selectors) {
-            if (selector.matches(node, snap)) return true;
-        }
-        return false;
     }
 
     private boolean activityMatches(String current, String[] ids) {
@@ -818,7 +1150,9 @@ public class AdSkipService extends AccessibilityService {
             int siblings = Math.min(current.getChildCount(), 8);
             for (int j = 0; j < siblings; j++) {
                 AccessibilityNodeInfo sibling = current.getChild(j);
-                if (sibling == null || sibling.equals(node.node)) continue;
+                if (sibling == null) continue;
+                trackOwned(sibling);
+                if (sibling.equals(node.node)) continue;
                 CharSequence siblingText = sibling.getText();
                 CharSequence siblingDesc = sibling.getContentDescription();
                 String siblingId = sibling.getViewIdResourceName();
@@ -828,7 +1162,9 @@ public class AdSkipService extends AccessibilityService {
                     return true;
                 }
             }
-            current = current.getParent();
+            AccessibilityNodeInfo parent = current.getParent();
+            trackOwned(parent);
+            current = parent;
         }
         return false;
     }
@@ -865,6 +1201,8 @@ public class AdSkipService extends AccessibilityService {
         final AccessibilityNodeInfo target;
         final long area;
         final int priority;
+        /** 是否为应用内广告命中（与开屏启动次数预算分离） */
+        boolean inApp = false;
         /** 命中来源（诊断用）：app-splash / app-inapp / global-splash / global-card / generic */
         String source = "unknown";
         /** 命中节点的文字/描述（诊断用，截断到 12 字） */

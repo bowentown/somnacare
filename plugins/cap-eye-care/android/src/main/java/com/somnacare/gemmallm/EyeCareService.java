@@ -1,5 +1,8 @@
 package com.somnacare.gemmallm;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -11,69 +14,126 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
+import android.hardware.input.InputManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 
 /**
- * 全局护眼滤镜前台服务（参考"夜间护眼"类应用的核心机制）：
- * 在所有应用之上叠加两层不可触摸、可穿透输入的悬浮窗——
- *   1) 暖色滤镜层：可调色温 + 强度（减蓝光）
- *   2) 减光层：纯黑 + 透明度（软件减光）
+ * 全局护眼滤镜前台服务（v1.44.0 升级为数学无损单层合成 + 20-20-20 独立通知 + 媒体场景自动暂避）：
  *
- * 性能与稳定性关键：
- * - 参数更新走"原地更新"（改背景纯色 + lp.alpha + updateViewLayout），绝不销毁重建窗口；
- * - 触摸穿透铁律：透明度必须走 WindowManager.LayoutParams.alpha（窗口级 alpha）。
- *   Android 12+ 会拦截"穿透悬浮窗的触摸"（防 tapjacking），仅当同 UID 悬浮窗
- *   组合透明度 ≤ 0.8 才豁免；若把透明度烘焙进背景色像素，窗口被视作全不透明，
- *   用户将无法滑动/点击任何应用；
- * - 输入穿透：FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE（不用 FLAG_LAYOUT_NO_LIMITS，
- *   部分国产 ROM 上该 flag 会有系统手势/输入异常）；
- * - 前台通知兜底 + 全量 try/catch：startForegroundService 启动后必须成功调用
- *   startForeground，否则系统 5 秒后强杀进程。
+ * 单层合成公式（Porter-Duff SRC_OVER 严格等价）：
+ *   总不透明度 A = min(0.85, 1 - (1 - w)(1 - d))
+ *   等效纯色   C = ((1 - d) * w / A_raw) * C_w
+ * 将原先双全屏硬件窗口减半为单层纯色悬浮窗，显存与 HWC 合成层减半，且在 UI 全行程内零额外衰减。
+ *
+ * 关键不变量：
+ *  - 透明度走 WindowManager.LayoutParams.alpha（窗口级 alpha），Android 12+ 自动受触摸穿透上限保护；
+ *  - 参数持久化与开关位解耦：ACTION_STOP 与零透明度保活调用绝不清零用户的色温/强度参数；
+ *  - 仅开启 20-20-20 时使用独立通知与「关闭远眺」动作，关掉远眺且无滤镜时立即 stopSelf；
+ *  - 息屏或未开启时停止 15s 远眺轮询与 2.5s 避让轮询，杜绝后台空转。
  */
 public class EyeCareService extends Service {
 
     public static final String ACTION_APPLY = "com.somnacare.gemmallm.eyecare.APPLY";
     public static final String ACTION_STOP = "com.somnacare.gemmallm.eyecare.STOP";
+    public static final String ACTION_STOP_REST = "com.somnacare.gemmallm.eyecare.STOP_REST";
     public static final String EXTRA_WARM_COLOR = "warmColor"; // #RRGGBB
     public static final String EXTRA_WARM_ALPHA = "warmAlpha"; // 0.0 - 1.0
     public static final String EXTRA_DIM_ALPHA = "dimAlpha";   // 0.0 - 1.0
     public static final String EXTRA_REST_ENABLED = "restEnabled"; // 20-20-20 远眺提醒
+    /** 为 true 时只改开关与窗口，不覆写用户常规护眼参数（供极暗夜读磁贴使用） */
+    public static final String EXTRA_SKIP_PERSIST_PARAMS = "skipPersistParams";
+
+    static final String PREFS = "somnacare_prefs";
+    static final String KEY_AUTO_AVOID = "eyecare_auto_avoid";
+    static final float MAX_COMBINED_ALPHA = 0.85f;
 
     private static final String CHANNEL_ID = "somnacare-eyecare";
     private static final int NOTIFICATION_ID = 20260928;
 
-    private static View warmLayer;
-    private static View dimLayer;
-    private static WindowManager.LayoutParams warmLp;
-    private static WindowManager.LayoutParams dimLp;
+    private static volatile EyeCareService sInstance;
+    private static View overlayLayer;
+    private static WindowManager.LayoutParams overlayLp;
     private static WindowManager windowManager;
 
-    // 最近一次应用的参数（旋转屏幕等显示变化时原地重放，保证全屏覆盖）
+    // 最近一次应用的参数（屏幕旋转或媒体暂避恢复时原地重放）
     private static String lastColorHex = null;
     private static float lastWarm = 0f;
     private static float lastDim = 0f;
+    private static float targetWindowAlpha = 0f;
 
-    // ── 20-20-20 远眺提醒（第 77 轮，Phase 2）：每连续用屏 20 分钟弹 20 秒
-    // 全屏远眺引导。连续时长由 SCREEN_ON/OFF 动态接收器真实测量——
-    // 不是模型估算。滤镜关闭时也能独立运行（零透明度窗口保活服务）。──
+    // 相机/相册/横屏全屏视频前台自动临时暂避
+    private static final long AVOID_POLL_MS = 2_500L;
+    private static final long AVOID_IDLE_BACKOFF_MS = 30_000L;
+    private static volatile boolean autoAvoidEnabled = true;
+    private static volatile boolean autoPaused = false;
+    private static ValueAnimator fadeAnimator;
+
+    // ── 20-20-20 远眺提醒：每连续用屏 20 分钟弹 20 秒全屏远眺引导 ──
     static final String KEY_REST_ENABLED = "eye_202020_enabled";
     static final String KEY_EYE_MAX_TODAY = "eye_usage_max_today";   // {"date":"YYYY-MM-DD","maxMin":n}
     private static final long REST_INTERVAL_MS = 20 * 60_000L;       // 连续用屏 20 分钟
-    private static final long REST_DURATION_MS = 20_000L;           // 引导持续 20 秒
+    private static final long REST_DURATION_MS = 20_000L;            // 引导持续 20 秒
     private static final long REST_POLL_MS = 15_000L;
-    private static boolean restEnabled = false;
+    private static volatile boolean restEnabled = false;
     private static long screenOnAt = -1L;          // 最近一次亮屏的 elapsedRealtime
     private static long lastRestShownAt = 0L;
     private static View restOverlay;
     private static WindowManager.LayoutParams restLp;
-    private static android.os.Handler restHandler;
-    private static final java.text.DateFormat REST_DATE_FMT =
-            new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+    private static Handler mainHandler;
+    private static volatile Handler uiHandler;
+
+    private static void runOnUiThread(Runnable r) {
+        Looper main = Looper.getMainLooper();
+        if (Looper.myLooper() == main) {
+            r.run();
+            return;
+        }
+        Handler h = uiHandler;
+        if (h == null) {
+            h = new Handler(main);
+            uiHandler = h;
+        }
+        h.post(r);
+    }
+
+    static final class ComposedOverlay {
+        final int solidColor; // 0xFFRRGGBB
+        final float alpha;    // 0.0 - 0.85
+
+        ComposedOverlay(int solidColor, float alpha) {
+            this.solidColor = solidColor;
+            this.alpha = alpha;
+        }
+    }
+
+    /** 数学无损单层合成：A = min(0.85, 1 - (1 - w)(1 - d))，C = ((1 - d) * w / A_raw) * C_w */
+    static ComposedOverlay composeSingleLayer(String warmColorHex, float warmAlpha, float dimAlpha) {
+        float w = clamp01(warmAlpha);
+        float d = clamp01(dimAlpha);
+        float rawA = 1f - (1f - w) * (1f - d);
+        if (rawA <= 0.005f) {
+            return new ComposedOverlay(0xFF000000, 0f);
+        }
+        int rgb = parseSafe(warmColorHex, 0xFFB35C);
+        int rIn = (rgb >> 16) & 0xFF;
+        int gIn = (rgb >> 8) & 0xFF;
+        int bIn = rgb & 0xFF;
+        float factor = ((1f - d) * w) / rawA;
+        int r = Math.min(255, Math.max(0, Math.round(rIn * factor)));
+        int g = Math.min(255, Math.max(0, Math.round(gIn * factor)));
+        int b = Math.min(255, Math.max(0, Math.round(bIn * factor)));
+        float alpha = Math.min(MAX_COMBINED_ALPHA, rawA);
+        return new ComposedOverlay(0xFF000000 | (r << 16) | (g << 8) | b, alpha);
+    }
+
     private final android.content.BroadcastReceiver screenReceiver = new android.content.BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -81,15 +141,21 @@ public class EyeCareService extends Service {
                 String action = intent == null ? null : intent.getAction();
                 if (Intent.ACTION_SCREEN_ON.equals(action)) {
                     screenOnAt = android.os.SystemClock.elapsedRealtime();
+                    syncRestPollSchedule();
+                    syncAvoidPollSchedule();
                 } else if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                     accumulateContinuousUsage();
                     dismissRestOverlay();
                     screenOnAt = -1L;
+                    EyeCareMediaAvoid.resetCache();
+                    syncRestPollSchedule();
+                    syncAvoidPollSchedule();
                 }
             } catch (Exception ignored) {
             }
         }
     };
+
     private final Runnable restPoll = new Runnable() {
         @Override
         public void run() {
@@ -97,7 +163,23 @@ public class EyeCareService extends Service {
                 pollRest();
             } catch (Exception ignored) {
             }
-            if (restHandler != null) restHandler.postDelayed(this, REST_POLL_MS);
+            if (restEnabled && isScreenInteractive() && mainHandler != null) {
+                mainHandler.postDelayed(this, REST_POLL_MS);
+            }
+        }
+    };
+
+    private final Runnable avoidPoll = new Runnable() {
+        @Override
+        public void run() {
+            long nextDelay = AVOID_POLL_MS;
+            try {
+                nextDelay = pollMediaAvoid();
+            } catch (Exception ignored) {
+            }
+            if (autoAvoidEnabled && overlayLayer != null && isScreenInteractive() && mainHandler != null) {
+                mainHandler.postDelayed(this, nextDelay);
+            }
         }
     };
 
@@ -106,7 +188,7 @@ public class EyeCareService extends Service {
         return null;
     }
 
-    /** 屏幕旋转/分辨率变化时原地重放滤镜参数（显式定尺寸的窗口不会自动跟随旋转） */
+    /** 屏幕旋转/分辨率变化时原地重放单层滤镜并即时复核横屏视频暂避 */
     private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
         @Override
         public void onDisplayAdded(int displayId) { }
@@ -116,18 +198,48 @@ public class EyeCareService extends Service {
 
         @Override
         public void onDisplayChanged(int displayId) {
-            if (displayId == android.view.Display.DEFAULT_DISPLAY && lastColorHex != null) {
+            if (displayId == android.view.Display.DEFAULT_DISPLAY && overlayLayer != null && lastColorHex != null) {
                 try {
-                    applyOverlay(EyeCareService.this, lastColorHex, lastWarm, lastDim);
+                    applyOverlay(EyeCareService.this, lastColorHex, lastWarm, lastDim, false);
+                    if (autoAvoidEnabled) pollMediaAvoid();
                 } catch (Exception ignored) {
                 }
             }
         }
     };
 
+    private boolean isScreenInteractive() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isInteractive();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private void syncRestPollSchedule() {
+        Handler h = mainHandler;
+        if (h == null) return;
+        h.removeCallbacks(restPoll);
+        if (restEnabled && isScreenInteractive()) {
+            h.postDelayed(restPoll, REST_POLL_MS);
+        }
+    }
+
+    private void syncAvoidPollSchedule() {
+        Handler h = mainHandler;
+        if (h == null) return;
+        h.removeCallbacks(avoidPoll);
+        if (autoAvoidEnabled && overlayLayer != null && isScreenInteractive()) {
+            h.postDelayed(avoidPoll, AVOID_POLL_MS);
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
+        sInstance = this;
+        mainHandler = new Handler(Looper.getMainLooper());
         try {
             DisplayManager dm = (DisplayManager) getSystemService(DISPLAY_SERVICE);
             if (dm != null) dm.registerDisplayListener(displayListener, null);
@@ -137,14 +249,17 @@ public class EyeCareService extends Service {
             IntentFilter filter = new IntentFilter();
             filter.addAction(Intent.ACTION_SCREEN_ON);
             filter.addAction(Intent.ACTION_SCREEN_OFF);
-            registerReceiver(screenReceiver, filter);
-            restEnabled = getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
-                    .getBoolean(KEY_REST_ENABLED, false);
-            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-            screenOnAt = pm != null && pm.isInteractive()
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(screenReceiver, filter);
+            }
+            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            restEnabled = sp.getBoolean(KEY_REST_ENABLED, false);
+            autoAvoidEnabled = sp.getBoolean(KEY_AUTO_AVOID, true);
+            screenOnAt = isScreenInteractive()
                     ? android.os.SystemClock.elapsedRealtime() : -1L;
-            restHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-            restHandler.postDelayed(restPoll, REST_POLL_MS);
+            syncRestPollSchedule();
         } catch (Exception ignored) {
         }
     }
@@ -152,35 +267,75 @@ public class EyeCareService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
-            // 铁律先行：startForegroundService 拉起的实例（含 ACTION_STOP——
-            // PetOverlayService.toggleEyeCare() 对开/关两种 action 统一用
-            // startForegroundService 投递）必须先进入前台态，5 秒内不
-            // startForeground 系统会 RemoteServiceException 强杀进程。
-            // 此前 STOP 分支直接 stopSelf，进程被杀后重开 App 关滤镜可复现崩溃
+            // 铁律先行：startForegroundService 拉起的实例必须在 5s 内调用 startForeground
             startForegroundCompat();
 
             String action = intent != null ? intent.getAction() : ACTION_APPLY;
             if (ACTION_STOP.equals(action)) {
                 removeOverlayInternal();
-                // 关闭只改开关位，保留用户选的颜色/强度——悬浮窗与磁贴再开时
-                // 才能沿用用户的选择，而不是回落到默认暖黄
-                persistState(getApplicationContext(), false, lastColorHex, lastWarm, lastDim);
+                autoPaused = false;
+                clearNightReadFlag(getApplicationContext());
+                EyeCareScheduleReceiver.onManualStop(getApplicationContext());
+                // 只改开关位，绝不清零用户保存的色温与强度参数
+                persistEnabled(getApplicationContext(), false);
+                syncAvoidPollSchedule();
                 if (!restEnabled) {
                     stopForeground(STOP_FOREGROUND_REMOVE);
                     stopSelf();
+                } else {
+                    startForegroundCompat();
                 }
-                // 20-20-20 开启时保活：远眺提醒不依赖滤镜，服务继续常驻
                 return START_NOT_STICKY;
             }
 
+            if (ACTION_STOP_REST.equals(action)) {
+                setRestEnabled(getApplicationContext(), false);
+                if (overlayLayer == null) {
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                } else {
+                    startForegroundCompat();
+                }
+                return START_NOT_STICKY;
+            }
+
+            boolean hasFilterExtras = intent == null
+                    || intent.hasExtra(EXTRA_WARM_ALPHA)
+                    || intent.hasExtra(EXTRA_DIM_ALPHA);
             String warmColor = intent != null ? intent.getStringExtra(EXTRA_WARM_COLOR) : null;
             float warmAlpha = intent != null ? clamp01(intent.getFloatExtra(EXTRA_WARM_ALPHA, 0f)) : 0f;
             float dimAlpha = intent != null ? clamp01(intent.getFloatExtra(EXTRA_DIM_ALPHA, 0f)) : 0f;
+            boolean skipPersistParams = intent != null
+                    && intent.getBooleanExtra(EXTRA_SKIP_PERSIST_PARAMS, false);
             if (intent != null && intent.hasExtra(EXTRA_REST_ENABLED)) {
                 setRestEnabled(getApplicationContext(), intent.getBooleanExtra(EXTRA_REST_ENABLED, false));
             }
 
-            applyOverlay(this, warmColor, warmAlpha, dimAlpha);
+            if (warmAlpha > 0.005f || dimAlpha > 0.005f) {
+                EyeCareScheduleReceiver.clearManualSuppress(getApplicationContext());
+                applyOverlay(this, warmColor, warmAlpha, dimAlpha, !skipPersistParams);
+            } else if (hasFilterExtras) {
+                if (overlayLayer != null) {
+                    removeOverlayInternal();
+                    autoPaused = false;
+                    clearNightReadFlag(getApplicationContext());
+                    persistEnabled(getApplicationContext(), false);
+                }
+                if (!restEnabled) {
+                    persistEnabled(getApplicationContext(), false);
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                    return START_NOT_STICKY;
+                }
+            } else if (!restEnabled && overlayLayer == null) {
+                persistEnabled(getApplicationContext(), false);
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            startForegroundCompat();
+            syncRestPollSchedule();
+            syncAvoidPollSchedule();
         } catch (Exception ignored) {
             // 服务内任何异常都不允许带崩应用进程
         }
@@ -191,25 +346,213 @@ public class EyeCareService extends Service {
         return Math.min(1f, Math.max(0f, v));
     }
 
-    /** 滤镜层是否正在显示（磁贴状态源，同进程内可靠） */
+    /** 滤镜层是否处于启用状态（含临时媒体避让暂避中，同进程可靠） */
     public static boolean isActive() {
-        return warmLayer != null || dimLayer != null;
+        return overlayLayer != null;
     }
 
-    /** 20-20-20 开关（供插件调用；滤镜关/开两种状态都即时生效） */
+    /** 护眼/远眺前台服务是否正在运行 */
+    public static boolean isServiceRunning() {
+        return sInstance != null;
+    }
+
+    public static boolean isAutoPaused() {
+        return autoPaused && overlayLayer != null;
+    }
+
+    public static void setAutoAvoidEnabled(Context context, boolean enabled) {
+        autoAvoidEnabled = enabled;
+        try {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_AUTO_AVOID, enabled).apply();
+        } catch (Exception ignored) {
+        }
+        runOnUiThread(() -> {
+            final EyeCareService svc = sInstance;
+            if (svc != null) {
+                if (!enabled && autoPaused) {
+                    svc.setAutoPausedInternal(false);
+                }
+                svc.syncAvoidPollSchedule();
+            }
+        });
+    }
+
+    public static boolean isAutoAvoidEnabled(Context context) {
+        try {
+            return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_AUTO_AVOID, true);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** 20-20-20 开关（供插件调用；滤镜关/开两种状态都即时生效，所有 View 操作均切回主线程） */
     public static void setRestEnabled(Context context, boolean enabled) {
         restEnabled = enabled;
         try {
-            context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putBoolean(KEY_REST_ENABLED, enabled).apply();
         } catch (Exception ignored) {
         }
-        if (!enabled) dismissRestOverlay();
+        runOnUiThread(() -> {
+            if (!enabled) dismissRestOverlay();
+            final EyeCareService svc = sInstance;
+            if (svc != null) {
+                svc.syncRestPollSchedule();
+                svc.startForegroundCompat();
+            }
+        });
+    }
+
+    /** 关闭 20-20-20：若护眼滤镜未开启则立即安全停服，杜绝僵尸前台服务 */
+    public static void stopRestSafely(Context context) {
+        final Context app = context.getApplicationContext();
+        setRestEnabled(app, false);
+        runOnUiThread(() -> {
+            boolean filterOn = isActive()
+                    || app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("eyecare_on", false);
+            if (!filterOn) {
+                try {
+                    app.stopService(new Intent(app, EyeCareService.class));
+                } catch (Exception ignored) {
+                }
+            } else {
+                final EyeCareService svc = sInstance;
+                if (svc != null) svc.startForegroundCompat();
+            }
+        });
+    }
+
+    /**
+     * 安全关闭护眼滤镜：先落盘 eyecare_on=false，再在主线程移除悬浮层并安全停服。
+     * 绝不在后台线程直接操作 WindowManager/ValueAnimator（避免 CalledFromWrongThreadException 泄漏悬浮窗），
+     * 也绝不在 Android 8+ 后台调用 startService(ACTION_STOP) 触发 IllegalStateException 卡死状态。
+     */
+    public static void stopFilterSafely(Context context) {
+        stopFilterSafely(context, true);
+    }
+
+    public static void stopFilterSafely(Context context, boolean manualStop) {
+        final Context app = context.getApplicationContext();
+        try {
+            clearNightReadFlag(app);
+            if (manualStop) {
+                EyeCareScheduleReceiver.onManualStop(app);
+            }
+            persistEnabled(app, false);
+        } catch (Exception ignored) {
+        }
+        runOnUiThread(() -> {
+            try {
+                removeOverlayInternal();
+                autoPaused = false;
+            } catch (Exception ignored) {
+            }
+            if (!isRestEnabled(app)) {
+                try {
+                    app.stopService(new Intent(app, EyeCareService.class));
+                } catch (Exception ignored) {
+                }
+            } else {
+                final EyeCareService svc = sInstance;
+                if (svc != null) {
+                    svc.syncAvoidPollSchedule();
+                    svc.startForegroundCompat();
+                }
+            }
+        });
     }
 
     public static boolean isRestEnabled(Context context) {
-        return restEnabled || context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+        return restEnabled || context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_REST_ENABLED, false);
+    }
+
+    private static void clearNightReadFlag(Context context) {
+        try {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(NightReadTileService.KEY_NIGHT_READ, false).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 轮询前台场景：相机/相册或横屏视频时平滑淡出暂停滤镜，退出即自动恢复 */
+    private long pollMediaAvoid() {
+        if (!autoAvoidEnabled || overlayLayer == null) return AVOID_IDLE_BACKOFF_MS;
+        if (!EyeCareMediaAvoid.hasAnySignal(this)) {
+            if (autoPaused) setAutoPausedInternal(false);
+            return AVOID_IDLE_BACKOFF_MS;
+        }
+        String fg = EyeCareMediaAvoid.resolveForegroundPackage(this);
+        boolean landscape = isDisplayLandscape();
+        boolean shouldAvoid = EyeCareMediaAvoid.shouldAvoidForPackage(fg, getPackageName(), landscape);
+        if (shouldAvoid != autoPaused) {
+            setAutoPausedInternal(shouldAvoid);
+        }
+        return AVOID_POLL_MS;
+    }
+
+    private boolean isDisplayLandscape() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) {
+                int[] size = realDisplaySize(wm);
+                if (size[0] > 0 && size[1] > 0) return size[0] > size[1];
+            }
+        } catch (Exception ignored) {
+        }
+        return getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+    }
+
+    private void setAutoPausedInternal(boolean pause) {
+        autoPaused = pause;
+        View layer = overlayLayer;
+        WindowManager.LayoutParams lp = overlayLp;
+        WindowManager wm = windowManager;
+        if (layer == null || lp == null || wm == null) return;
+        cancelFadeAnimator();
+        float from = lp.alpha;
+        float to = pause ? 0f : targetWindowAlpha;
+        if (!pause) {
+            layer.setVisibility(View.VISIBLE);
+        }
+        ValueAnimator anim = ValueAnimator.ofFloat(from, to);
+        anim.setDuration(220);
+        anim.addUpdateListener(a -> {
+            if (overlayLayer != layer || overlayLp != lp || windowManager == null) {
+                a.cancel();
+                return;
+            }
+            lp.alpha = (Float) a.getAnimatedValue();
+            try {
+                windowManager.updateViewLayout(layer, lp);
+            } catch (Exception ignored) {
+            }
+        });
+        anim.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (pause && autoPaused && overlayLayer == layer) {
+                    layer.setVisibility(View.GONE);
+                }
+            }
+        });
+        fadeAnimator = anim;
+        anim.start();
+        startForegroundCompat();
+    }
+
+    private static void cancelFadeAnimator() {
+        ValueAnimator a = fadeAnimator;
+        fadeAnimator = null;
+        if (a != null) {
+            try {
+                a.cancel();
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     /** 轮询：连续用屏 ≥20 分钟且未展示过 → 弹 20 秒远眺引导 */
@@ -228,8 +571,9 @@ public class EyeCareService extends Service {
         long minutes = (android.os.SystemClock.elapsedRealtime() - screenOnAt) / 60_000L;
         if (minutes <= 0) return;
         try {
-            SharedPreferences sp = getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);
-            String today = REST_DATE_FMT.format(new java.util.Date());
+            SharedPreferences sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                    .format(new java.util.Date());
             org.json.JSONObject obj;
             String raw = sp.getString(KEY_EYE_MAX_TODAY, "");
             obj = raw.isEmpty() ? new org.json.JSONObject() : new org.json.JSONObject(raw);
@@ -308,15 +652,14 @@ public class EyeCareService extends Service {
                         }
                         counter.setText(String.format(java.util.Locale.US, "%d s",
                                 (int) Math.ceil(left / 1000.0)));
-                        if (restHandler != null) restHandler.postDelayed(this, 500);
+                        if (mainHandler != null) mainHandler.postDelayed(this, 500);
                     } catch (Exception ignored) {
                     }
                 }
             };
             counter.setText("20 s");
-            if (restHandler != null) restHandler.postDelayed(ticker, 500);
+            if (mainHandler != null) mainHandler.postDelayed(ticker, 500);
         } catch (Exception ignored) {
-            // 悬浮窗失败不抛出
         }
     }
 
@@ -329,19 +672,51 @@ public class EyeCareService extends Service {
         if (screenOnAt >= 0) screenOnAt = android.os.SystemClock.elapsedRealtime();
     }
 
-    /** 持久化当前开关与参数（快捷设置磁贴与桌面小组件在进程外/冷启动时使用） */
-    static void persistState(Context context, boolean on, String color, float w, float d) {
+    /** 只更新开关位并刷新桌面小组件与控制中心磁贴（绝不覆盖用户保存的色温/强度参数） */
+    static void persistEnabled(Context context, boolean on) {
         try {
-            context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean("eyecare_on", on)
+                    .apply();
+            notifyWidgetsChanged(context);
+            notifyTilesChanged(context);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 仅保存非零有效滤镜参数（零参数调用静默忽略，绝不清零用户配置） */
+    static void persistParams(Context context, String color, float w, float d) {
+        if (color == null || color.isEmpty()) return;
+        if (w <= 0.005f && d <= 0.005f) return;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String curColor = sp.getString("eyecare_color", "");
+            float curW = sp.getFloat("eyecare_warm", -1f);
+            float curD = sp.getFloat("eyecare_dim", -1f);
+            if (color.equals(curColor)
+                    && Math.abs(curW - w) < 0.001f
+                    && Math.abs(curD - d) < 0.001f) {
+                return;
+            }
+            sp.edit()
                     .putString("eyecare_color", color)
                     .putFloat("eyecare_warm", w)
                     .putFloat("eyecare_dim", d)
                     .apply();
-            notifyWidgetsChanged(context);
         } catch (Exception ignored) {
         }
+    }
+
+    /** 兼容旧调用点：更新开关，仅在参数非零时更新参数 */
+    static void persistState(Context context, boolean on, String color, float w, float d) {
+        persistParams(context, color, w, d);
+        persistEnabled(context, on);
+    }
+
+    static void notifyTilesChanged(Context context) {
+        EyeCareTileService.requestRefresh(context);
+        NightReadTileService.requestRefresh(context);
     }
 
     /** 通知桌面小组件刷新护眼状态（显式组件广播，零跨插件编译依赖） */
@@ -354,7 +729,6 @@ public class EyeCareService extends Service {
         }
     }
 
-    /** 颜色 + 透明度 → 预乘进 ARGB 的 int（避免 View.setAlpha 触发离屏合成） */
     private static int parseSafe(String hex, int fallbackRgb) {
         if (hex == null || hex.length() < 7 || !hex.startsWith("#")) return fallbackRgb;
         try {
@@ -364,77 +738,80 @@ public class EyeCareService extends Service {
         }
     }
 
-    /** 应用（或原地更新）两层滤镜。静态方法：插件可在服务存活前直接调用。 */
+    /** 窗口级透明度上限：单层安全封顶 0.85，并在 Android 12+ 自动贴合系统触摸穿透豁免上限 */
+    private static float resolveWindowAlpha(Context context, float composedAlpha) {
+        float capped = Math.min(MAX_COMBINED_ALPHA, Math.max(0f, composedAlpha));
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                InputManager im = (InputManager) context.getSystemService(Context.INPUT_SERVICE);
+                if (im != null) {
+                    float maxTouchOpacity = im.getMaximumObscuringOpacityForTouch();
+                    if (maxTouchOpacity > 0.05f && capped >= maxTouchOpacity) {
+                        capped = Math.max(0.05f, maxTouchOpacity - 0.01f);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return capped;
+    }
+
     public static void applyOverlay(Context context, String warmColorHex, float warmAlpha, float dimAlpha) {
+        applyOverlay(context, warmColorHex, warmAlpha, dimAlpha, true);
+    }
+
+    /** 应用（或原地更新）单层数学合成滤镜。 */
+    public static void applyOverlay(Context context, String warmColorHex, float warmAlpha, float dimAlpha,
+                                    boolean saveParams) {
         if (!Settings.canDrawOverlays(context)) return;
         try {
             WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
             if (wm == null) return;
             windowManager = wm;
 
-            lastColorHex = warmColorHex;
-            lastWarm = warmAlpha;
-            lastDim = dimAlpha;
-
             float w = clamp01(warmAlpha);
             float d = clamp01(dimAlpha);
-            // 真实参数落盘：悬浮窗/快捷设置磁贴就地开关时读的就是这里。
-            // 之前只有 STOP 会 persistState(false,null,0,0)，apply 从不写，
-            // 导致悬浮窗再开时读到 0/0 → 两层都不建 → 看似开启实际无滤镜。
-            // 双层都为 0 的调用是无效操作，不覆盖已存参数。
-            if (w > 0.005f || d > 0.005f) {
-                persistState(context, true, warmColorHex, w, d);
-            }
-            // Android 12+ 非信任触摸拦截：同 UID 悬浮窗"组合透明度"必须 ≤ 0.8 才豁免触摸穿透。
-            // 此处按加法保守钳制（拖满双滑杆时等比缩小，视觉上只是略淡一点，绝不拦触摸）。
-            if (w + d > 0.78f) {
-                float k = 0.78f / (w + d);
-                w *= k;
-                d *= k;
+            String colorHex = (warmColorHex == null || warmColorHex.isEmpty()) ? "#FFB35C" : warmColorHex;
+
+            ComposedOverlay composed = composeSingleLayer(colorHex, w, d);
+            if (composed.alpha <= 0.005f) {
+                removeOverlayInternal();
+                autoPaused = false;
+                // 零强度只关开关位，绝不覆写已存参数
+                persistEnabled(context, false);
+                return;
             }
 
-            // 真实物理分辨率：MATCH_PARENT 只覆盖系统"应用可视帧"，会漏掉手势区/曲面边/刘海侧，
-            // 必须显式定尺寸到整块物理屏（含 NO_LIMITS 越界绘制），才能真正全屏覆盖。
+            lastColorHex = colorHex;
+            lastWarm = w;
+            lastDim = d;
+
+            if (saveParams) {
+                persistParams(context, colorHex, w, d);
+            }
+
+            float winAlpha = resolveWindowAlpha(context, composed.alpha);
+            targetWindowAlpha = winAlpha;
             int[] size = realDisplaySize(wm);
+            float effectiveAlpha = autoPaused ? 0f : winAlpha;
 
-            int warmSolid = 0xFF000000 | parseSafe(warmColorHex, 0xFFB26B);
-
-            // 暖色层：存在则原地更新，缺失则创建，透明则移除（零窗口抖动）
-            if (w > 0.005f) {
-                if (warmLayer != null) {
-                    warmLayer.setBackgroundColor(warmSolid);
-                    warmLp.alpha = w;
-                    applyLpSize(warmLp, size);
-                    try { wm.updateViewLayout(warmLayer, warmLp); } catch (Exception ignored) {}
-                } else {
-                    warmLp = buildLp(w, size[0], size[1]);
-                    warmLayer = buildLayer(context, wm, warmSolid, warmLp);
+            if (overlayLayer != null && overlayLp != null) {
+                overlayLayer.setBackgroundColor(composed.solidColor);
+                overlayLp.alpha = effectiveAlpha;
+                applyLpSize(overlayLp, size);
+                try {
+                    wm.updateViewLayout(overlayLayer, overlayLp);
+                } catch (Exception ignored) {
                 }
-            } else if (warmLayer != null) {
-                removeViewSafe(warmLayer);
-                warmLayer = null;
-                warmLp = null;
+            } else {
+                overlayLp = buildLp(effectiveAlpha, size[0], size[1]);
+                overlayLayer = buildLayer(context, wm, composed.solidColor, overlayLp);
+                if (overlayLayer != null && autoPaused) {
+                    overlayLayer.setVisibility(View.GONE);
+                }
             }
 
-            // 减光层
-            if (d > 0.005f) {
-                if (dimLayer != null) {
-                    dimLayer.setBackgroundColor(0xFF000000);
-                    dimLp.alpha = d;
-                    applyLpSize(dimLp, size);
-                    try { wm.updateViewLayout(dimLayer, dimLp); } catch (Exception ignored) {}
-                } else {
-                    dimLp = buildLp(d, size[0], size[1]);
-                    dimLayer = buildLayer(context, wm, 0xFF000000, dimLp);
-                }
-            } else if (dimLayer != null) {
-                removeViewSafe(dimLayer);
-                dimLayer = null;
-                dimLp = null;
-            }
-
-            persistState(context, warmLayer != null || dimLayer != null,
-                    warmColorHex == null ? "#FFB26B" : warmColorHex, w, d);
+            persistEnabled(context, overlayLayer != null);
         } catch (Exception ignored) {
             // 悬浮窗应用失败不抛出，保持进程存活
         }
@@ -465,12 +842,6 @@ public class EyeCareService extends Service {
         lp.y = 0;
     }
 
-    /**
-     * 悬浮窗布局参数。透明度必须走 lp.alpha（窗口级 alpha）——
-     * Android 12+ 的触摸穿透豁免按窗口 alpha 属性计算组合透明度；
-     * 若把透明度烘焙进背景色像素，窗口被视作全不透明，触摸会被系统拦截。
-     * FLAG_LAYOUT_NO_LIMITS：允许绘制进手势区/曲面边缘/系统装饰区（触摸穿透由 alpha 豁免保证）。
-     */
     private static WindowManager.LayoutParams buildLp(float alpha, int width, int height) {
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 width, height,
@@ -486,7 +857,6 @@ public class EyeCareService extends Service {
         lp.y = 0;
         lp.alpha = alpha;
         if (Build.VERSION.SDK_INT >= 28) {
-            // 覆盖刘海/挖孔区域
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
         return lp;
@@ -511,39 +881,58 @@ public class EyeCareService extends Service {
         }
     }
 
-    /** 移除滤镜层（保留服务/通知）。 */
+    /** 移除滤镜层（保留服务/通知，始终切回主线程操作 WindowManager）。 */
     public static void removeOverlay(Context context) {
-        removeOverlayInternal();
+        runOnUiThread(EyeCareService::removeOverlayInternal);
     }
 
     private static void removeOverlayInternal() {
-        removeViewSafe(warmLayer);
-        removeViewSafe(dimLayer);
-        warmLayer = null;
-        dimLayer = null;
-        warmLp = null;
-        dimLp = null;
+        cancelFadeAnimator();
+        removeViewSafe(overlayLayer);
+        overlayLayer = null;
+        overlayLp = null;
+        targetWindowAlpha = 0f;
     }
 
     /**
-     * 前台通知：富通知构建失败则退回最小通知，startForeground 多级降级。
-     * 铁律：startForegroundService 启动的服务必须成功调用 startForeground，
-     * 否则系统 ~5 秒后 RemoteServiceException 强杀进程（此前"切主题后进护眼区闪退"的根因）。
+     * 前台通知：按「护眼滤镜运行中」与「仅 20-20-20 远眺提醒」区分文案与关闭动作，
+     * 避免仅开远眺时点"关闭护眼"毫无反应的僵尸通知问题。
      */
     private void startForegroundCompat() {
         Notification notif = null;
         try {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+            if (nm != null && Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL_ID) == null) {
                 NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "护眼滤镜",
                         NotificationManager.IMPORTANCE_LOW);
-                ch.setDescription("护眼滤镜运行时常驻通知");
+                ch.setDescription("护眼滤镜与 20-20-20 远眺提醒运行时常驻通知");
                 ch.setShowBadge(false);
                 nm.createNotificationChannel(ch);
             }
 
-            Intent stopIntent = new Intent(this, EyeCareService.class).setAction(ACTION_STOP);
-            PendingIntent stopPi = PendingIntent.getService(this, 1, stopIntent,
+            boolean filterOn = overlayLayer != null
+                    || getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("eyecare_on", false);
+            String title;
+            String text;
+            String actionLabel;
+            Intent actionIntent;
+            int reqCode;
+            if (filterOn) {
+                title = "护眼滤镜运行中";
+                text = autoPaused
+                        ? "当前应用自动暂避中，退出即恢复"
+                        : (restEnabled ? "减蓝光滤镜与 20-20-20 远眺已开启" : "极光睡眠正在为屏幕减蓝光");
+                actionLabel = "关闭护眼";
+                actionIntent = new Intent(this, EyeCareService.class).setAction(ACTION_STOP);
+                reqCode = 1;
+            } else {
+                title = "20·20·20 远眺提醒运行中";
+                text = "连续用屏满 20 分钟将提醒你远眺 20 秒";
+                actionLabel = "关闭远眺";
+                actionIntent = new Intent(this, EyeCareService.class).setAction(ACTION_STOP_REST);
+                reqCode = 2;
+            }
+            PendingIntent stopPi = PendingIntent.getService(this, reqCode, actionIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
             Notification.Builder builder = Build.VERSION.SDK_INT >= 26
@@ -551,10 +940,10 @@ public class EyeCareService extends Service {
                     : new Notification.Builder(this);
             notif = builder
                     .setSmallIcon(getApplicationInfo().icon)
-                    .setContentTitle("护眼滤镜运行中")
-                    .setContentText("极光睡眠正在为屏幕减蓝光")
+                    .setContentTitle(title)
+                    .setContentText(text)
                     .addAction(new Notification.Action.Builder(
-                            android.R.drawable.ic_menu_close_clear_cancel, "关闭护眼", stopPi).build())
+                            android.R.drawable.ic_menu_close_clear_cancel, actionLabel, stopPi).build())
                     .setOngoing(true)
                     .setOnlyAlertOnce(true)
                     .build();
@@ -563,7 +952,7 @@ public class EyeCareService extends Service {
         }
         if (notif == null) {
             try {
-                notif = new Notification(); // 最小合法通知，绝不因构建失败而跳过 startForeground
+                notif = new Notification();
             } catch (Exception ignored) {
                 return;
             }
@@ -584,7 +973,7 @@ public class EyeCareService extends Service {
 
     @Override
     public void onDestroy() {
-        // 服务销毁时兜底移除滤镜，避免残留色层
+        if (sInstance == this) sInstance = null;
         try {
             DisplayManager dm = (DisplayManager) getSystemService(DISPLAY_SERVICE);
             if (dm != null) dm.unregisterDisplayListener(displayListener);
@@ -592,14 +981,17 @@ public class EyeCareService extends Service {
         }
         try {
             removeOverlayInternal();
+            autoPaused = false;
         } catch (Exception ignored) {
         }
-        // 20-20-20 清理：接收器/轮询/远眺引导层（第 77 轮）
         try {
             unregisterReceiver(screenReceiver);
         } catch (Exception ignored) {
         }
-        if (restHandler != null) restHandler.removeCallbacks(restPoll);
+        if (mainHandler != null) {
+            mainHandler.removeCallbacks(restPoll);
+            mainHandler.removeCallbacks(avoidPoll);
+        }
         dismissRestOverlay();
         super.onDestroy();
     }

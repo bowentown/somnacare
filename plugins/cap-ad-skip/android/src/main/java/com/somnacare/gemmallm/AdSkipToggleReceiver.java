@@ -19,6 +19,8 @@ public class AdSkipToggleReceiver extends BroadcastReceiver {
             SharedPreferences sp = context.getSharedPreferences(AdSkipService.PREFS, Context.MODE_PRIVATE);
             boolean next = !sp.getBoolean(AdSkipService.KEY_ENABLED, false);
             sp.edit().putBoolean(AdSkipService.KEY_ENABLED, next).apply();
+            AdSkipService.syncEventFilter(context);
+            AdSkipTileService.requestRefresh(context);
         } catch (Exception ignored) {
         }
     }

@@ -304,7 +304,8 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
   const errors = watchErrors(page);
   const fixed = new Date();
   fixed.setHours(15, 0, 0, 0);
-  await page.addInitScript(() => {
+  const todayKey = `${fixed.getFullYear()}-${String(fixed.getMonth() + 1).padStart(2, '0')}-${String(fixed.getDate()).padStart(2, '0')}`;
+  await page.addInitScript((today) => {
     const stub = (): any => new Proxy({}, { get: () => () => Promise.resolve({}) });
     const restCalls: Array<{ enabled: boolean }> = [];
     (window as any).__restCalls = restCalls;
@@ -319,7 +320,7 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
     (window as any).CapacitorCustomPlatform = { name: 'android' };
     (window as any).androidBridge = {};
     (window as any).Capacitor.Plugins.EyeCare = {
-      eyeCareRestGet: async () => ({ enabled: false, serviceAlive: true, maxTodayRaw: '{"maxMin":12,"date":"2026-10-26"}' }),
+      eyeCareRestGet: async () => ({ enabled: false, serviceAlive: true, maxTodayRaw: JSON.stringify({ maxMin: 12, date: today }) }),
       eyeCareRestSet: async (args: { enabled: boolean }) => {
         restCalls.push({ enabled: args?.enabled === true });
         return { ok: true };
@@ -343,7 +344,7 @@ test('旅程27 20-20-20：原生桥开关落库 + UI 跟随（行为覆盖）', 
     localStorage.setItem('somnacare_sleep_records', '[]');
     localStorage.setItem('somnacare_onboarded_v1', '1');
     sessionStorage.clear();
-  });
+  }, todayKey);
   await page.clock.install({ time: fixed });
   await page.goto('/');
   await page.waitForTimeout(2400);

@@ -205,16 +205,16 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
     console.log(`${ok ? '✓' : '✗'} ${name}`);
     if (!ok) process.exitCode = 1;
   }
-  // 反向自检：回退成绝对 0.5px 阈值必须被同一判据抓住
+  // 反向自检：回退成绝对 0.5px 阈值必须被同一判据抓住（同时覆盖 density 缓存与旧版 Resources 写法）
   {
-    const doctored = view.replace(
-      'float threshold = 0.5f * getResources().getDisplayMetrics().density;',
-      'float threshold = 0.5f;',
-    );
-    const stillCaught = !(
-      /float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(doctored)
-      && /Math\.abs\(shift - lastDrawnMotion\) >= threshold/.test(doctored)
-    );
+    const isDensityAware = (src: string): boolean =>
+      (/float threshold = 0\.5f \* getResources\(\)\.getDisplayMetrics\(\)\.density;/.test(src)
+        || /float threshold = 0\.5f \* density;/.test(src))
+      && /Math\.abs\(shift - lastDrawnMotion\) >= threshold/.test(src);
+    const doctored = view
+      .replace('float threshold = 0.5f * getResources().getDisplayMetrics().density;', 'float threshold = 0.5f;')
+      .replace('float threshold = 0.5f * density;', 'float threshold = 0.5f;');
+    const stillCaught = doctored !== view && !isDensityAware(doctored);
     console.log(`${stillCaught ? '✓' : '✗'} 反向自检：回退绝对 0.5px 阈值可被检出`);
     if (!stillCaught) process.exitCode = 1;
   }
@@ -270,6 +270,8 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
 {
   const view = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java', import.meta.url), 'utf8');
   const svc = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java', import.meta.url), 'utf8');
+  // 气泡控制器在 v1.44.0 从 PetOverlayService 按职责拆出
+  const bubbleCtrl = readFileSync(new URL('../plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetBubbleController.java', import.meta.url), 'utf8');
   const adskip = readFileSync(new URL('../plugins/cap-ad-skip/android/src/main/java/com/somnacare/gemmallm/AdSkipService.java', import.meta.url), 'utf8');
 
   const checks: Array<[string, boolean]> = [
@@ -295,9 +297,10 @@ console.log('\n✓ verify-pet-behavior：权重表形状/交叉溶解/反向通�
       && view.includes('activeTransition')
       && view.includes('nudgeRender()')],
     ['气泡防闪帧：禁用系统默认窗口动画 + 硬件图层缓存 + 在途退场窗清理',
-      svc.includes('bubbleLp.windowAnimations = 0')
+      bubbleCtrl.includes('bubbleLp.windowAnimations = 0')
       && svc.includes('fanLp.windowAnimations = 0')
-      && svc.includes('flushClosingBubble()')
+      && bubbleCtrl.includes('flushClosingBubble()')
+      && bubbleCtrl.includes('.withLayer()')
       && svc.includes('.withLayer()')],
     ['广告跳过：整树扫描后台化（adskip-scan 线程 + 单飞闸 + 点击记账回主线程）',
       adskip.includes('new HandlerThread("adskip-scan")')

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, MousePointerClick, Search, ShieldOff } from 'lucide-react';
+import { ChevronDown, History, MousePointerClick, RefreshCw, Search, ShieldOff } from 'lucide-react';
 import { SubpageShell } from '../../../shared/ui/SubpageShell';
 import { getCurrentTheme, useProfileStore } from '../../../shared/store/profileStore';
 import { isNativePlatform } from '../../sleep/utils/nativeAlarmScheduler';
@@ -13,6 +13,7 @@ import {
   isBatteryOptimizationIgnored,
   openAdSkipAccessibilitySettings,
   openShizukuApp,
+  refreshAdSkipRules,
   repairAdSkipWithShizuku,
   requestBatteryOptimizationExemption,
   requestShizukuPermission,
@@ -24,8 +25,20 @@ import {
   type ShizukuStatus,
 } from './adSkip';
 
+const INITIAL_APP_LIMIT = 40;
+
+function formatHitTime(ts: number): string {
+  if (!ts || !Number.isFinite(ts)) return '';
+  try {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  } catch {
+    return '';
+  }
+}
+
 /**
- * 摇一摇 / 开屏广告跳过 + 按应用排除名单 + Shizuku 守护。
+ * 摇一摇 / 开屏广告跳过 + 误触一键排除 + 按应用排除名单 + 手动刷新规则 + Shizuku 守护。
  */
 export const AdSkipSubpage: React.FC = () => {
   const userProfile = useProfileStore((s) => s.profile);
@@ -38,6 +51,12 @@ export const AdSkipSubpage: React.FC = () => {
     hits: 0,
     diag: [],
     excludedPkgs: [],
+    excludedLabels: {},
+    recentHits: [],
+    rulesVersion: 0,
+    rulesAppCount: 0,
+    rulesSource: 'bundled',
+    rulesUpdatedAt: 0,
   });
   const [adSkipBusy, setAdSkipBusy] = useState(false);
   const [adSkipOpen, setAdSkipOpen] = useState(true);
@@ -52,14 +71,17 @@ export const AdSkipSubpage: React.FC = () => {
   const [shizukuBusy, setShizukuBusy] = useState(false);
   const [shizukuMsg, setShizukuMsg] = useState<string | null>(null);
   const [adSkipMsg, setAdSkipMsg] = useState<string | null>(null);
+  const [rulesBusy, setRulesBusy] = useState(false);
+  const [rulesMsg, setRulesMsg] = useState<string | null>(null);
   const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
   const [adSkipStats, setAdSkipStats] = useState<AdSkipAppStat[]>([]);
 
-  // 应用搜索加白面板状态
+  // 应用搜索加白面板状态（不再静默截断前 40 款：搜索全量展示，浏览支持一键展开全部）
   const [appPickerOpen, setAppPickerOpen] = useState(false);
   const [installedApps, setInstalledApps] = useState<AdSkipInstalledApp[]>([]);
   const [appsLoading, setAppsLoading] = useState(false);
   const [appQuery, setAppQuery] = useState('');
+  const [showAllApps, setShowAllApps] = useState(false);
 
   const refreshAdSkip = async () => {
     const [st, stats] = await Promise.all([getAdSkipStatus(), getAdSkipStats()]);
@@ -71,6 +93,24 @@ export const AdSkipSubpage: React.FC = () => {
   const handleCopyDiag = async () => {
     const ok = await copyAdSkipDiag();
     setAdSkipMsg(ok ? '诊断信息已复制，粘贴发给开发者即可' : '复制失败，请截图运行日志代替');
+  };
+
+  const handleRefreshRules = async () => {
+    if (!adSkipNative || rulesBusy) return;
+    tapTick();
+    setRulesBusy(true);
+    setRulesMsg(null);
+    try {
+      const res = await refreshAdSkipRules();
+      if (res.ok) {
+        setRulesMsg(`规则已更新至 v${res.version}（覆盖 ${res.appCount} 款应用），服务已热重载`);
+        await refreshAdSkip();
+      } else {
+        setRulesMsg(res.reason || '刷新失败，已继续使用现有规则');
+      }
+    } finally {
+      setRulesBusy(false);
+    }
   };
 
   const refreshSystemGuard = async () => {
@@ -130,8 +170,12 @@ export const AdSkipSubpage: React.FC = () => {
 
   const handleTogglePkgExcluded = async (pkg: string, nextExcluded: boolean) => {
     tapTick();
-    const updated = await setAdSkipPackageExcluded(pkg, nextExcluded);
-    setAdSkip((prev) => ({ ...prev, excludedPkgs: updated }));
+    const res = await setAdSkipPackageExcluded(pkg, nextExcluded);
+    setAdSkip((prev) => ({
+      ...prev,
+      excludedPkgs: res.excludedPkgs,
+      excludedLabels: { ...prev.excludedLabels, ...res.excludedLabels },
+    }));
     setAdSkipStats((prev) =>
       prev.map((s) => (s.pkg === pkg ? { ...s, excluded: nextExcluded } : s)),
     );
@@ -159,18 +203,35 @@ export const AdSkipSubpage: React.FC = () => {
 
   const labelByPkg = useMemo(() => {
     const map = new Map<string, string>();
+    for (const [pkg, label] of Object.entries(adSkip.excludedLabels)) {
+      if (label) map.set(pkg, label);
+    }
+    for (const h of adSkip.recentHits) {
+      if (h.label && h.label !== h.pkg) map.set(h.pkg, h.label);
+    }
     for (const s of adSkipStats) map.set(s.pkg, s.label);
     for (const a of installedApps) map.set(a.pkg, a.label);
     return map;
-  }, [adSkipStats, installedApps]);
+  }, [adSkip.excludedLabels, adSkip.recentHits, adSkipStats, installedApps]);
 
-  const filteredApps = useMemo(() => {
+  const latestActiveHit = useMemo(
+    () => adSkip.recentHits.find((h) => !excludedSet.has(h.pkg)) ?? null,
+    [adSkip.recentHits, excludedSet],
+  );
+
+  const matchedApps = useMemo(() => {
     const q = appQuery.trim().toLowerCase();
-    if (!q) return installedApps.slice(0, 40);
-    return installedApps
-      .filter((a) => a.label.toLowerCase().includes(q) || a.pkg.toLowerCase().includes(q))
-      .slice(0, 40);
+    if (!q) return installedApps;
+    return installedApps.filter(
+      (a) => a.label.toLowerCase().includes(q) || a.pkg.toLowerCase().includes(q),
+    );
   }, [installedApps, appQuery]);
+
+  const visibleApps = useMemo(() => {
+    const q = appQuery.trim();
+    if (q || showAllApps) return matchedApps;
+    return matchedApps.slice(0, INITIAL_APP_LIMIT);
+  }, [matchedApps, appQuery, showAllApps]);
 
   const handleShizukuAuthorize = async () => {
     if (shizukuBusy) return;
@@ -238,7 +299,7 @@ export const AdSkipSubpage: React.FC = () => {
   return (
     <SubpageShell
       title="摇一摇广告跳过"
-      subtitle="开屏与应用内跳过、按应用排除名单与 Shizuku 守护"
+      subtitle="开屏与应用内跳过、误触一键排除、规则刷新与 Shizuku 守护"
       theme={theme}
     >
       {/* 1. 主开关与系统保活 */}
@@ -335,6 +396,33 @@ export const AdSkipSubpage: React.FC = () => {
               </p>
             )}
 
+            {/* 显式点击触发的手动刷新 GKD 规则（严守绝不自动联网承诺） */}
+            <div className="pt-2 border-t border-slate-700/50 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-300">GKD 广告规则库</p>
+                  <p className="text-[10px] text-slate-400 font-mono truncate">
+                    {adSkip.rulesVersion > 0
+                      ? `v${adSkip.rulesVersion}${adSkip.rulesAppCount > 0 ? ` · ${adSkip.rulesAppCount} 款应用` : ''} · ${adSkip.rulesSource === 'hot' ? '已热更新' : '内置规则'}`
+                      : '内置规则库（离线可用）'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={rulesBusy}
+                  onClick={() => void handleRefreshRules()}
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-600 text-slate-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-transform disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${rulesBusy ? 'animate-spin' : ''}`} />
+                  {rulesBusy ? '刷新中…' : '手动刷新 GKD 规则'}
+                </button>
+              </div>
+              {rulesMsg && <p className="text-[10px] text-emerald-300 leading-relaxed">{rulesMsg}</p>}
+              <p className="text-[9px] text-slate-400 leading-relaxed">
+                仅在你手动点击按钮时通过 HTTPS 拉取并校验 schema 后本地生效，平时绝不自动联网。
+              </p>
+            </div>
+
             {adSkip.enabled && (
               <div className="pt-2 border-t border-slate-700/50 space-y-1">
                 <div className="flex items-center justify-between gap-2">
@@ -427,13 +515,71 @@ export const AdSkipSubpage: React.FC = () => {
               只识别「跳过」控件，不读取输入内容，不联网上报任何记录。
             </p>
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              当前为网页预览环境；在 Android 设备安装 APK 后可启用无障碍跳过、按应用排除名单与 Shizuku 守护。
+              当前为网页预览环境；在 Android 设备安装 APK 后可启用无障碍跳过、误触一键排除、按应用排除名单与 Shizuku 守护。
             </p>
           </div>
         )}
       </div>
 
-      {/* 2. 按应用精细管控（双入口：命中榜直停 + 搜索本机应用加入不跳名单） */}
+      {/* 2. 最近跳过事件 + 误触一键排除 */}
+      {adSkipNative && adSkip.recentHits.length > 0 && (
+        <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+                <History className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-black text-white">最近跳过记录</h3>
+                <p className="text-[10px] text-slate-400 truncate">刚遇到误触？点下方快捷按钮立刻停止跳过该应用</p>
+              </div>
+            </div>
+          </div>
+
+          {latestActiveHit && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleTogglePkgExcluded(latestActiveHit.pkg, true);
+                setAdSkipMsg(`已将「${latestActiveHit.label}」加入排除不跳名单`);
+              }}
+              className="w-full py-2.5 px-3.5 rounded-2xl border border-amber-400/50 bg-amber-500/10 text-amber-200 text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform"
+            >
+              误触一键排除最近跳过的应用：{latestActiveHit.label}
+            </button>
+          )}
+
+          <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl divide-y divide-slate-700/50 overflow-hidden`}>
+            {adSkip.recentHits.map((hit, idx) => {
+              const isEx = excludedSet.has(hit.pkg);
+              return (
+                <div key={`${hit.pkg}-${hit.at}-${idx}`} className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white truncate">{hit.label}</p>
+                    <p className="text-[10px] font-mono text-slate-400 truncate">
+                      {formatHitTime(hit.at)}
+                      {hit.text ? ` · 「${hit.text}」` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleTogglePkgExcluded(hit.pkg, !isEx)}
+                    className={`px-2.5 py-1.5 rounded-xl text-[10px] font-bold border shrink-0 cursor-pointer active:scale-95 transition-all ${
+                      isEx
+                        ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
+                        : 'bg-slate-800 border-slate-600 text-slate-200'
+                    }`}
+                  >
+                    {isEx ? '已排除 · 恢复' : '一键排除'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 3. 按应用精细管控（双入口：命中榜直停 + 搜索本机应用加入不跳名单） */}
       {adSkipNative && (
         <div className={`${theme.cardBg} rounded-3xl p-5 border ${theme.cardBorder} shadow-xl space-y-3.5`}>
           <div className="flex items-center justify-between gap-2">
@@ -443,7 +589,7 @@ export const AdSkipSubpage: React.FC = () => {
               </div>
               <div className="min-w-0">
                 <h3 className="text-sm font-black text-white">排除不跳名单</h3>
-                <p className="text-[10px] text-slate-400 truncate">遇到误触应用一键停用，也可提前把银行/政务类加入不跳</p>
+                <p className="text-[10px] text-slate-400 truncate">已纳入全量备份 v3，换机导出不丢失</p>
               </div>
             </div>
             <span className="text-[10px] font-mono text-slate-400 shrink-0">
@@ -451,21 +597,24 @@ export const AdSkipSubpage: React.FC = () => {
             </span>
           </div>
 
-          {/* 当前已排除应用胶囊 */}
+          {/* 当前已排除应用胶囊（优先显示应用名称） */}
           {adSkip.excludedPkgs.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {adSkip.excludedPkgs.map((pkg) => (
-                <button
-                  key={pkg}
-                  type="button"
-                  onClick={() => void handleTogglePkgExcluded(pkg, false)}
-                  aria-label={`恢复 ${labelByPkg.get(pkg) ?? pkg} 的广告跳过`}
-                  className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/50 text-amber-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
-                >
-                  <span>{labelByPkg.get(pkg) ?? pkg}</span>
-                  <span className="text-amber-300/80">× 恢复</span>
-                </button>
-              ))}
+              {adSkip.excludedPkgs.map((pkg) => {
+                const displayName = labelByPkg.get(pkg) ?? pkg;
+                return (
+                  <button
+                    key={pkg}
+                    type="button"
+                    onClick={() => void handleTogglePkgExcluded(pkg, false)}
+                    aria-label={`恢复 ${displayName} 的广告跳过`}
+                    className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/50 text-amber-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+                  >
+                    <span>{displayName}</span>
+                    <span className="text-amber-300/80">× 恢复</span>
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -502,7 +651,7 @@ export const AdSkipSubpage: React.FC = () => {
             </div>
           )}
 
-          {/* 入口 ②：搜索本机应用加入不跳名单 */}
+          {/* 入口 ②：搜索本机应用加入不跳名单（取消静默 40 截断） */}
           <button
             type="button"
             onClick={() => void handleToggleAppPicker()}
@@ -528,33 +677,51 @@ export const AdSkipSubpage: React.FC = () => {
               />
               {appsLoading ? (
                 <p className="text-[11px] text-slate-400 py-2 text-center">正在读取本机应用…</p>
-              ) : filteredApps.length === 0 ? (
+              ) : visibleApps.length === 0 ? (
                 <p className="text-[11px] text-slate-400 py-2 text-center">没有找到匹配的应用</p>
               ) : (
-                <div className="max-h-56 overflow-y-auto rounded-2xl border border-slate-700/60 divide-y divide-slate-700/40 bg-slate-900/50">
-                  {filteredApps.map((app) => {
-                    const isEx = excludedSet.has(app.pkg);
-                    return (
-                      <div key={app.pkg} className="px-3.5 py-2.5 flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-white truncate">{app.label}</p>
-                          <p className="text-[9px] font-mono text-slate-500 truncate">{app.pkg}</p>
+                <>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 px-1">
+                    <span>
+                      {appQuery.trim()
+                        ? `匹配 ${matchedApps.length} 款应用`
+                        : `已显示 ${visibleApps.length} / ${matchedApps.length} 款本机应用`}
+                    </span>
+                    {!appQuery.trim() && matchedApps.length > INITIAL_APP_LIMIT && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllApps((v) => !v)}
+                        className={`${theme.accentText} font-bold cursor-pointer`}
+                      >
+                        {showAllApps ? '收起列表' : `展开全部 (${matchedApps.length})`}
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto rounded-2xl border border-slate-700/60 divide-y divide-slate-700/40 bg-slate-900/50">
+                    {visibleApps.map((app) => {
+                      const isEx = excludedSet.has(app.pkg);
+                      return (
+                        <div key={app.pkg} className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-white truncate">{app.label}</p>
+                            <p className="text-[9px] font-mono text-slate-400 truncate">{app.pkg}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleTogglePkgExcluded(app.pkg, !isEx)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border shrink-0 cursor-pointer active:scale-95 transition-all ${
+                              isEx
+                                ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
+                                : 'bg-slate-800 border-slate-600 text-slate-300'
+                            }`}
+                          >
+                            {isEx ? '已排除' : '加入不跳'}
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleTogglePkgExcluded(app.pkg, !isEx)}
-                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border shrink-0 cursor-pointer active:scale-95 transition-all ${
-                            isEx
-                              ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
-                              : 'bg-slate-800 border-slate-600 text-slate-300'
-                          }`}
-                        >
-                          {isEx ? '已排除' : '加入不跳'}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}

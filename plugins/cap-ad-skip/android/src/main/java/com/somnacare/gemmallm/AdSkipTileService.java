@@ -42,6 +42,7 @@ public class AdSkipTileService extends TileService {
 
         boolean next = !currentlyOn;
         sp.edit().putBoolean(AdSkipService.KEY_ENABLED, next).apply();
+        AdSkipService.syncEventFilter(c);
         Tile t = getQsTile();
         if (t != null) {
             boolean active = next && serviceOk;
@@ -50,6 +51,15 @@ public class AdSkipTileService extends TileService {
                 t.setSubtitle(next ? (serviceOk ? "已开启" : "待无障碍授权") : "已暂停");
             }
             t.updateTile();
+        }
+    }
+
+    static void requestRefresh(Context context) {
+        try {
+            Context app = context.getApplicationContext();
+            TileService.requestListeningState(app,
+                    new android.content.ComponentName(app, AdSkipTileService.class));
+        } catch (Exception ignored) {
         }
     }
 

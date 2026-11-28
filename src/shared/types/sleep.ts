@@ -105,6 +105,7 @@ export interface EyeCareConfig {
   auto?: boolean; // 自动日变：白天自动减弱，渐强时段（autoStart→autoEnd）内线性增至满档
   autoStart?: string; // 'HH:MM' 渐强开始（默认 19:00）
   autoEnd?: string; // 'HH:MM' 达到满档（默认 23:00）
+  autoAvoidMedia?: boolean; // 相机/相册/横屏全屏视频前台自动临时暂避滤镜（默认开启，零新增权限）
   start: string; // 'HH:MM'
   end: string; // 'HH:MM'
 }
@@ -116,6 +117,7 @@ export const DEFAULT_EYE_CARE: EyeCareConfig = {
   warmStrength: 50,
   dimStrength: 15,
   scheduleEnabled: false,
+  autoAvoidMedia: true,
   start: '22:00',
   end: '07:00',
   autoStart: '19:00',

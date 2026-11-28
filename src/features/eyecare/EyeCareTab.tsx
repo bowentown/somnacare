@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   BedDouble,
   BookOpen,
+  CameraOff,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -12,7 +13,7 @@ import {
   Pipette,
 } from 'lucide-react';
 import { EyeCareConfig, DEFAULT_EYE_CARE } from '../../shared/types/sleep';
-import { getCurrentTheme, updateProfile, useProfileStore } from '../../shared/store/profileStore';
+import { getCurrentTheme, profileStore, updateProfile, useProfileStore } from '../../shared/store/profileStore';
 import { pushSubpage, showToast } from '../../shared/store/uiStore';
 import { useMinuteTick } from '../../shared/hooks/useMinuteTick';
 import { useModalA11y } from '../../shared/utils/modalA11y';
@@ -25,6 +26,8 @@ import {
   applyEyeCare,
   stopEyeCareNow,
   getEyeRestStatus,
+  syncEyeCareFromNative,
+  type EyeCareNativeStatus,
 } from './utils/eyeCare';
 import { subscribeAppResume } from '../../shared/utils/appResume';
 import { Switch } from '../../shared/ui';
@@ -90,6 +93,7 @@ const EyeCareTabInner: React.FC = () => {
   const native = isEyeCareNative();
   const [granted, setGranted] = useState<boolean>(true);
   const [restEnabled, setRestEnabled] = useState<boolean>(false);
+  const [nativeStatus, setNativeStatus] = useState<EyeCareNativeStatus | null>(null);
   const now = useMinuteTick();
   const [hue, setHue] = useState<number>(() => hexToHue(cfg.warmColor));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -97,26 +101,27 @@ const EyeCareTabInner: React.FC = () => {
 
   const patch = (p: Partial<EyeCareConfig>) => onUpdateProfile({ eyeCare: { ...cfg, ...p } });
 
+  // 仅负责权限、远眺与原生真实状态反同步；滤镜应用与定时轮询已收敛到 App.tsx + 原生 AlarmManager，消除重复轮询
   useEffect(() => {
-    if (native) {
-      eyeCarePermissionGranted().then(setGranted);
+    if (!native) return;
+    const syncNative = () => {
+      void eyeCarePermissionGranted().then(setGranted);
       void getEyeRestStatus()
         .then((r) => setRestEnabled(r.enabled))
         .catch(() => { /* ignore */ });
-    }
-    void applyEyeCare(cfg);
-    const t = setInterval(() => {
-      void applyEyeCare(cfg);
-    }, 60_000);
-    const unsubscribeResume = subscribeAppResume(() => {
-      if (native) eyeCarePermissionGranted().then(setGranted);
-    });
-    return () => {
-      clearInterval(t);
-      unsubscribeResume();
+      const latestCfg = profileStore.getState().profile.eyeCare ?? DEFAULT_EYE_CARE;
+      void syncEyeCareFromNative(latestCfg, (nextEnabled) => {
+        onUpdateProfile((prev) => ({
+          eyeCare: { ...(prev.eyeCare ?? DEFAULT_EYE_CARE), enabled: nextEnabled },
+        }));
+      }).then((st) => {
+        if (st) setNativeStatus(st);
+      });
     };
+    syncNative();
+    return subscribeAppResume(syncNative);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg.enabled, cfg.scheduleEnabled, cfg.start, cfg.end, cfg.warmColor, cfg.warmStrength, cfg.dimStrength]);
+  }, [native]);
 
   const inWindow = isInEyeCareWindow(cfg, now);
   const active = cfg.enabled && inWindow;
@@ -135,18 +140,24 @@ const EyeCareTabInner: React.FC = () => {
     patch({ enabled: next });
     if (next) {
       const applied = await applyEyeCare({ ...cfg, enabled: true });
+      setNativeStatus((prev) => (prev ? { ...prev, active: applied, nightRead: false } : prev));
       onToast(applied ? '护眼滤镜已开启，全局生效' : '护眼滤镜将在定时窗口内自动生效');
     } else {
       await stopEyeCareNow();
+      setNativeStatus((prev) => (prev ? { ...prev, active: false, nightRead: false, autoPaused: false } : prev));
       onToast('护眼滤镜已关闭');
     }
   };
 
-  const statusLine = active
-    ? '滤镜生效中'
-    : cfg.enabled
-      ? '等待定时窗口自动开启'
-      : '已关闭';
+  const statusLine = nativeStatus?.nightRead
+    ? '极暗夜读生效中（磁贴独立档位）'
+    : nativeStatus?.autoPaused
+      ? '滤镜自动暂避中（退出相机/视频即恢复）'
+      : active
+        ? '滤镜生效中'
+        : cfg.enabled
+          ? '等待定时窗口自动开启'
+          : '已关闭';
 
   const scheduleBadge = [
     cfg.scheduleEnabled ? `${cfg.start}–${cfg.end}` : '全天可开',
@@ -332,7 +343,7 @@ const EyeCareTabInner: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. 偏好式二级目录：定时日变 & 用眼日报 */}
+      {/* 3. 偏好式二级目录：定时日变 & 媒体避让 & 用眼日报 */}
       <div className={`${theme.cardBg} rounded-3xl border ${theme.cardBorder} shadow-xl divide-y divide-slate-700/50 overflow-hidden`}>
         <button
           type="button"
@@ -348,7 +359,7 @@ const EyeCareTabInner: React.FC = () => {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-black text-white">定时开启与自动日变</h3>
-              <p className="text-[10px] text-slate-400 truncate mt-0.5">跨午夜自动时段与晚间暖度渐强</p>
+              <p className="text-[10px] text-slate-400 truncate mt-0.5">原生定时保活，跨午夜时段与晚间暖度渐强</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -356,6 +367,29 @@ const EyeCareTabInner: React.FC = () => {
             <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
           </div>
         </button>
+
+        <div className="px-5 py-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={`w-9 h-9 rounded-2xl ${theme.cardInnerBg} ${theme.accentText} flex items-center justify-center border ${theme.cardBorder} shrink-0`}>
+              <CameraOff className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-black text-white">相机 / 相册 / 视频自动暂避</h3>
+              <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                {native ? '打开相机相册或横屏观影自动淡出滤镜，退出即恢复' : '安装 APK 后零新增权限生效'}
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={cfg.autoAvoidMedia !== false}
+            onChange={(next) => {
+              tapTick();
+              patch({ autoAvoidMedia: next });
+            }}
+            ariaLabel="相机相册与全屏视频自动暂避护眼滤镜"
+            onClass="bg-orange-500"
+          />
+        </div>
 
         <button
           type="button"

@@ -76,19 +76,53 @@ public class AdSkipPlugin extends Plugin {
         return arr;
     }
 
-    @PluginMethod
-    public void adSkipStatus(PluginCall call) {
-        JSObject ret = new JSObject();
-        Context ctx = getContext();
-        ret.put("enabled", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(AdSkipService.KEY_ENABLED, false));
+    private static JSObject buildExcludedLabels(Context ctx, List<String> pkgs) {
+        JSObject map = new JSObject();
+        for (String pkg : pkgs) {
+            map.put(pkg, AdSkipService.resolveAppLabel(ctx, pkg));
+        }
+        return map;
+    }
+
+    private static JSArray toRecentHitsJsArray(Context ctx) {
+        JSArray out = new JSArray();
+        org.json.JSONArray raw = AdSkipService.recentHits(ctx);
+        for (int i = 0; i < raw.length(); i++) {
+            org.json.JSONObject item = raw.optJSONObject(i);
+            if (item == null) continue;
+            JSObject obj = new JSObject();
+            obj.put("pkg", item.optString("pkg", ""));
+            obj.put("label", item.optString("label", ""));
+            obj.put("at", item.optLong("at", 0L));
+            obj.put("source", item.optString("source", ""));
+            obj.put("text", item.optString("text", ""));
+            out.put(obj);
+        }
+        return out;
+    }
+
+    private void putCommonStatusFields(JSObject ret, Context ctx) {
+        android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        List<String> excluded = AdSkipService.getExcludedPackages(ctx);
+        ret.put("enabled", sp.getBoolean(AdSkipService.KEY_ENABLED, false));
         ret.put("serviceEnabled", isAdSkipServiceEnabled());
-        ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(AdSkipService.KEY_HITS, 0));
+        ret.put("hits", sp.getInt(AdSkipService.KEY_HITS, 0));
         JSArray diag = new JSArray();
         for (String line : AdSkipService.diagSnapshot()) diag.put(line);
         ret.put("diag", diag);
-        ret.put("excludedPkgs", toJsArray(AdSkipService.getExcludedPackages(ctx)));
+        ret.put("excludedPkgs", toJsArray(excluded));
+        ret.put("excludedLabels", buildExcludedLabels(ctx, excluded));
+        ret.put("recentHits", toRecentHitsJsArray(ctx));
+        ret.put("rulesVersion", AdSkipService.currentRulesVersion(ctx));
+        ret.put("rulesAppCount", AdSkipService.currentRulesAppCount(ctx));
+        ret.put("rulesSource", AdSkipService.isHotRulesActive(ctx) ? "hot" : "bundled");
+        ret.put("rulesUpdatedAt", sp.getLong(AdSkipRuleUpdater.KEY_RULES_UPDATED_AT, 0L));
+    }
+
+    @PluginMethod
+    public void adSkipStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        putCommonStatusFields(ret, getContext());
         call.resolve(ret);
     }
 
@@ -98,12 +132,10 @@ public class AdSkipPlugin extends Plugin {
         Context ctx = getContext();
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(AdSkipService.KEY_ENABLED, enabled).apply();
+        AdSkipService.syncEventFilter(ctx);
+        AdSkipTileService.requestRefresh(ctx);
         JSObject ret = new JSObject();
-        ret.put("enabled", enabled);
-        ret.put("serviceEnabled", isAdSkipServiceEnabled());
-        ret.put("hits", ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(AdSkipService.KEY_HITS, 0));
-        ret.put("excludedPkgs", toJsArray(AdSkipService.getExcludedPackages(ctx)));
+        putCommonStatusFields(ret, ctx);
         call.resolve(ret);
     }
 
@@ -116,7 +148,43 @@ public class AdSkipPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("ok", true);
         ret.put("excludedPkgs", toJsArray(updated));
+        ret.put("excludedLabels", buildExcludedLabels(ctx, updated));
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipSetExcludedPackages(PluginCall call) {
+        Context ctx = getContext();
+        JSArray raw = call.getArray("pkgs");
+        List<String> list = new ArrayList<>();
+        if (raw != null) {
+            for (int i = 0; i < raw.length(); i++) {
+                String p = raw.optString(i, "").trim();
+                if (!p.isEmpty()) list.add(p);
+            }
+        }
+        List<String> updated = AdSkipService.setExcludedPackages(ctx, list);
+        JSObject ret = new JSObject();
+        ret.put("ok", true);
+        ret.put("excludedPkgs", toJsArray(updated));
+        ret.put("excludedLabels", buildExcludedLabels(ctx, updated));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void adSkipRefreshRules(PluginCall call) {
+        final Context ctx = getContext().getApplicationContext();
+        final String url = call.getString("url", null);
+        new Thread(() -> {
+            AdSkipRuleUpdater.RefreshResult res = AdSkipRuleUpdater.refresh(ctx, url);
+            JSObject ret = new JSObject();
+            ret.put("ok", res.ok);
+            ret.put("version", res.version);
+            ret.put("appCount", res.appCount);
+            ret.put("updatedAt", res.updatedAt);
+            if (!res.ok) ret.put("reason", res.reason);
+            call.resolve(ret);
+        }, "adskip-rules-refresh").start();
     }
 
     @PluginMethod

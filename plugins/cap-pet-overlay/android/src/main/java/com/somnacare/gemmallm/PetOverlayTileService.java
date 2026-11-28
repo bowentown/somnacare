@@ -2,9 +2,9 @@ package com.somnacare.gemmallm;
 
 import android.annotation.SuppressLint;
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -13,6 +13,7 @@ import android.service.quicksettings.TileService;
 
 /**
  * 大肥鱼桌宠快捷设置磁贴：全屏看剧/游戏或想唤出陪伴时，下拉控制中心一键显隐。
+ * 关闭时写入统一开关标志并调用 stopService（兼容 Android 8+ 后台停服，不被 petSync 复活）。
  */
 public class PetOverlayTileService extends TileService {
 
@@ -26,8 +27,7 @@ public class PetOverlayTileService extends TileService {
     @Override
     public void onClick() {
         Context c = getApplicationContext();
-        SharedPreferences sp = c.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);
-        boolean running = PetOverlayService.sActiveView != null || sp.getBoolean(KEY_PET_TILE_ACTIVE, false);
+        boolean running = PetOverlayService.sActiveView != null || PetOverlayService.isNativeEnabled(c);
 
         if (!running && !Settings.canDrawOverlays(c)) {
             openOverlaySettingsCompat(c);
@@ -41,7 +41,7 @@ public class PetOverlayTileService extends TileService {
         }
 
         boolean next = !running;
-        sp.edit().putBoolean(KEY_PET_TILE_ACTIVE, next).apply();
+        PetOverlayService.setNativeEnabledFlag(c, next);
         try {
             Intent svc = new Intent(c, PetOverlayService.class);
             if (next) {
@@ -52,8 +52,8 @@ public class PetOverlayTileService extends TileService {
                     c.startService(svc);
                 }
             } else {
-                svc.setAction(PetOverlayService.ACTION_STOP);
-                c.startService(svc);
+                // 使用 stopService 而非后台 startService(ACTION_STOP)，杜绝 Android 8+ 后台抛异常
+                c.stopService(svc);
             }
         } catch (Exception ignored) {
         }
@@ -66,13 +66,20 @@ public class PetOverlayTileService extends TileService {
         }
     }
 
+    static void requestRefresh(Context context) {
+        try {
+            Context app = context.getApplicationContext();
+            TileService.requestListeningState(app, new ComponentName(app, PetOverlayTileService.class));
+        } catch (Exception ignored) {
+        }
+    }
+
     private void refresh() {
         Tile t = getQsTile();
         if (t == null) return;
         Context c = getApplicationContext();
-        SharedPreferences sp = c.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);
         boolean running = PetOverlayService.sActiveView != null
-                || (Settings.canDrawOverlays(c) && sp.getBoolean(KEY_PET_TILE_ACTIVE, false));
+                || (Settings.canDrawOverlays(c) && PetOverlayService.isNativeEnabled(c));
         t.setState(running ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         if (Build.VERSION.SDK_INT >= 29) t.setSubtitle(running ? "陪伴中" : "已收起");
         t.updateTile();

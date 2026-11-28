@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Moon } from 'lucide-react';
 import { DEFAULT_EYE_CARE } from '../shared/types/sleep';
-import { getCurrentTheme, updateProfile, useProfileStore } from '../shared/store/profileStore';
+import { getCurrentTheme, profileStore, updateProfile, useProfileStore } from '../shared/store/profileStore';
 import { hydrateSleepStore, useSleepStore } from '../features/sleep/store/sleepStore';
 import {
   openActiveSleepModal,
@@ -32,9 +32,10 @@ import {
 import { isNativePlatform } from '../features/sleep/utils/nativeAlarmScheduler';
 import { syncRecallNotify } from '../features/sleep/utils/careNotifications';
 import { initProposalNotify } from '../features/sleep/utils/proposalNotify';
-import { applyEyeCare } from '../features/eyecare/utils/eyeCare';
-import { syncPet } from '../features/pet/utils/petOverlay';
+import { applyEyeCare, syncEyeCareFromNative } from '../features/eyecare/utils/eyeCare';
+import { syncPetDebounced, syncPetEnabledFromNative } from '../features/pet/utils/petOverlay';
 import { syncWidgetsDebounced } from '../features/widgets/syncWidgets';
+import { subscribeAppResume } from '../shared/utils/appResume';
 
 // 非首屏分区统一按需懒加载，压低首包体积与冷启动解析开销
 const TrendsTab = lazy(() => import('../features/trends/TrendsTab').then((m) => ({ default: m.TrendsTab })));
@@ -152,16 +153,76 @@ export const App: React.FC = () => {
     },
   );
 
-  useEffect(() => { void syncPet(records, userProfile); }, [records, userProfile]);
+  // 仅订阅桌宠相关字段 + 300ms 防抖，杜绝拖护眼滑杆/改主题触发并发桌宠同步与 LLM 请求
+  const aiCfg = userProfile.aiConfig;
+  useEffect(
+    () => syncPetDebounced(records, userProfile, 300),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      records,
+      userProfile.targetBedtime,
+      userProfile.targetWakeTime,
+      aiCfg?.provider,
+      aiCfg?.deepseekModel,
+      aiCfg?.deepseekApiKey,
+      aiCfg?.customModelName,
+      aiCfg?.customApiKey,
+      aiCfg?.customBaseUrl,
+      aiCfg?.systemPersona,
+    ],
+  );
   useEffect(() => syncWidgetsDebounced(records, userProfile), [records, userProfile]);
   useEffect(() => { void syncRecallNotify(records); }, [records]);
 
+  // 原生端先完成首次双向状态对齐再派发 applyEyeCare，防止冷启动覆盖外部磁贴关闭态或极暗夜读
+  const [eyeCareSynced, setEyeCareSynced] = useState(() => !isNativePlatform());
+
+  // 切回前台时反向对齐原生护眼与桌宠的真实开关态（磁贴/通知栏/小组件外部切换即时同步回 UI）
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let alive = true;
+    const syncNativeStates = () => {
+      const latestEye = profileStore.getState().profile.eyeCare ?? DEFAULT_EYE_CARE;
+      void syncEyeCareFromNative(latestEye, (nextEnabled) => {
+        updateProfile((prev) => ({
+          eyeCare: { ...(prev.eyeCare ?? DEFAULT_EYE_CARE), enabled: nextEnabled },
+        }));
+      }).finally(() => {
+        if (alive) setEyeCareSynced(true);
+      });
+      void syncPetEnabledFromNative();
+    };
+    syncNativeStates();
+    const unsub = subscribeAppResume(syncNativeStates);
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, []);
+
+  // 单一权威护眼同步：补齐 auto/autoStart/autoEnd/autoAvoidMedia 依赖，仅在定时/日变开启时才建 60s 定时器
   const eyeCareCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;
   useEffect(() => {
+    if (!eyeCareSynced) return;
     void applyEyeCare(eyeCareCfg);
-    const t = setInterval(() => void applyEyeCare(eyeCareCfg), 30_000);
+    if (!eyeCareCfg.enabled || (!eyeCareCfg.scheduleEnabled && !eyeCareCfg.auto)) return;
+    const t = setInterval(() => void applyEyeCare(eyeCareCfg), 60_000);
     return () => clearInterval(t);
-  }, [eyeCareCfg]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    eyeCareSynced,
+    eyeCareCfg.enabled,
+    eyeCareCfg.scheduleEnabled,
+    eyeCareCfg.start,
+    eyeCareCfg.end,
+    eyeCareCfg.auto,
+    eyeCareCfg.autoStart,
+    eyeCareCfg.autoEnd,
+    eyeCareCfg.warmColor,
+    eyeCareCfg.warmStrength,
+    eyeCareCfg.dimStrength,
+    eyeCareCfg.autoAvoidMedia,
+  ]);
 
   const { trackRef, mountedPanes } = useTabSwipe(activeTab, hydrated);
 

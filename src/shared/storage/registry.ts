@@ -11,11 +11,11 @@ export type StoragePolicy = 'backup' | 'ephemeral' | 'privacy' | 'secret';
 
 export interface StorageKeyMeta {
   key: string;
-  domain: 'sleep' | 'profile' | 'pet' | 'coach' | 'eyecare' | 'intervention' | 'ui';
+  domain: 'sleep' | 'profile' | 'pet' | 'coach' | 'eyecare' | 'intervention' | 'adskip' | 'ui';
   policy: StoragePolicy;
 }
 
-/** 全仓 42 个持久化键台账（40 个线上既有键 + Phase 5 睡前仪式 + Phase 6 深夜刷屏轻提醒） */
+/** 全仓 43 个持久化键台账（40 个线上既有键 + Phase 5 睡前仪式 + Phase 6 深夜刷屏轻提醒 + v1.44 跳广告排除名单） */
 export const STORAGE_CATALOG: readonly StorageKeyMeta[] = [
   // 核心可备份数据域
   { key: 'somnacare_sleep_records', domain: 'sleep', policy: 'backup' },
@@ -27,6 +27,7 @@ export const STORAGE_CATALOG: readonly StorageKeyMeta[] = [
   { key: 'somnacare_pet_bubble_every', domain: 'pet', policy: 'backup' },
   { key: 'somnacare_pet_enabled', domain: 'pet', policy: 'backup' },
   { key: 'somnacare_pet_stimulus_guard', domain: 'pet', policy: 'backup' },
+  { key: 'somnacare_ad_skip_excluded', domain: 'adskip', policy: 'backup' },
   { key: 'somnacare_notify_morning', domain: 'sleep', policy: 'backup' },
   { key: 'somnacare_notify_recall', domain: 'sleep', policy: 'backup' },
   { key: 'somnacare_intervention_v1', domain: 'intervention', policy: 'backup' },
@@ -154,5 +155,51 @@ registerBackupSlice<unknown>({
     if (data && typeof data === 'object') {
       localStorage.setItem('somnacare_pet_stimulus_guard', JSON.stringify(data));
     }
+  },
+});
+
+// 内置切片：v1.44.0 广告跳过按应用排除白名单（Backup v3 统一备份/恢复）
+registerBackupSlice<{ excludedPkgs: string[] }>({
+  id: 'adSkip',
+  storageKeys: ['somnacare_ad_skip_excluded'],
+  exportSlice: () => {
+    const raw = localStorage.getItem('somnacare_ad_skip_excluded');
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed)
+        ? parsed
+        : parsed &&
+            typeof parsed === 'object' &&
+            Array.isArray((parsed as { excludedPkgs?: unknown }).excludedPkgs)
+          ? (parsed as { excludedPkgs: unknown[] }).excludedPkgs
+          : null;
+      if (!list) return undefined;
+      const clean = Array.from(
+        new Set(
+          list
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => v.trim())
+            .filter(Boolean),
+        ),
+      ).sort();
+      return { excludedPkgs: clean };
+    } catch {
+      return undefined;
+    }
+  },
+  importSlice: (data) => {
+    if (!data || typeof data !== 'object') return;
+    const rawList = (data as { excludedPkgs?: unknown }).excludedPkgs;
+    if (!Array.isArray(rawList)) return;
+    const clean = Array.from(
+      new Set(
+        rawList
+          .filter((v): v is string => typeof v === 'string')
+          .map((v) => v.trim())
+          .filter(Boolean),
+      ),
+    ).sort();
+    localStorage.setItem('somnacare_ad_skip_excluded', JSON.stringify(clean));
   },
 });

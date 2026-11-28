@@ -15,27 +15,27 @@ import android.os.SystemClock;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
- * 鲸鱼娘精灵图动画视图。
+ * 鲸鱼娘精灵图动画视图（v1.44.0 升级核心 5 套常驻 + 低频动作异步懒加载 LRU 缓存）。
  *
- * 素材与播放参数取自 whale-girl-plus（署名链与使用限制见 assets/pet/NOTICE.md）：
- * 每张 sheet 横向等分帧、单帧 256×256 RGBA 透明背景，fps/帧数/播放模式来自上游
- * manifest.json。
- *
- * 状态优先级：拖拽 drag > 欢呼 cheer / 播报 talking > 困倦 sleep > 待机 idle。
- *
- * 闪帧根治（v1.43.1）：
- *  1) 跨线程状态读写加轻量 stateLock 快照同步，杜绝主线程写 5 个字段中途被渲染线程撕裂读取；
- *  2) 记录真正已上屏的 drawnAnim：同一帧内若发生连环切换（如 cheer 后紧跟 talking），
- *     prevAnim 锚定真实在屏画面，绝不把尚未上屏的中间态当成旧帧闪出 1 帧鬼影；
- *  3) 深夜困倦态（drowsy > 0.5）平时 10fps 省电，但在交叉溶解、说话或拖拽期间立即恢复
- *     30fps（TICK_MS）并即时唤醒渲染线程，避免 180ms 溶解在 100ms 节拍下退化成 1 帧硬跳；
- *  4) 交叉溶解期间旧帧与新帧各自保持独立姿态位移/旋转，消除切换 0ms 瞬间的身位突跳；
- *  5) 庆祝动作播放期间弹气泡不腰斩欢呼，待欢呼自然播完再平滑过渡到歪头说话态。
+ * 内存与流畅度治理：
+ *  1) 核心 5 套高频精灵图（idle / sleep / drag / headtilt / celebrate）启动常驻，保证拖拽/气泡/欢呼零首帧延迟；
+ *  2) 其余 13 套低频环境与扩展动作按需在后台单线程异步解码，驻留于容量 4 的 LRU 缓存，
+ *     常驻图形内存较全量 18 套常驻下降 ~65%；
+ *  3) LRU 淘汰与换肤/销毁时的位图释放均通过渲染线程串行回收，杜绝渲染中 UAF 崩溃与 native 堆泄漏；
+ *  4) 延续跨线程 stateLock 原子快照、drawnAnim 防鬼影与 30fps 过渡唤醒。
  */
-public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback {
+public final class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String DIR_DEFAULT = "pet/";
     private static final String DIR_SPORT = "pet-sport/";
     private static final long TICK_MS = 33; // ~30fps 重绘节拍
@@ -46,11 +46,14 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     private static final int AMBIENT_VAR = 6000;
     /** 状态切换的交叉溶解时长。 */
     private static final long FADE_MS = 180;
+    /** 低频环境/扩展动作的异步懒加载 LRU 上限（常驻 5 套 + 懒加载 3-4 套） */
+    private static final int LAZY_LRU_CAPACITY = 4;
 
-    /** 一个状态的素材与播放参数（参数抄自上游 manifest.json）。 */
+    /** 一个状态的素材与播放参数（sheet 对非核心动作按需懒加载与 LRU 回收）。 */
     private static final class Anim {
         final String name;
-        final Bitmap sheet;
+        volatile Bitmap sheet;
+        final boolean resident;
         final int frames;
         final long frameMs;
         final boolean blink;
@@ -58,9 +61,10 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         final boolean floatMotion;
         final boolean wiggleMotion;
 
-        Anim(String name, Bitmap sheet, int frames, int fps, String playback, String motion) {
+        Anim(String name, Bitmap sheet, boolean resident, int frames, int fps, String playback, String motion) {
             this.name = name;
             this.sheet = sheet;
+            this.resident = resident;
             this.frames = Math.max(1, frames);
             this.frameMs = Math.max(80, 1000L / Math.max(1, fps));
             this.blink = "blink".equals(playback);
@@ -68,9 +72,15 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
             this.floatMotion = "float".equals(motion);
             this.wiggleMotion = "wiggle".equals(motion);
         }
+
+        boolean isReady() {
+            Bitmap b = sheet;
+            return b != null && !b.isRecycled();
+        }
     }
 
     private final Object stateLock = new Object();
+    private final Object lruLock = new Object();
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     /** 主线程 handler：只跑环境动作调度（500ms）这类状态推进，永不绘制 */
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -79,11 +89,20 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     private final Rect srcPrev = new Rect();
     private final RectF dst = new RectF();
     private final float density;
+    private final Context appContext;
 
+    // 核心 5 套常驻 + 其余 13 套低频按需异步懒加载
     private final Anim idle, joy, celebrate, sleep, drag, welcome;
     private final Anim headtilt, wait, think, reading, tea, pillow, eat, play, walk, party, working, nap;
+    private final Anim[] allAnims;
     private final Anim[] ambient;
     private final Anim[] cheers;
+
+    /** 低频动作 LRU 缓存（accessOrder = true） */
+    private final LinkedHashMap<String, Anim> lazyLru = new LinkedHashMap<>(8, 0.75f, true);
+    private final Set<String> decodingNames = new HashSet<>();
+    private volatile String pendingLazyName;
+    private volatile boolean released;
 
     // ── 跨线程状态：受 stateLock 保护保持多字段原子一致 ──
     private volatile Anim current;
@@ -169,12 +188,15 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
             curSince = stateSince;
             swapAt = swappedAt;
         }
-        if (a == null || a.sheet == null || a.sheet.isRecycled()) return false;
+        if (a == null) return false;
+        Bitmap curBmp = a.sheet;
+        if (curBmp == null || curBmp.isRecycled()) return false;
         if (dragging || talking) return true;   // 跟手/说话：保持满节拍
         long now = System.currentTimeMillis();
         int idx = frameIndex(a, now - curSince);
         long sinceSwap = now - swapAt;
-        boolean fading = prev != null && prev != a && !prev.sheet.isRecycled()
+        Bitmap prevBmp = prev != null ? prev.sheet : null;
+        boolean fading = prev != null && prev != a && prevBmp != null && !prevBmp.isRecycled()
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (idx != lastDrawnIdx || fading != lastDrawnFading) return true;
         int w = surfaceW, h = surfaceH;
@@ -227,10 +249,9 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
 
     private final String dir;
 
-    private static final String[] SHEET_NAMES = {
-            "idle", "joy", "celebrate", "sleep", "drag", "welcome",
-            "headtilt", "wait", "think", "reading", "tea", "pillow",
-            "eat", "play", "walk", "party", "working", "nap",
+    /** 核心 5 套高频精灵图：启动/换肤预解码常驻，其余低频动作走异步懒加载 LRU */
+    private static final String[] CORE_SHEET_NAMES = {
+            "idle", "sleep", "drag", "headtilt", "celebrate",
     };
 
     private static final java.util.concurrent.ExecutorService DECODE_POOL =
@@ -245,48 +266,76 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     public static void predecodeAsync(Context context, String skin,
-                                      java.util.function.Consumer<java.util.HashMap<String, Bitmap>> onReady) {
+                                      java.util.function.Consumer<HashMap<String, Bitmap>> onReady) {
         final String dir = "sakura".equals(skin) ? DIR_SPORT : DIR_DEFAULT;
         final Context app = context.getApplicationContext();
         DECODE_POOL.execute(() -> {
-            java.util.HashMap<String, Bitmap> out = new java.util.HashMap<>();
-            for (String n : SHEET_NAMES) out.put(n, decodeSheet(app, dir + n + ".webp"));
+            HashMap<String, Bitmap> out = new HashMap<>();
+            for (String n : CORE_SHEET_NAMES) out.put(n, decodeSheet(app, dir + n + ".webp"));
             new Handler(Looper.getMainLooper()).post(() -> onReady.accept(out));
         });
     }
 
-    public WhaleGirlView(Context c, String skin, java.util.HashMap<String, Bitmap> predecoded) {
+    /** 回收未消费的预解码位图（换肤竞态丢弃或服务销毁时防内存泄漏） */
+    static void recycleBitmapMap(Map<String, Bitmap> map) {
+        if (map == null) return;
+        for (Bitmap b : map.values()) {
+            safeRecycleBitmap(b);
+        }
+        map.clear();
+    }
+
+    private static void safeRecycleBitmap(Bitmap b) {
+        if (b != null && !b.isRecycled()) {
+            try {
+                b.recycle();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    public WhaleGirlView(Context c, String skin, HashMap<String, Bitmap> predecoded) {
         super(c);
+        this.appContext = c.getApplicationContext();
         getHolder().setFormat(PixelFormat.TRANSLUCENT);
         getHolder().addCallback(this);
         this.density = c.getResources().getDisplayMetrics().density;
         this.dir = "sakura".equals(skin) ? DIR_SPORT : DIR_DEFAULT;
-        idle      = load("idle", 3, 2, "blink", null, predecoded);
-        joy       = load("joy", 2, 5, "loop", null, predecoded);
-        celebrate = load("celebrate", 3, 4, "loop", null, predecoded);
-        sleep     = load("sleep", 2, 1, "loop", null, predecoded);
-        drag      = load("drag", 1, 5, "loop", "tilt", predecoded);
-        welcome   = load("welcome", 2, 3, "loop", null, predecoded);
 
-        headtilt  = load("headtilt", 2, 2, "loop", null, predecoded);
-        wait      = load("wait", 1, 2, "loop", "wiggle", predecoded);
-        think     = load("think", 1, 2, "loop", "float", predecoded);
-        reading   = load("reading", 2, 2, "loop", null, predecoded);
-        tea       = load("tea", 3, 2, "loop", null, predecoded);
-        pillow    = load("pillow", 2, 1, "loop", null, predecoded);
-        eat       = load("eat", 3, 8, "loop", null, predecoded);
-        play      = load("play", 3, 4, "loop", null, predecoded);
-        walk      = load("walk", 3, 6, "pingpong", null, predecoded);
-        party     = load("party", 3, 4, "loop", null, predecoded);
-        working   = load("working", 3, 3, "loop", null, predecoded);
-        nap       = load("nap", 2, 1, "loop", null, predecoded);
+        // 核心 5 套常驻
+        idle      = loadResident("idle", 3, 2, "blink", null, predecoded);
+        sleep     = loadResident("sleep", 2, 1, "loop", null, predecoded);
+        drag      = loadResident("drag", 1, 5, "loop", "tilt", predecoded);
+        headtilt  = loadResident("headtilt", 2, 2, "loop", null, predecoded);
+        celebrate = loadResident("celebrate", 3, 4, "loop", null, predecoded);
 
+        // 其余 13 套低频动作：构造期零解码，播放时异步懒加载进 LRU（容量 4）
+        welcome   = createLazy("welcome", 2, 3, "loop", null);
+        joy       = createLazy("joy", 2, 5, "loop", null);
+        party     = createLazy("party", 3, 4, "loop", null);
+        wait      = createLazy("wait", 1, 2, "loop", "wiggle");
+        think     = createLazy("think", 1, 2, "loop", "float");
+        reading   = createLazy("reading", 2, 2, "loop", null);
+        tea       = createLazy("tea", 3, 2, "loop", null);
+        pillow    = createLazy("pillow", 2, 1, "loop", null);
+        eat       = createLazy("eat", 3, 8, "loop", null);
+        play      = createLazy("play", 3, 4, "loop", null);
+        walk      = createLazy("walk", 3, 6, "pingpong", null);
+        working   = createLazy("working", 3, 3, "loop", null);
+        nap       = createLazy("nap", 2, 1, "loop", null);
+
+        allAnims = buildPool(
+                idle, sleep, drag, headtilt, celebrate,
+                welcome, joy, party, wait, think, reading, tea, pillow, eat, play, walk, working, nap
+        );
         ambient = buildPool(headtilt, wait, think, reading, tea, pillow, eat, play, walk, working, nap);
         cheers = buildPool(celebrate, party, joy);
 
-        current = welcome != null ? welcome : idle;
+        current = idle;
         stateSince = System.currentTimeMillis();
         ambientUntil = stateSince + 6000;
+        // 首次亮相异步预热 welcome（就绪且仍在开场空闲期则平滑衔接，不阻塞主线程）
+        requestLazyLoad(welcome, true);
     }
 
     private static Anim[] buildPool(Anim... list) {
@@ -298,12 +347,95 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         return out;
     }
 
-    private Anim load(String name, int frames, int fps, String playback, String motion,
-                      java.util.HashMap<String, Bitmap> predecoded) {
+    private Anim loadResident(String name, int frames, int fps, String playback, String motion,
+                              HashMap<String, Bitmap> predecoded) {
         Bitmap b = predecoded != null ? predecoded.get(name)
                 : decodeSheet(getContext(), dir + name + ".webp");
         if (b == null) return null;
-        return new Anim(name, b, frames, fps, playback, motion);
+        return new Anim(name, b, true, frames, fps, playback, motion);
+    }
+
+    private static Anim createLazy(String name, int frames, int fps, String playback, String motion) {
+        return new Anim(name, null, false, frames, fps, playback, motion);
+    }
+
+    private void requestLazyLoad(final Anim target, final boolean switchWhenReady) {
+        if (target == null || target.resident || released) return;
+        if (switchWhenReady) pendingLazyName = target.name;
+        synchronized (lruLock) {
+            if (target.isReady()) {
+                lazyLru.get(target.name); // 刷新 LRU 热度
+                return;
+            }
+            if (!decodingNames.add(target.name)) return;
+        }
+        final String path = dir + target.name + ".webp";
+        DECODE_POOL.execute(() -> {
+            Bitmap bmp = released ? null : decodeSheet(appContext, path);
+            main.post(() -> {
+                synchronized (lruLock) {
+                    decodingNames.remove(target.name);
+                }
+                if (released || bmp == null) {
+                    safeRecycleBitmap(bmp);
+                    return;
+                }
+                List<Bitmap> toRecycle = new ArrayList<>();
+                synchronized (lruLock) {
+                    if (released) {
+                        toRecycle.add(bmp);
+                    } else {
+                        Bitmap old = target.sheet;
+                        if (old != null && old != bmp) toRecycle.add(old);
+                        target.sheet = bmp;
+                        lazyLru.put(target.name, target);
+                        evictLazyLruIfNeeded(toRecycle);
+                    }
+                }
+                deferRecycleBitmaps(toRecycle);
+                if (!released && switchWhenReady && target.name.equals(pendingLazyName)
+                        && !dragging && !talking && cheerUntil <= System.currentTimeMillis()) {
+                    pendingLazyName = null;
+                    pickLoaded(target);
+                }
+            });
+        });
+    }
+
+    /** 必须在 lruLock 内调用：仅淘汰未在屏/未参与溶解的最久未用低频贴图 */
+    private void evictLazyLruIfNeeded(List<Bitmap> toRecycle) {
+        if (lazyLru.size() <= LAZY_LRU_CAPACITY) return;
+        final Anim cur, prev, drawn;
+        synchronized (stateLock) {
+            cur = current;
+            prev = prevAnim;
+            drawn = drawnAnim;
+        }
+        Iterator<Map.Entry<String, Anim>> it = lazyLru.entrySet().iterator();
+        while (lazyLru.size() > LAZY_LRU_CAPACITY && it.hasNext()) {
+            Anim cand = it.next().getValue();
+            if (cand == cur || cand == prev || cand == drawn) continue;
+            it.remove();
+            Bitmap old = cand.sheet;
+            cand.sheet = null;
+            if (old != null) toRecycle.add(old);
+        }
+    }
+
+    /** 将淘汰位图交给渲染线程串行回收，确保正在进行的 drawFrame() 绝不碰到已回收 Bitmap */
+    private void deferRecycleBitmaps(final List<Bitmap> list) {
+        if (list == null || list.isEmpty()) return;
+        Handler h = renderHandler;
+        HandlerThread rt = renderThread;
+        if (h != null && rt != null && rt.isAlive()) {
+            if (!h.post(() -> {
+                for (Bitmap b : list) safeRecycleBitmap(b);
+            })) {
+                for (Bitmap b : list) safeRecycleBitmap(b);
+            }
+        } else {
+            for (Bitmap b : list) safeRecycleBitmap(b);
+        }
     }
 
     private static Bitmap decodeSheet(Context context, String path) {
@@ -324,7 +456,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     public void start() {
-        if (running) return;
+        if (running || released) return;
         running = true;
         kickLoop();
         main.postDelayed(ambientTick, 500);
@@ -338,8 +470,48 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         if (h != null) h.removeCallbacks(frameLoop);
     }
 
+    /** 换肤重建或服务销毁时安全回收全部常驻与 LRU 位图（经渲染线程串行收尾，零 UAF 风险） */
+    public void releaseBitmaps() {
+        if (released) return;
+        released = true;
+        stop();
+        surfaceReady = false;
+        synchronized (stateLock) {
+            current = null;
+            prevAnim = null;
+            drawnAnim = null;
+        }
+        final List<Bitmap> allBitmaps = new ArrayList<>();
+        synchronized (lruLock) {
+            lazyLru.clear();
+            decodingNames.clear();
+            for (Anim a : allAnims) {
+                if (a == null) continue;
+                Bitmap b = a.sheet;
+                a.sheet = null;
+                if (b != null) allBitmaps.add(b);
+            }
+        }
+        HandlerThread rt = renderThread;
+        Handler rh = renderHandler;
+        renderThread = null;
+        renderHandler = null;
+        if (rh != null && rt != null && rt.isAlive()) {
+            rh.removeCallbacks(frameLoop);
+            if (!rh.post(() -> {
+                for (Bitmap b : allBitmaps) safeRecycleBitmap(b);
+            })) {
+                for (Bitmap b : allBitmaps) safeRecycleBitmap(b);
+            }
+            rt.quitSafely();
+        } else {
+            for (Bitmap b : allBitmaps) safeRecycleBitmap(b);
+            if (rt != null) rt.quitSafely();
+        }
+    }
+
     private void kickLoop() {
-        if (loopAlive || !surfaceReady) return;
+        if (loopAlive || !surfaceReady || released) return;
         loopAlive = true;
         if (renderThread == null) {
             HandlerThread t = new HandlerThread("whale-render");
@@ -356,7 +528,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         surfaceReady = true;
-        if (running) kickLoop();
+        if (running && !released) kickLoop();
     }
 
     @Override
@@ -378,18 +550,24 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
 
     /** 庆祝：点角色、开关护眼/跳广告时随机来一段，播约 1.8s 回常态。 */
     public void cheer() {
-        if (cheers.length == 0) return;
+        if (cheers.length == 0 || released) return;
         long now = System.currentTimeMillis();
-        // 若已经在欢呼中且剩余充足，只续期不重抽另一套欢呼贴图，防连点频繁跳变
         if (cheerUntil > now + 600 && (current == celebrate || current == party || current == joy)) {
             cheerUntil = now + 1800;
             return;
         }
-        pick(cheers[rng.nextInt(cheers.length)]);
+        Anim chosen = cheers[rng.nextInt(cheers.length)];
+        if (chosen != null && chosen.isReady()) {
+            pick(chosen);
+        } else {
+            // 低频欢呼尚未入缓存时先播常驻 celebrate 保证零延迟响应，并后台预热供下次使用
+            pick(celebrate != null ? celebrate : idle);
+            if (chosen != null) requestLazyLoad(chosen, false);
+        }
         cheerUntil = now + 1800;
     }
 
-    /** 深夜 23:00–06:00 传入 >0.5，白天传 0。 */
+    /** 夜间困倦态传入 >0.5，白天传 0。 */
     public void setDrowsy(float d) {
         drowsy = d;
         if (!dragging && !talking && cheerUntil == 0) {
@@ -408,6 +586,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     public void setDragging(boolean d) {
         dragging = d;
         if (d) {
+            pendingLazyName = null;
             pick(drag);
         } else {
             cheerUntil = 0;
@@ -426,6 +605,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         if (dragging) return;
         long now = System.currentTimeMillis();
         if (t) {
+            pendingLazyName = null;
             if (cheerUntil <= now) {
                 pick(headtilt != null ? headtilt : idle);
             }
@@ -438,13 +618,26 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     private void pick(Anim a) {
-        if (a == null) return;
+        if (a == null || released) return;
+        if (!a.isReady()) {
+            requestLazyLoad(a, true);
+            return;
+        }
+        if (!a.resident) {
+            synchronized (lruLock) {
+                lazyLru.get(a.name); // 刷新 LRU 热度
+            }
+        }
+        pendingLazyName = null;
+        pickLoaded(a);
+    }
+
+    private void pickLoaded(Anim a) {
+        if (a == null || !a.isReady() || released) return;
         boolean changed = false;
         synchronized (stateLock) {
             if (a == current) return;
             long now = System.currentTimeMillis();
-            // 先按既有契约记下旧状态；若旧状态从未来得及绘制上屏（同帧内发生二次切换），
-            // 则把溶解起点修正为真正显示在屏幕上的 drawnAnim，彻底消灭 1 帧鬼影闪现
             prevAnim = current;
             prevStateSince = stateSince;
             if (drawnAnim != null && drawnAnim != current) {
@@ -452,7 +645,6 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
                 prevStateSince = drawnStateSince;
             }
             if (prevAnim == a) {
-                // 切走尚未上屏就立即切回原在屏动作：无需做自我溶解，恢复原相位即可
                 prevAnim = null;
                 current = a;
                 stateSince = drawnStateSince > 0 ? drawnStateSince : now;
@@ -573,24 +765,27 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
             prevSince = prevStateSince;
             swapAt = swappedAt;
         }
-        if (a == null || a.sheet == null || a.sheet.isRecycled()) return;
+        if (a == null) return;
+        Bitmap curBmp = a.sheet;
+        if (curBmp == null || curBmp.isRecycled()) return;
         long now = System.currentTimeMillis();
 
         int w = surfaceW, h = surfaceH;
         if (w == 0 || h == 0) return;
 
-        int fw = a.sheet.getWidth() / a.frames;
-        int fh = a.sheet.getHeight();
+        int fw = curBmp.getWidth() / a.frames;
+        int fh = curBmp.getHeight();
         int idx = frameIndex(a, now - curSince);
         src.set(idx * fw, 0, (idx + 1) * fw, fh);
 
         long sinceSwap = now - swapAt;
-        boolean fading = prev != null && prev != a && !prev.sheet.isRecycled()
+        Bitmap prevBmp = prev != null ? prev.sheet : null;
+        boolean fading = prev != null && prev != a && prevBmp != null && !prevBmp.isRecycled()
                 && sinceSwap >= 0 && sinceSwap < FADE_MS;
         if (fading) {
-            int pfw = prev.sheet.getWidth() / prev.frames;
+            int pfw = prevBmp.getWidth() / prev.frames;
             int pidx = frameIndex(prev, now - prevSince);
-            srcPrev.set(pidx * pfw, 0, (pidx + 1) * pfw, prev.sheet.getHeight());
+            srcPrev.set(pidx * pfw, 0, (pidx + 1) * pfw, prevBmp.getHeight());
         }
 
         float side = Math.min(w, h) * 0.97f;
@@ -598,26 +793,24 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         dst.set(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f);
 
         if (fading) {
-            // Hermite 平滑插值消除首尾突变，旧帧与新帧各自保留自身姿态位移，零跳帧
             float raw = sinceSwap / (float) FADE_MS;
             float t = raw * raw * (3f - 2f * raw);
             c.save();
             applyPoseTransform(c, prev, now, cx, cy, side);
             paint.setAlpha((int) ((1f - t) * 255));
-            c.drawBitmap(prev.sheet, srcPrev, dst, paint);
+            c.drawBitmap(prevBmp, srcPrev, dst, paint);
             c.restore();
 
             c.save();
             applyPoseTransform(c, a, now, cx, cy, side);
-            // sqrt(t) 补偿 SRC_OVER 双半透明叠加的中间亮度塌陷，消除躯干半透明漏底闪烁
             paint.setAlpha(Math.min(255, (int) (Math.sqrt(t) * 255)));
-            c.drawBitmap(a.sheet, src, dst, paint);
+            c.drawBitmap(curBmp, src, dst, paint);
             paint.setAlpha(255);
             c.restore();
         } else {
             c.save();
             applyPoseTransform(c, a, now, cx, cy, side);
-            c.drawBitmap(a.sheet, src, dst, paint);
+            c.drawBitmap(curBmp, src, dst, paint);
             c.restore();
         }
 
@@ -648,14 +841,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
 
     @Override
     protected void onDetachedFromWindow() {
-        stop();
-        Handler h = renderHandler;
-        if (h != null) h.removeCallbacks(frameLoop);
-        if (renderThread != null) {
-            renderThread.quitSafely();
-            renderThread = null;
-            renderHandler = null;
-        }
+        releaseBitmaps();
         super.onDetachedFromWindow();
     }
 }

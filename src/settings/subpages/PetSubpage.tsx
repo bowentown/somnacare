@@ -1,10 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { Fish, MoonStar } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, Fish, MoonStar, Search } from 'lucide-react';
 import { SubpageShell } from '../../shared/ui/SubpageShell';
 import { Switch } from '../../shared/ui';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import { useSleepStore } from '../../features/sleep/store/sleepStore';
 import { petSayFingerprint } from '../../features/pet/utils/petMoments';
+import { subscribeAppResume } from '../../shared/utils/appResume';
+import { tapTick } from '../../shared/utils/haptics';
+import {
+  getInstalledAppsForAdSkip,
+  type AdSkipInstalledApp,
+} from '../../features/extensions/ad-skip/adSkip';
 import {
   BUILTIN_STIMULUS_APPS,
   buildPetSayLines,
@@ -22,9 +28,13 @@ import {
   startPet,
   stopPet,
   syncPet,
+  syncPetEnabledFromNative,
   type PetStimulusGuardConfig,
   type StimulusThresholdMin,
 } from '../../features/pet/utils/petOverlay';
+
+const INITIAL_APP_LIMIT = 40;
+const BUILTIN_PKG_SET = new Set<string>(BUILTIN_STIMULUS_APPS.map((a) => a.pkg));
 
 export const PetSubpage: React.FC = () => {
   const userProfile = useProfileStore((s) => s.profile);
@@ -40,9 +50,31 @@ export const PetSubpage: React.FC = () => {
   const [petSkin, setPetSkinState] = useState(() => getPetSkin());
   const [stimGuard, setStimGuard] = useState<PetStimulusGuardConfig>(() => getPetStimulusGuard());
 
+  // 本机任意应用搜索选择器（深夜刷屏提醒不再写死 8 款）
+  const [appPickerOpen, setAppPickerOpen] = useState(false);
+  const [installedApps, setInstalledApps] = useState<AdSkipInstalledApp[]>([]);
+  const [appsLoading, setAppsLoading] = useState(false);
+  const [appQuery, setAppQuery] = useState('');
+  const [showAllApps, setShowAllApps] = useState(false);
+
+  // 挂载及从后台/系统权限页/磁贴切回时，双向对齐权限与原生真实开关状态
   useEffect(() => {
     if (!petNative) return;
-    void petPermissionGranted().then(setPetGranted);
+    const syncNative = () => {
+      void petPermissionGranted().then(setPetGranted);
+      void syncPetEnabledFromNative().then(setPetOn);
+    };
+    syncNative();
+    return subscribeAppResume(syncNative);
+  }, [petNative]);
+
+  // 若用户已添加自定义包名，静默拉一次本机应用以展示可读应用名
+  useEffect(() => {
+    if (!petNative || installedApps.length > 0) return;
+    const hasCustom = stimGuard.pkgs.some((p) => !BUILTIN_PKG_SET.has(p));
+    if (!hasCustom) return;
+    void getInstalledAppsForAdSkip().then(setInstalledApps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [petNative]);
 
   const petSay =
@@ -69,12 +101,53 @@ export const PetSubpage: React.FC = () => {
   };
 
   const toggleStimulusPkg = (pkg: string) => {
+    tapTick();
     const has = stimGuard.pkgs.includes(pkg);
     const nextPkgs = has
       ? stimGuard.pkgs.filter((p) => p !== pkg)
       : [...stimGuard.pkgs, pkg];
     updateStimulusGuard({ pkgs: nextPkgs });
   };
+
+  const handleToggleAppPicker = async () => {
+    tapTick();
+    const next = !appPickerOpen;
+    setAppPickerOpen(next);
+    if (next && installedApps.length === 0 && petNative) {
+      setAppsLoading(true);
+      try {
+        const list = await getInstalledAppsForAdSkip();
+        setInstalledApps(list);
+      } finally {
+        setAppsLoading(false);
+      }
+    }
+  };
+
+  const labelByPkg = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of BUILTIN_STIMULUS_APPS) map.set(a.pkg, a.label);
+    for (const a of installedApps) map.set(a.pkg, a.label);
+    return map;
+  }, [installedApps]);
+
+  const customSelectedPkgs = useMemo(
+    () => stimGuard.pkgs.filter((p) => !BUILTIN_PKG_SET.has(p)),
+    [stimGuard.pkgs],
+  );
+
+  const matchedApps = useMemo(() => {
+    const q = appQuery.trim().toLowerCase();
+    if (!q) return installedApps;
+    return installedApps.filter(
+      (a) => a.label.toLowerCase().includes(q) || a.pkg.toLowerCase().includes(q),
+    );
+  }, [installedApps, appQuery]);
+
+  const visibleApps = useMemo(() => {
+    if (appQuery.trim() || showAllApps) return matchedApps;
+    return matchedApps.slice(0, INITIAL_APP_LIMIT);
+  }, [matchedApps, appQuery, showAllApps]);
 
   const handlePetToggle = async (next: boolean) => {
     if (!petNative) return;
@@ -272,7 +345,7 @@ export const PetSubpage: React.FC = () => {
               </div>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-bold text-slate-200">监控高刺激应用</p>
                 <span className="text-[10px] text-slate-400 font-mono">
@@ -299,7 +372,103 @@ export const PetSubpage: React.FC = () => {
                     </button>
                   );
                 })}
+                {customSelectedPkgs.map((pkg) => {
+                  const displayName = labelByPkg.get(pkg) ?? pkg;
+                  return (
+                    <button
+                      key={pkg}
+                      type="button"
+                      aria-pressed={true}
+                      aria-label={`移除深夜提醒应用 ${displayName}`}
+                      onClick={() => toggleStimulusPkg(pkg)}
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-bold border cursor-pointer active:scale-95 transition-all flex items-center gap-1 ${theme.accentText} ${theme.accentBorder}`}
+                      style={{ background: `${theme.accentHex}16` }}
+                    >
+                      <span>{displayName}</span>
+                      <span className="opacity-70">×</span>
+                    </button>
+                  );
+                })}
               </div>
+
+              {petNative && (
+                <div className="pt-1 space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleAppPicker()}
+                    aria-expanded={appPickerOpen}
+                    className={`w-full py-2.5 px-3.5 rounded-2xl border ${theme.cardInnerBorder} ${theme.cardInnerBg} text-xs font-bold text-slate-200 flex items-center justify-between cursor-pointer active:scale-[0.99] transition-transform`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Search className={`w-3.5 h-3.5 ${theme.accentText}`} />
+                      搜索添加任意本机应用
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${appPickerOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {appPickerOpen && (
+                    <div className="space-y-2">
+                      <input
+                        type="search"
+                        value={appQuery}
+                        onChange={(e) => setAppQuery(e.target.value)}
+                        placeholder="输入应用名或包名搜索本机应用…"
+                        aria-label="搜索深夜刷屏监控应用"
+                        className={`w-full px-3.5 py-2 rounded-xl bg-slate-900/80 border ${theme.cardInnerBorder} text-xs text-white placeholder:text-slate-500 focus:outline-none ${theme.focusRing}`}
+                      />
+                      {appsLoading ? (
+                        <p className="text-[11px] text-slate-400 py-2 text-center">正在读取本机应用…</p>
+                      ) : visibleApps.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 py-2 text-center">没有找到匹配的应用</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 px-1">
+                            <span>
+                              {appQuery.trim()
+                                ? `匹配 ${matchedApps.length} 款应用`
+                                : `已显示 ${visibleApps.length} / ${matchedApps.length} 款本机应用`}
+                            </span>
+                            {!appQuery.trim() && matchedApps.length > INITIAL_APP_LIMIT && (
+                              <button
+                                type="button"
+                                onClick={() => setShowAllApps((v) => !v)}
+                                className={`${theme.accentText} font-bold cursor-pointer`}
+                              >
+                                {showAllApps ? '收起列表' : `展开全部 (${matchedApps.length})`}
+                              </button>
+                            )}
+                          </div>
+                          <div className="max-h-60 overflow-y-auto rounded-2xl border border-slate-700/60 divide-y divide-slate-700/40 bg-slate-900/50">
+                            {visibleApps.map((app) => {
+                              const selected = stimGuard.pkgs.includes(app.pkg);
+                              return (
+                                <div key={app.pkg} className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-white truncate">{app.label}</p>
+                                    <p className="text-[9px] font-mono text-slate-400 truncate">{app.pkg}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleStimulusPkg(app.pkg)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border shrink-0 cursor-pointer active:scale-95 transition-all ${
+                                      selected
+                                        ? `${theme.accentText} ${theme.accentBorder}`
+                                        : 'bg-slate-800 border-slate-600 text-slate-300'
+                                    }`}
+                                    style={selected ? { background: `${theme.accentHex}16` } : undefined}
+                                  >
+                                    {selected ? '已监控' : '加入提醒'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -29,6 +29,10 @@ import { forceRefreshUsage } from '../../features/sleep/utils/usageStore';
 import { unlockProposal } from '../../features/sleep/utils/proposalUnlock';
 import { getLastResume } from '../../shared/utils/appResume';
 import { AppUpdateCard } from '../../features/updates/AppUpdateCard';
+import {
+  pushRestoredAdSkipExcludedToNative,
+  syncAdSkipExcludedToLocal,
+} from '../../features/extensions/ad-skip/adSkip';
 
 interface DataSubpageProps {
   autoCheck?: number;
@@ -219,6 +223,7 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
   };
 
   const handleExportJSON = async () => {
+    await syncAdSkipExcludedToLocal();
     const data = JSON.stringify(buildFullBackup(), null, 2);
     const name = `somnacare-full-backup-${toLocalDateString()}.json`;
     try {
@@ -313,10 +318,17 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
         );
         if (!ok) return;
         const r = restoreFullBackup(parsed.data);
-        alert(
-          `已恢复全量备份：记录 ${r.records} 条 · 朋友圈 ${r.moments} 条 · 聊天 ${r.chat} 条${r.travel ? ' · 图鉴进度' : ''}${r.profile ? ' · 档案' : ''}。页面即将刷新。`,
-        );
-        window.location.reload();
+        const finishRestore = () => {
+          alert(
+            `已恢复全量备份：记录 ${r.records} 条 · 朋友圈 ${r.moments} 条 · 聊天 ${r.chat} 条${r.travel ? ' · 图鉴进度' : ''}${r.profile ? ' · 档案' : ''}。页面即将刷新。`,
+          );
+          window.location.reload();
+        };
+        if (r.slices.includes('adSkip')) {
+          void pushRestoredAdSkipExcludedToNative().finally(finishRestore);
+        } else {
+          finishRestore();
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : '';
         if (msg === 'bad-records') {

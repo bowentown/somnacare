@@ -275,7 +275,49 @@ function stimulusPayload(profile?: UserProfile) {
   };
 }
 
-/** 启动桌宠（幂等：已运行则只刷新词库与刷屏守护参数）。 */
+// 模块级单飞锁与防抖句柄：消灭拖滑杆并发狂刷 LLM 的历史缺陷
+let sayInFlight = false;
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 供单测重置模块级并发锁与防抖计时器 */
+export function resetPetSyncStateForTest(): void {
+  sayInFlight = false;
+  if (syncDebounceTimer !== null) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+}
+
+export interface PetNativeStatus {
+  running: boolean;
+  enabled: boolean;
+  anim: string;
+}
+
+export async function getPetNativeStatus(): Promise<PetNativeStatus | null> {
+  const g = gemma();
+  if (!g?.getPetState) return null;
+  try {
+    const res = await g.getPetState();
+    const running = res?.running === true;
+    const enabled = typeof res?.enabled === 'boolean' ? res.enabled : running;
+    const anim = typeof res?.anim === 'string' ? res.anim : '';
+    return { running, enabled, anim };
+  } catch {
+    return null;
+  }
+}
+
+/** 回前台/进入桌宠页时与原生真实开关状态双向对齐（磁贴/通知关闭后即时同步回前端） */
+export async function syncPetEnabledFromNative(): Promise<boolean> {
+  const st = await getPetNativeStatus();
+  if (!st) return isPetEnabled();
+  const next = st.enabled || st.running;
+  setEnabled(next);
+  return next;
+}
+
+/** 启动桌宠（幂等：原生侧已运行时仅刷新词库/皮肤/刷屏守护，同时置统一开关为 true）。 */
 export async function startPet(
   records: SleepRecord[],
   profile: UserProfile,
@@ -290,8 +332,7 @@ export async function startPet(
     ...stimulusPayload(profile),
   };
   try {
-    if (isPetEnabled()) await g.petSync(payload);
-    else await g.petStart(payload);
+    await g.petStart(payload);
     setEnabled(true);
     return { ok: true };
   } catch (e: any) {
@@ -316,28 +357,33 @@ export async function syncPet(
     ? [localLines[0], ...cached, ...localLines.slice(1, 3)].filter(Boolean).join('\n')
     : localLines.join('\n');
   try {
-    await g.petSync({
+    const res = await g.petSync({
       say,
       bubbleEvery: getBubbleEvery(),
       skin: getPetSkin(),
       ...petContext(records, new Date()),
       ...stimulusPayload(profile),
     });
+    // 若用户已通过控制中心磁贴或通知关闭桌宠，立即反向同步开关并中止后续 LLM 生成
+    if (res && res.enabled === false) {
+      setEnabled(false);
+      return;
+    }
   } catch {
     /* 桌宠没开或服务已停，忽略 */
   }
 
-  let sayInFlight = false;
   if (!cached && !sayInFlight) {
     sayInFlight = true;
     void generatePetSayLinesLlm(records, profile)
       .then((lines) => {
-        if (!lines || !g) return;
+        if (!lines || !g || !isPetEnabled()) return;
         try {
           void g.petSync({
             say: [...lines, ...localLines.slice(0, 3)].join('\n'),
             bubbleEvery: getBubbleEvery(),
             skin: getPetSkin(),
+            ...petContext(records, new Date()),
             ...stimulusPayload(profile),
           });
         } catch {
@@ -349,6 +395,28 @@ export async function syncPet(
         sayInFlight = false;
       });
   }
+}
+
+/** 防抖同步桌宠（默认 300ms）：供 App.tsx 挂载使用，避免连续改配置时高频桥接与并发请求 */
+export function syncPetDebounced(
+  records: SleepRecord[],
+  profile: UserProfile,
+  delayMs = 300,
+): () => void {
+  if (syncDebounceTimer !== null) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+  syncDebounceTimer = setTimeout(() => {
+    syncDebounceTimer = null;
+    void syncPet(records, profile);
+  }, delayMs);
+  return () => {
+    if (syncDebounceTimer !== null) {
+      clearTimeout(syncDebounceTimer);
+      syncDebounceTimer = null;
+    }
+  };
 }
 
 export async function stopPet(): Promise<void> {

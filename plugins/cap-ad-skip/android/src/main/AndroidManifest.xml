@@ -39,7 +39,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- 开机/时间变更时若无障碍服务被系统关闭，推送可点回通知 -->
+        <!-- 开机/时间变更/覆盖更新时若无障碍服务被系统关闭，推送可点回通知 -->
         <receiver
             android:name="com.somnacare.gemmallm.AdSkipBootReceiver"
             android:exported="false">
@@ -47,6 +47,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

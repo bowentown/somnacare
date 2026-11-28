@@ -8,6 +8,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +39,11 @@ import java.util.regex.Pattern;
 final class AdSkipRuleStore {
 
     static final String ASSET_NAME = "ad_skip_rules.json";
+    /** 手动刷新后的热更新规则文件（位于应用内部私有目录，优先加载，校验失败自动回退内置 assets） */
+    static final String HOT_FILE_NAME = "ad_skip_rules_hot.json";
+    static final int MAX_RULES_BYTES = 4 * 1024 * 1024;
+    static final int MIN_VALID_APPS = 100;
+    static final int EXPECTED_SCHEMA = 3;
 
     private AdSkipRuleStore() {
     }
@@ -319,21 +326,23 @@ final class AdSkipRuleStore {
         final Set<String> excludedApps;
         final Map<String, AppRules> apps;
         final int sourceVersion;
+        final boolean hotLoaded;
 
         Store(List<RuleSelector> globalSplashSelectors, List<RuleSelector> globalAlwaysSelectors,
               List<RuleSelector> globalExcludes, Set<String> excludedApps,
-              Map<String, AppRules> apps, int sourceVersion) {
+              Map<String, AppRules> apps, int sourceVersion, boolean hotLoaded) {
             this.globalSplashSelectors = globalSplashSelectors;
             this.globalAlwaysSelectors = globalAlwaysSelectors;
             this.globalExcludes = globalExcludes;
             this.excludedApps = excludedApps;
             this.apps = apps;
             this.sourceVersion = sourceVersion;
+            this.hotLoaded = hotLoaded;
         }
 
         static Store empty() {
             return new Store(Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), 0);
+                    Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), 0, false);
         }
 
         AppRules appFor(String packageName) {
@@ -351,20 +360,64 @@ final class AdSkipRuleStore {
 
     // ── 加载 ─────────────────────────────────────────────────────
 
+    static File hotRuleFile(Context context) {
+        return new File(context.getFilesDir(), HOT_FILE_NAME);
+    }
+
     static Store load(Context context) {
-        try (InputStream in = context.getAssets().open(ASSET_NAME)) {
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
+        // 1) 优先加载用户显式刷新落盘的热更新规则，任何损坏/schema 不符静默回退内置 assets
+        try {
+            File hot = hotRuleFile(context);
+            if (hot.isFile() && hot.length() > 0 && hot.length() <= MAX_RULES_BYTES) {
+                try (InputStream in = new FileInputStream(hot)) {
+                    Store parsed = validateAndParse(readStreamUtf8(in), true);
+                    if (parsed != null) return parsed;
+                }
             }
-            return parse(new JSONObject(sb.toString()));
+        } catch (Exception ignored) {
+            // 热更新文件损坏或不可读：直接回退内置规则
+        }
+        // 2) 回退 APK 内置 assets/ad_skip_rules.json
+        try (InputStream in = context.getAssets().open(ASSET_NAME)) {
+            return parse(new JSONObject(readStreamUtf8(in)), false);
         } catch (Exception e) {
             return Store.empty();
         }
     }
 
-    private static Store parse(JSONObject root) {
+    private static String readStreamUtf8(InputStream in) throws java.io.IOException {
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+        }
+        return sb.toString();
+    }
+
+    /** 严格校验规则 JSON schema 后解析为 Store；不合规则返回 null。 */
+    static Store validateAndParse(String raw, boolean hotLoaded) {
+        if (raw == null || raw.isEmpty() || raw.length() > MAX_RULES_BYTES) return null;
+        try {
+            JSONObject root = new JSONObject(raw);
+            if (root.optInt("schema", -1) != EXPECTED_SCHEMA) return null;
+            JSONObject source = root.optJSONObject("source");
+            if (source == null || source.optString("repo", "").trim().isEmpty()) return null;
+            JSONObject global = root.optJSONObject("global");
+            if (global == null || global.optJSONArray("selectors") == null) return null;
+            JSONObject appsObj = root.optJSONObject("apps");
+            if (appsObj == null) return null;
+            Store store = parse(root, hotLoaded);
+            if (store.apps.size() < MIN_VALID_APPS) return null;
+            if (store.globalSplashSelectors.isEmpty() && store.globalAlwaysSelectors.isEmpty()) {
+                return null;
+            }
+            return store;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Store parse(JSONObject root, boolean hotLoaded) {
         JSONObject global = root.optJSONObject("global");
         List<RuleSelector> allGlobal = parseSelectors(
                 global == null ? null : global.optJSONArray("selectors"));
@@ -419,7 +472,7 @@ final class AdSkipRuleStore {
         int version = 0;
         JSONObject source = root.optJSONObject("source");
         if (source != null) version = source.optInt("version", 0);
-        return new Store(globalSplash, globalAlways, globalExcludes, excludedApps, apps, version);
+        return new Store(globalSplash, globalAlways, globalExcludes, excludedApps, apps, version, hotLoaded);
     }
 
     private static String[] parseStrings(JSONArray array) {

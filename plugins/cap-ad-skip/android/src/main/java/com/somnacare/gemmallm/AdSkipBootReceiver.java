@@ -21,7 +21,8 @@ public class AdSkipBootReceiver extends BroadcastReceiver {
         boolean isBoot = Intent.ACTION_BOOT_COMPLETED.equals(action);
         boolean isTimeShift = "android.intent.action.TIME_SET".equals(action)
                 || "android.intent.action.TIMEZONE_CHANGED".equals(action);
-        if (!isBoot && !isTimeShift) return;
+        boolean isReplaced = Intent.ACTION_MY_PACKAGE_REPLACED.equals(action);
+        if (!isBoot && !isTimeShift && !isReplaced) return;
         try {
             android.content.SharedPreferences sp =
                     context.getSharedPreferences("somnacare_prefs", Context.MODE_PRIVATE);
