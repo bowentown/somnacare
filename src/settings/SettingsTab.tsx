@@ -16,7 +16,6 @@ import { getCurrentTheme, updateProfile, useProfileStore } from '../shared/store
 import { useSleepStore } from '../features/sleep/store/sleepStore';
 import { pushSubpage, type SubpageId } from '../shared/store/uiStore';
 import { CustomAISettingsModal } from '../features/coach/CustomAISettingsModal';
-import { getActiveModelLabel } from '../features/coach/utils/localLlmEngine';
 import { isPetEnabled, isPetNative } from '../features/pet/utils/petOverlay';
 import { isNativePlatform } from '../features/sleep/utils/nativeAlarmScheduler';
 import { getAdSkipStatus, type AdSkipStatus } from '../features/extensions/ad-skip/adSkip';
@@ -78,13 +77,11 @@ const SettingsTabInner: React.FC = () => {
       ? userProfile.aiConfig.deepseekApiKey
         ? `DeepSeek (${userProfile.aiConfig.deepseekModel || 'deepseek-flash'})`
         : '本地医学规则引擎（未填 DeepSeek 密钥）'
-      : userProfile.aiConfig?.provider === 'local_llm'
-        ? `端侧小模型 (${getActiveModelLabel()})`
-        : userProfile.aiConfig?.provider === 'custom_openai'
-          ? userProfile.aiConfig.customApiKey
-            ? '自建 API'
-            : '本地医学规则引擎（未填自建密钥）'
-          : '本地医学规则引擎';
+      : userProfile.aiConfig?.provider === 'custom_openai'
+        ? userProfile.aiConfig.customApiKey
+          ? '自建 API'
+          : '本地医学规则引擎（未填自建密钥）'
+        : '本地医学规则引擎';
 
   const openPage = (id: SubpageId) => {
     tapTick();

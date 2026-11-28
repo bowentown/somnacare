@@ -61,6 +61,7 @@ test('旅程7 设置面：主题四套、分享卡生成、护眼持久、闹钟
   // 主题四套切换（进入「界面主题」二级子页 → 逐个点选 → 返回菜单）
   await navTo(page, '偏好');
   await page.getByRole('button', { name: /界面主题/ }).click();
+  await expect(page.getByRole('heading', { name: '界面主题' })).toBeVisible();
   for (const name of ['极光午夜', '深空纯黑', '琥珀暖夜', '静谧深海']) {
     const themeBtn = page.getByRole('button', { name: new RegExp(name) });
     if (await themeBtn.count()) { await themeBtn.first().click(); await page.waitForTimeout(120); }
@@ -88,6 +89,7 @@ test('旅程7 设置面：主题四套、分享卡生成、护眼持久、闹钟
   // 闹钟：进入「我的作息与闹钟」二级子页，添加一次并防连点
   await navTo(page, '偏好');
   await page.getByRole('button', { name: /我的作息与闹钟/ }).click();
+  await expect(page.getByRole('heading', { name: '我的作息与闹钟' })).toBeVisible();
   const alarmToggle = page.getByRole('button', { name: '展开闹钟列表' });
   if (await alarmToggle.count()) await alarmToggle.click();
   await page.getByRole('button', { name: /添加闹钟/ }).first().click();

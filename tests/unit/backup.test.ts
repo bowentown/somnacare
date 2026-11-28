@@ -144,4 +144,30 @@ describe('全量备份（roundtrip、凭据与 customBaseUrl 剥离、白名单�
     expect(listedFields('PROFILE_FIELDS')).toEqual(ifaceFields('UserProfile'));
     expect(listedFields('AI_CONFIG_FIELDS')).toEqual(ifaceFields('CustomAIConfig'));
   });
+
+  it('向下兼容：导入含已下线字段（nightRescueEnabled / local_llm / localModelVariant）的旧备份静默剥离并平滑回退规则引擎', () => {
+    const legacyBackup = {
+      app: 'somnacare',
+      schema: 2,
+      exportedAt: '2026-10-05T00:00:00.000Z',
+      records: [],
+      profile: {
+        name: '旧版端侧用户',
+        themeColor: 'midnight',
+        nightRescueEnabled: true,
+        aiConfig: {
+          provider: 'local_llm',
+          localModelVariant: 'gemma_1b',
+        },
+      },
+    };
+    const parsed = parseBackup(JSON.stringify(legacyBackup));
+    expect(parsed.kind).toBe('full');
+    restoreFullBackup(parsed.kind === 'full' ? parsed.data : (null as never));
+    const prof = JSON.parse(storage.map.get('somnacare_user_profile')!);
+    expect(prof.name).toBe('旧版端侧用户');
+    expect('nightRescueEnabled' in prof).toBe(false);
+    expect('localModelVariant' in (prof.aiConfig ?? {})).toBe(false);
+    expect(prof.aiConfig?.provider).toBe('local_rules');
+  });
 });

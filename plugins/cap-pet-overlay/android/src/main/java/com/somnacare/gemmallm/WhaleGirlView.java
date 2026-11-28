@@ -250,7 +250,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
         final Context app = context.getApplicationContext();
         DECODE_POOL.execute(() -> {
             java.util.HashMap<String, Bitmap> out = new java.util.HashMap<>();
-            for (String n : SHEET_NAMES) out.put(n, decodeSheet(app, dir + n + ".png"));
+            for (String n : SHEET_NAMES) out.put(n, decodeSheet(app, dir + n + ".webp"));
             new Handler(Looper.getMainLooper()).post(() -> onReady.accept(out));
         });
     }
@@ -301,7 +301,7 @@ public class WhaleGirlView extends SurfaceView implements SurfaceHolder.Callback
     private Anim load(String name, int frames, int fps, String playback, String motion,
                       java.util.HashMap<String, Bitmap> predecoded) {
         Bitmap b = predecoded != null ? predecoded.get(name)
-                : decodeSheet(getContext(), dir + name + ".png");
+                : decodeSheet(getContext(), dir + name + ".webp");
         if (b == null) return null;
         return new Anim(name, b, frames, fps, playback, motion);
     }

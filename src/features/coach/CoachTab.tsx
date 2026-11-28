@@ -5,7 +5,6 @@ import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStor
 import { useSleepStore } from '../sleep/store/sleepStore';
 import { closeMoments, openMoments, useUIStore } from '../../shared/store/uiStore';
 import { generatePersonalInsights } from './utils/clinicalSleepEngine';
-import { getActiveModelLabel } from './utils/localLlmEngine';
 import { nightsOnly } from '../sleep/utils/recordFilter';
 import {
   type ChatSession,
@@ -33,12 +32,10 @@ const CoachTabInner: React.FC = () => {
 
   const [activeProviderName, setActiveProviderName] = useState<string>(() => {
     switch (userProfile.aiConfig?.provider) {
-      case 'local_llm':
-        return getActiveModelLabel();
       case 'local_rules':
         return '本地临床规则引擎';
       case 'custom_openai':
-        return '自建 API';
+        return userProfile.aiConfig?.customApiKey ? '自建 API' : '本地临床规则引擎';
       default:
         return userProfile.aiConfig?.deepseekApiKey ? 'DeepSeek' : '本地临床规则引擎';
     }
@@ -89,8 +86,6 @@ const CoachTabInner: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
-  const [localStage, setLocalStage] = useState<'loading' | 'generating' | null>(null);
-  const localGenAbortRef = useRef<AbortController | null>(null);
   const chatStickRef = useRef(true);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
@@ -211,10 +206,6 @@ const CoachTabInner: React.FC = () => {
         userProfile,
         personalCtx,
         onProviderNameChange: setActiveProviderName,
-        onStageChange: setLocalStage,
-        onAbortController: (ctrl) => {
-          localGenAbortRef.current = ctrl;
-        },
         updateMessages: (updater) => setChatMessagesFor(targetId, updater),
       });
     } finally {
@@ -247,8 +238,6 @@ const CoachTabInner: React.FC = () => {
         onInputChange={setInputText}
         onSend={(t) => void handleSendMessage(t)}
         isSendingChat={isSendingChat}
-        localStage={localStage}
-        onAbortLocal={() => localGenAbortRef.current?.abort()}
         persistFailed={persistFailed}
         quickPrompts={quickPrompts}
         chatStickRef={chatStickRef}

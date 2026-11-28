@@ -41,8 +41,6 @@ interface CoachChatPanelProps {
   onInputChange: (v: string) => void;
   onSend: (text?: string) => void;
   isSendingChat: boolean;
-  localStage: 'loading' | 'generating' | null;
-  onAbortLocal: () => void;
   persistFailed: boolean;
   quickPrompts: string[];
   chatStickRef: React.MutableRefObject<boolean>;
@@ -61,8 +59,6 @@ export const CoachChatPanel: React.FC<CoachChatPanelProps> = React.memo(function
   onInputChange,
   onSend,
   isSendingChat,
-  localStage,
-  onAbortLocal,
   persistFailed,
   quickPrompts,
   chatStickRef,
@@ -101,7 +97,7 @@ export const CoachChatPanel: React.FC<CoachChatPanelProps> = React.memo(function
       if (node && chatStickRef.current) node.scrollTop = node.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
-  }, [chatMessages, isSendingChat, localStage, chatStickRef]);
+  }, [chatMessages, isSendingChat, chatStickRef]);
 
   return (
     <div className={`${theme.cardBg} rounded-3xl p-4 border ${theme.cardBorder} flex flex-col ${chatCollapsed ? 'h-auto' : 'h-[560px]'}`}>
@@ -203,22 +199,7 @@ export const CoachChatPanel: React.FC<CoachChatPanelProps> = React.memo(function
             {isSendingChat && (
               <div className={`flex items-center gap-1.5 ${theme.accentText} text-xs py-1`}>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>
-                  {localStage === 'loading'
-                    ? '正在加载端侧模型（首次约需数秒）...'
-                    : localStage === 'generating'
-                      ? '端侧模型生成中（CPU 推理较慢，请稍候）...'
-                      : '顾问正在组织回复...'}
-                </span>
-                {localStage && (
-                  <button
-                    type="button"
-                    onClick={onAbortLocal}
-                    className="ml-1 text-slate-400 hover:text-white border border-slate-700 rounded-lg px-2 py-0.5 text-[10px] cursor-pointer"
-                  >
-                    停止
-                  </button>
-                )}
+                <span>顾问正在组织回复...</span>
               </div>
             )}
           </div>

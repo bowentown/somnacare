@@ -13,10 +13,9 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * 睡眠核心原生插件（Phase 3 从 GemmaLLM 拆分独立）：
+ * 睡眠核心原生插件：
  *  - 闹钟持续响铃（AlarmRingService / AlarmRingReceiver）
  *  - 作息目标到点悬浮提醒（BedtimeOverlayService / BedtimeAlarmReceiver）
- *  - 深夜救援开关与使用情况访问口径（NightRescueReceiver / NightRescueService）
  *  - 通知动作冷启动读取（proposalNotificationAction）
  *  - 主题联动桌面图标（activity-alias 延迟退后台切换）
  *  - 应用内更新与电池优化白名单（AppUpdateManager）
@@ -24,14 +23,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "SleepCore")
 public class SleepCorePlugin extends Plugin {
 
-    static final String PREFS = "somnacare_prefs";   // 包内可见：Bedtime/NightRescue/Alarm 共用同一偏好文件
+    static final String PREFS = "somnacare_prefs";   // 包内可见：Bedtime/Alarm 共用同一偏好文件
     private static final String KEY_PENDING_ICON = "pending_launcher_icon";
     private volatile String pendingIconTheme;
-
-    private static String safe(PluginCall call, String key, String fallback) {
-        String v = call.getString(key, fallback);
-        return v == null ? fallback : v;
-    }
 
     // ==== 通知动作冷启动读取 ====
 
@@ -222,39 +216,6 @@ public class SleepCorePlugin extends Plugin {
                         .edit().remove(KEY_PENDING_ICON).apply();
             }
         } catch (Exception ignored) {
-        }
-    }
-
-    // ==== 使用情况访问口径 & 深夜救援 ====
-
-    /** 使用情况访问授权（救援/自动记录共用的数据源口径）。 */
-    public static boolean hasUsageAccess(Context context) {
-        try {
-            android.app.AppOpsManager ops =
-                    (android.app.AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
-            if (ops == null) return false;
-            return ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                    android.os.Process.myUid(), context.getPackageName())
-                    == android.app.AppOpsManager.MODE_ALLOWED;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /** 深夜救援开关与醒来目标（NightRescueReceiver 每次亮屏解锁都会读）。 */
-    @PluginMethod
-    public void nightRescueSet(PluginCall call) {
-        try {
-            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean("night_rescue_enabled", call.getBoolean("enabled", true))
-                    .putString("wake_target", safe(call, "wake", "07:00"))
-                    .apply();
-            JSObject ret = new JSObject();
-            ret.put("ok", true);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("写入失败: " + e.getMessage());
         }
     }
 

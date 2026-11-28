@@ -129,25 +129,34 @@ public class AlarmRingService extends Service {
 
     private void startSound(String tone) {
         try {
-            // 按 tone 映射铃声资源：三个 wav 与 App 内"试听"（audioSynth.playAlarm）
+            // 按 tone 映射铃声资源：三个 ogg 与 App 内"试听"（audioSynth.playAlarm）
             // 的音符结构一致——此前只有一份 gentle_chime，选什么铃声早上都响同一个
             String toneRes = "gentle_chime".equals(tone) || "aurora_melody".equals(tone)
                     || "radar_beep".equals(tone) ? tone : "gentle_chime";
             int resId = getResources().getIdentifier(toneRes, "raw", getPackageName());
+            if (resId == 0) {
+                // res/raw 缺铃声资源时诚实静音并留日志。旧兜底从 assets/alarm/
+                // 复制播放——该目录从不存在，真走到只会 FileNotFoundException
+                // 被吞成静默无声，是个假路径
+                android.util.Log.w("AlarmRing", "铃声资源缺失: raw/" + toneRes);
+                return;
+            }
             player = new MediaPlayer();
             player.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build());
-            if (resId != 0) {
-                android.content.res.AssetFileDescriptor afd = getResources().openRawResourceFd(resId);
-                player.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-                afd.close();
+            android.content.res.AssetFileDescriptor afd = getResources().openRawResourceFd(resId);
+            if (afd != null) {
+                try {
+                    player.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                } finally {
+                    afd.close();
+                }
             } else {
-                // res/raw 缺铃声资源时诚实静音并留日志。旧兜底从 assets/alarm/
-                // 复制播放——该目录从不存在，真走到只会 FileNotFoundException
-                // 被吞成静默无声，是个假路径
-                android.util.Log.w("AlarmRing", "铃声资源缺失: raw/" + toneRes);
+                // 若 .ogg 未来意外被压缩导致 openRawResourceFd 返回 null，回退到 resource URI
+                player.setDataSource(this, android.net.Uri.parse(
+                        "android.resource://" + getPackageName() + "/" + resId));
             }
             player.setLooping(true);
             // 音频焦点（第 51 轮审计 P1）：无焦点时铃声与整夜助眠音景直接混叠、
@@ -167,6 +176,10 @@ public class AlarmRingService extends Service {
             player.prepare();
             player.start();
         } catch (Exception e) {
+            android.util.Log.w("AlarmRing", "播放闹钟铃声失败: " + e.getMessage());
+            if (player != null) {
+                try { player.release(); } catch (Exception ignored) { }
+            }
             player = null;
         }
     }

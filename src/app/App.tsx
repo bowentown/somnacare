@@ -11,14 +11,11 @@ import {
   useUIStore,
 } from '../shared/store/uiStore';
 import { TodayTab } from '../features/sleep/components/TodayTab';
-import { CoachTab } from '../features/coach/CoachTab';
-import { EyeCareTab } from '../features/eyecare/EyeCareTab';
-import { SettingsTab } from '../settings/SettingsTab';
 import { OnboardingCard } from '../features/sleep/components/OnboardingCard';
 import { BottomNavBar } from '../shared/ui/BottomNavBar';
 import { LaunchSplash } from '../shared/ui/LaunchSplash';
 import { PaneErrorBoundary } from '../shared/ui/PaneErrorBoundary';
-import { hasRecoverableActiveSleepSession } from '../features/sleep/components/ActiveSleepModal';
+import { hasRecoverableActiveSleepSession } from '../features/sleep/utils/activeSleepSession';
 import { SubpageHost } from './SubpageHost';
 import { AppOverlays } from './AppOverlays';
 import { TAB_ORDER, useTabSwipe } from './hooks/useTabSwipe';
@@ -39,8 +36,11 @@ import { applyEyeCare } from '../features/eyecare/utils/eyeCare';
 import { syncPet } from '../features/pet/utils/petOverlay';
 import { syncWidgetsDebounced } from '../features/widgets/syncWidgets';
 
-// 趋势页含 Recharts+D3，独立按需分包以保持首包轻快
+// 非首屏分区统一按需懒加载，压低首包体积与冷启动解析开销
 const TrendsTab = lazy(() => import('../features/trends/TrendsTab').then((m) => ({ default: m.TrendsTab })));
+const CoachTab = lazy(() => import('../features/coach/CoachTab').then((m) => ({ default: m.CoachTab })));
+const EyeCareTab = lazy(() => import('../features/eyecare/EyeCareTab').then((m) => ({ default: m.EyeCareTab })));
+const SettingsTab = lazy(() => import('../settings/SettingsTab').then((m) => ({ default: m.SettingsTab })));
 
 const PANE_LABELS: Record<string, string> = {
   today: '睡眠',
@@ -137,9 +137,7 @@ export const App: React.FC = () => {
   );
   useBedtimeNativeSync(
     userProfile.targetBedtime,
-    userProfile.targetWakeTime,
     userProfile.bedtimeReminderEnabled,
-    userProfile.nightRescueEnabled,
     () => {
       try {
         if (localStorage.getItem('somnacare_bedtime_start')) return;

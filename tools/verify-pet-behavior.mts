@@ -24,7 +24,6 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const view = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/WhaleGirlView.java'), 'utf-8');
 const service = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayService.java'), 'utf-8');
 const plugin = readFileSync(join(ROOT, 'plugins/cap-pet-overlay/android/src/main/java/com/somnacare/gemmallm/PetOverlayPlugin.java'), 'utf-8');
-const gemmaPlugin = readFileSync(join(ROOT, 'plugins/cap-gemma-llm/android/src/main/java/com/somnacare/gemmallm/GemmaLLMPlugin.java'), 'utf-8');
 const overlay = readFileSync(join(ROOT, 'src/features/pet/utils/petOverlay.ts'), 'utf-8');
 const moments = readFileSync(join(ROOT, 'src/features/pet/utils/petMoments.ts'), 'utf-8');
 // 桥接调用在 LLM 传输层（第 95 轮从 petMoments 拆出）
@@ -79,7 +78,7 @@ check('PetOverlayService 持有 sActiveView（包内可见，跨类可查询）'
   service.includes('static volatile WhaleGirlView sActiveView') && !service.includes('private static volatile WhaleGirlView sActiveView'));
 check('sActiveView 生命周期同步（创建+至少两处置空）',
   service.includes('sActiveView = whale;') && count(service, 'sActiveView = null') >= 2);
-check('GemmaLLMPlugin 暴露 getPetState', plugin.includes('public void getPetState(PluginCall call)'));
+check('PetOverlayPlugin 暴露 getPetState', plugin.includes('public void getPetState(PluginCall call)'));
 check('petMoments 提示词注入【她此刻动作】', moments.includes('【她此刻动作】'));
 check('petMoments 桥接 getPetState', momentsLlm.includes("g?.getPetState?.()"));
 check('提示词含一致性指令（打盹别写庆祝）', moments.includes('她在打盹就别写庆祝'));
@@ -154,10 +153,6 @@ check('"好的"按自动权限分流（hasUsageAccess 门控）', bedtime.includ
 check('自动授权时不写 auto_start_sleep 标记（门控内才写）',
   bedtime.indexOf('hasUsageAccess()') < bedtime.indexOf('putBoolean("auto_start_sleep"'));
 check('气泡文案：晚安💤 / 随便你🙄', bedtime.includes('晚安💤') && bedtime.includes('随便你🙄'));
-
-// ── 7) 下载校验（复审 N5）──
-check('下载建连与校验同源解析（uri.toURL，无双解析器差异缝）', gemmaPlugin.includes('uri.toURL().openConnection()'));
-check('下载端口限定 443', gemmaPlugin.includes('uri.getPort() != -1 && uri.getPort() != 443'));
 
 // ── 反向自检：坏实现喂进与正向相同的谓词必须报红 ──
 {

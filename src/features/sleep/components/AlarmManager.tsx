@@ -55,6 +55,8 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
   const [newSmartWindow, setNewSmartWindow] = useState(20);
 
   const [testingTone, setTestingTone] = useState<string | null>(null);
+  const testingToneRef = useRef<string | null>(null);
+  testingToneRef.current = testingTone;
   const [nativeStatus, setNativeStatus] = useState<{ isNative: boolean; scheduledCount: number; exact?: ExactAlarmStatus }>({
     isNative: isNativePlatform(),
     scheduledCount: 0,
@@ -86,10 +88,12 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
     }
   }, [alarms]);
 
-  // Stop testing tone on unmount
+  // 卸载时仅停止本页发起的闹钟试听，不打断用户正在播放的助眠白噪音
   React.useEffect(() => {
     return () => {
-      sleepAudio.stop();
+      if (testingToneRef.current) {
+        sleepAudio.stopAlarm();
+      }
     };
   }, []);
 
@@ -99,7 +103,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
 
   const handleTestTone = (tone: 'gentle_chime' | 'aurora_melody' | 'radar_beep') => {
     if (testingTone === tone) {
-      sleepAudio.stop();
+      sleepAudio.stopAlarm();
       setTestingTone(null);
     } else {
       sleepAudio.playAlarm(tone);
@@ -185,6 +189,10 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
     // 函数式更新（第 88 轮）：连点穿透防连点窗口时，值形态基于过期闭包
     // 覆盖更新（实测双击落多条/丢条）——基于 prev 追加永不竞态
     onUpdateAlarms((prev) => [...prev, created]);
+    if (testingToneRef.current) {
+      sleepAudio.stopAlarm();
+      setTestingTone(null);
+    }
     setIsAdding(false);
     } finally {
       savingRef.current = false;
@@ -213,7 +221,16 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
             {/* 视觉块与"添加闹钟"胶囊同高（28px）；命中区由透明按钮 padding 扩到 40px */}
             <button
               type="button"
-              onClick={() => setIsOpen(!isOpen)}
+              onClick={() => {
+                if (isOpen) {
+                  if (testingToneRef.current) {
+                    sleepAudio.stopAlarm();
+                    setTestingTone(null);
+                  }
+                  setIsAdding(false);
+                }
+                setIsOpen(!isOpen);
+              }}
               className="p-1.5 -m-1.5 rounded-lg cursor-pointer"
               aria-label={isOpen ? '收起闹钟列表' : '展开闹钟列表'}
             >
@@ -226,9 +243,12 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
           <button
           type="button"
           onClick={() => {
-            if (isAdding) {
-              sleepAudio.stop();
+            if (isAdding && testingToneRef.current) {
+              sleepAudio.stopAlarm();
               setTestingTone(null);
+            }
+            if (!isAdding) {
+              setIsOpen(true);
             }
             setIsAdding(!isAdding);
           }}
@@ -352,7 +372,7 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
                 <button
                   type="button"
                   onClick={() => {
-                    sleepAudio.stop();
+                    sleepAudio.stopAlarm();
                     setTestingTone(null);
                   }}
                   className="text-xs text-amber-300 font-black flex items-center gap-1 bg-amber-950 px-2 py-0.5 rounded border border-amber-500"

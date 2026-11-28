@@ -1,4 +1,0 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 端侧模型按需下载（仅用户显式点击时向白名单 HTTPS 源拉取 .task 模型） -->
-    <uses-permission android:name="android.permission.INTERNET" />
-</manifest>

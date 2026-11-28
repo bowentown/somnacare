@@ -10,6 +10,14 @@ import { HABIT_OPTIONS } from '../../intervention/utils/habitCatalog';
 import { ThemeConfig } from '../../../shared/theme/themeStyles';
 import { useModalA11y } from '../../../shared/utils/modalA11y';
 import { tapTick } from '../../../shared/utils/haptics';
+import {
+  ACTIVE_SLEEP_SESSION_KEY,
+  ACTIVE_SLEEP_SESSION_MAX_MS,
+  clearActiveSleepSession,
+  hasRecoverableActiveSleepSession,
+} from '../utils/activeSleepSession';
+
+export { hasRecoverableActiveSleepSession };
 
 interface ActiveSleepModalProps {
   isOpen: boolean;
@@ -21,26 +29,6 @@ interface ActiveSleepModalProps {
   chronotype?: 'night' | 'day' | 'irregular';
   /** 既往记录（第 105 轮）：≥5 晚时打分目标改用个人睡眠需求 */
   records?: SleepRecord[];
-}
-
-// 整夜监测会话的落盘键：息屏/进程被杀后整晚记录不再丢失（第 81 轮 P0）。
-// 超过 20h（> 模型 16h 截断上限 + 余量）视为遗留死会话，不恢复。
-const ACTIVE_SLEEP_SESSION_KEY = 'somnacare_activesleep_start';
-const ACTIVE_SLEEP_SESSION_MAX_MS = 20 * 3600_000;
-
-export function hasRecoverableActiveSleepSession(): boolean {
-  try {
-    const saved = localStorage.getItem(ACTIVE_SLEEP_SESSION_KEY);
-    if (!saved) return false;
-    const start = Number(saved);
-    return Number.isFinite(start) && Date.now() - start <= ACTIVE_SLEEP_SESSION_MAX_MS && Date.now() - start >= 0;
-  } catch {
-    return false;
-  }
-}
-
-function clearActiveSleepSession(): void {
-  try { localStorage.removeItem(ACTIVE_SLEEP_SESSION_KEY); } catch { /* ignore */ }
 }
 
 export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({

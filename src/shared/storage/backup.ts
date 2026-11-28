@@ -59,11 +59,11 @@ const PROFILE_FIELDS = [
   'smartAlarmEnabled', 'smartWakeWindowMinutes', 'soundDetectionSensitivity',
   'themeColor', 'brightnessLevel', 'warmthFilter', 'eyeCare', 'chronotype',
   'bedtimeReminderEnabled',
-  'nightRescueEnabled', 'alarms', 'sleepRecordMode', 'ambientLightEnabled', 'aiConfig',
+  'alarms', 'sleepRecordMode', 'ambientLightEnabled', 'aiConfig',
 ] as const;
 const AI_CONFIG_FIELDS = [
   'provider', 'deepseekApiKey', 'deepseekModel', 'customBaseUrl',
-  'customApiKey', 'customModelName', 'systemPersona', 'localModelVariant',
+  'customApiKey', 'customModelName', 'systemPersona',
 ] as const;
 
 function readJson(key: string): unknown {
@@ -263,6 +263,14 @@ function restoreFullBackupInner(data: FullBackup): {
     const NEVER_FROM_BACKUP = new Set(['deepseekApiKey', 'customApiKey']);
     for (const k of AI_CONFIG_FIELDS) {
       if (srcAi[k] !== undefined && !NEVER_FROM_BACKUP.has(k)) restoredAi[k] = srcAi[k];
+    }
+    // 兼容历史备份中已下线的端侧模型档位，平滑回退到本地临床规则引擎
+    if (
+      restoredAi.provider === 'built_in' ||
+      restoredAi.provider === 'local_gemma' ||
+      restoredAi.provider === 'local_llm'
+    ) {
+      restoredAi.provider = 'local_rules';
     }
     // 策略级安全：customBaseUrl 永不随备份迁移
     delete restoredAi.customBaseUrl;

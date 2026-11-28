@@ -70,7 +70,7 @@ export function loadInitialProfile(): UserProfile {
       parsedProfile.targetDurationHours = Number(parsedProfile.targetDurationHours) || 8;
       parsedProfile.sleepRecordMode = parsedProfile.sleepRecordMode === 'auto' ? 'auto' : 'manual';
       const legacyProvider = parsedProfile.aiConfig?.provider as string | undefined;
-      if (legacyProvider === 'built_in' || legacyProvider === 'local_gemma') {
+      if (legacyProvider === 'built_in' || legacyProvider === 'local_gemma' || legacyProvider === 'local_llm') {
         parsedProfile.aiConfig = { ...(parsedProfile.aiConfig || {}), provider: 'local_rules' };
       }
       return parsedProfile;

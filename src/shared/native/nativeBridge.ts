@@ -30,9 +30,8 @@ export function isNativePlatform(): boolean {
   return !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
 }
 
-/** SomnaCare 原生 Capacitor 插件名（Phase 3 拆分为 7 个独立领域插件 + Capacitor 官方插件）。 */
+/** SomnaCare 原生 Capacitor 插件名（6 个独立领域插件 + Capacitor 官方插件）。 */
 export type NativePluginName =
-  | 'GemmaLLM'
   | 'SleepCore'
   | 'SleepWidgets'
   | 'EyeCare'

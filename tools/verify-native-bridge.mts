@@ -41,32 +41,32 @@ const check = (name: string, ok: boolean, detail = '') => {
   // 无 window（SSR / 纯 Node 环境）
   delete (globalThis as any).window;
   check('无 window：不抛，判为 web',
-    isNativePlatform() === false && nativePlugin('GemmaLLM') === null);
+    isNativePlatform() === false && nativePlugin('SleepCore') === null);
 
   // 有 window 但无 Capacitor（Web / PWA / e2e）
   setWindow({});
   check('无 Capacitor：判为 web 且不给插件',
-    isNativePlatform() === false && nativePlugin('GemmaLLM') === null);
+    isNativePlatform() === false && nativePlugin('SleepCore') === null);
 
   // Capacitor 存在但 web 运行时（isNativePlatform() → false）
-  const gemma = { ping: () => 42 };
-  setWindow({ Capacitor: { isNativePlatform: () => false, Plugins: { GemmaLLM: gemma } } });
+  const sleepCore = { ping: () => 42 };
+  setWindow({ Capacitor: { isNativePlatform: () => false, Plugins: { SleepCore: sleepCore } } });
   check('web 运行时：即使插件对象在也不返回（原生专用逻辑不得在 web 被当成可用）',
-    isNativePlatform() === false && nativePlugin('GemmaLLM') === null);
+    isNativePlatform() === false && nativePlugin('SleepCore') === null);
 
   // 原生 + 插件已注册
-  setWindow({ Capacitor: { isNativePlatform: () => true, Plugins: { GemmaLLM: gemma } } });
+  setWindow({ Capacitor: { isNativePlatform: () => true, Plugins: { SleepCore: sleepCore } } });
   check('原生 + 插件在场：返回同一实例',
-    isNativePlatform() === true && nativePlugin('GemmaLLM') === gemma);
+    isNativePlatform() === true && nativePlugin('SleepCore') === sleepCore);
 
   // 原生但插件未注册
   setWindow({ Capacitor: { isNativePlatform: () => true, Plugins: {} } });
   check('原生但插件缺失：返回 null（不抛）', nativePlugin('UsageSignal') === null);
 
   // Capacitor 形状畸形（isNativePlatform 不是函数）
-  setWindow({ Capacitor: { isNativePlatform: 'yes', Plugins: { GemmaLLM: gemma } } });
+  setWindow({ Capacitor: { isNativePlatform: 'yes', Plugins: { SleepCore: sleepCore } } });
   check('畸形 Capacitor：不抛且判为 web',
-    isNativePlatform() === false && nativePlugin('GemmaLLM') === null);
+    isNativePlatform() === false && nativePlugin('SleepCore') === null);
 
   delete (globalThis as any).window;
 }
@@ -93,9 +93,9 @@ const check = (name: string, ok: boolean, detail = '') => {
 
   // 反向自检：构造一个绕过入口的文件必须被同一判据抓住
   check('反向自检：手写桥访问的源码被同一判据抓住',
-    bypasses('const cap = (window as any).Capacitor; cap.Plugins.GemmaLLM.x();')
-    && bypasses('if (cap?.isNativePlatform?.()) cap.Plugins?.GemmaLLM?.y?.();')
-    && !bypasses('const g = nativePlugin("GemmaLLM"); if (g) g.y();'));
+    bypasses('const cap = (window as any).Capacitor; cap.Plugins.SleepCore.x();')
+    && bypasses('if (cap?.isNativePlatform?.()) cap.Plugins?.SleepCore?.y?.();')
+    && !bypasses('const g = nativePlugin("SleepCore"); if (g) g.y();'));
 }
 
 if (failures > 0) {

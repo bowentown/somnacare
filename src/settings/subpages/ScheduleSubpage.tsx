@@ -191,7 +191,7 @@ export const ScheduleSubpage: React.FC = () => {
           />
         </div>
 
-        {/* 到点提醒与深夜救援 */}
+        {/* 到点提醒 */}
         <div className="space-y-2.5 pt-1">
           <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
             <div>
@@ -249,34 +249,6 @@ export const ScheduleSubpage: React.FC = () => {
               提醒需要悬浮窗权限 · 前往系统设置授权
             </button>
           )}
-
-          <div className={`${theme.cardInnerBg} border ${theme.cardInnerBorder} rounded-2xl p-3.5 flex items-center justify-between`}>
-            <div>
-              <span className="text-xs font-bold text-slate-200 block">深夜救援</span>
-              <span className="text-[10px] text-slate-400">半夜亮屏超过 5 分钟时由通知栏静默守护</span>
-            </div>
-            <button
-              type="button"
-              data-no-swipe
-              onClick={() => {
-                updateProfile({ nightRescueEnabled: userProfile.nightRescueEnabled === false });
-              }}
-              aria-pressed={userProfile.nightRescueEnabled !== false}
-              aria-label="深夜救援"
-              className="relative inline-flex items-center cursor-pointer shrink-0"
-            >
-              <span
-                className={`block w-10 h-5 rounded-full transition-colors relative ${
-                  userProfile.nightRescueEnabled !== false ? 'bg-sky-500' : 'bg-slate-600'
-                }`}
-              >
-                <span
-                  className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
-                  style={{ left: userProfile.nightRescueEnabled !== false ? '22px' : '2px' }}
-                />
-              </span>
-            </button>
-          </div>
         </div>
       </div>
 

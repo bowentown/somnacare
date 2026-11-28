@@ -10,7 +10,7 @@
     <!-- 床头环境声级采样（WebView getUserMedia） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <!-- 到点提醒与深夜救援悬浮提醒 -->
+    <!-- 到点提醒悬浮窗 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -35,23 +35,6 @@
         <receiver
             android:name="com.somnacare.gemmallm.BedtimeAlarmReceiver"
             android:exported="false" />
-
-        <!-- 深夜救援 -->
-        <receiver
-            android:name="com.somnacare.gemmallm.NightRescueReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.USER_PRESENT" />
-            </intent-filter>
-        </receiver>
-        <service
-            android:name="com.somnacare.gemmallm.NightRescueService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="night_rescue_overlay" />
-        </service>
 
         <!-- 闹钟持续响铃 -->
         <receiver

@@ -4,16 +4,21 @@
  */
 
 type LayerKey = 'rain' | 'ocean' | 'forest' | 'whitenoise' | 'bowl' | 'thunder' | 'campfire' | 'wind' | 'brown';
+type TimerHandle = number | ReturnType<typeof setInterval>;
+
+function isTimerHandle(item: AudioNode | TimerHandle): item is TimerHandle {
+  return typeof item === 'number' || typeof (item as AudioNode)?.disconnect !== 'function';
+}
 
 class SleepAudioSynthesizer {
   private ctx: AudioContext | null = null;
   private isPlaying: boolean = false;
   private currentType: string | null = null;
   private masterGain: GainNode | null = null;
-  private activeNodes: (AudioNode | number)[] = [];
+  private activeNodes: (AudioNode | TimerHandle)[] = [];
   private sessionEpoch = 0;
   // 多层混音：每个音效一层独立增益（BetterSleep 式叠加）
-  private layers = new Map<LayerKey, { gain: GainNode; nodes: (AudioNode | number)[] }>();
+  private layers = new Map<LayerKey, { gain: GainNode; nodes: (AudioNode | TimerHandle)[] }>();
   private volume: number = 0.5;
 
   private initContext() {
@@ -61,28 +66,36 @@ class SleepAudioSynthesizer {
     // activeNodes/masterGain，150ms 内快速切换音色时会误杀新会话的节点——
     // 表现为"已经静音但 UI 仍显示正在播放"。
     this.stopAllLayers(true);
+    this.isPlaying = false;
+    this.currentType = null;
     this.sessionEpoch++;
     const epoch = this.sessionEpoch;
     const nodes = this.activeNodes;
     const master = this.masterGain;
     this.activeNodes = [];
     this.masterGain = null;
+    // 定时器立即清理：若拖进 150ms 淡出回调里，短窗内切入新会话（isPlaying=true）时
+    // 旧闹钟 setInterval 仍会多打一拍音符到旧 master 上。
+    const audioNodes: AudioNode[] = [];
+    for (const item of nodes) {
+      if (isTimerHandle(item)) {
+        window.clearInterval(item as unknown as number);
+      } else {
+        audioNodes.push(item);
+      }
+    }
     if (master && this.ctx) {
       master.gain.setTargetAtTime(0.001, this.ctx.currentTime, 0.1);
     }
     setTimeout(() => {
-      for (const item of nodes) {
-        if (typeof item === 'number') {
-          window.clearInterval(item);
-        } else {
-          try {
-            if ('stop' in item && typeof (item as any).stop === 'function') {
-              (item as any).stop();
-            }
-            item.disconnect();
-          } catch {
-            // ignore
+      for (const item of audioNodes) {
+        try {
+          if ('stop' in item && typeof (item as any).stop === 'function') {
+            (item as any).stop();
           }
+          item.disconnect();
+        } catch {
+          // ignore
         }
       }
       try {
@@ -95,6 +108,13 @@ class SleepAudioSynthesizer {
         this.currentType = null;
       }
     }, 150);
+  }
+
+  /** 仅停止闹钟/铃声试听通道，不打断用户正在播放的助眠音景。 */
+  public stopAlarm() {
+    if (this.currentType === 'alarm') {
+      this.stop();
+    }
   }
 
   public play(type: LayerKey) {
@@ -130,7 +150,14 @@ class SleepAudioSynthesizer {
   public startLayer(type: LayerKey, vol = 0.6) {
     this.initContext();
     if (!this.ctx) return;
-    if (this.layers.has(type)) return;
+    if (this.layers.has(type)) {
+      this.currentType = type;
+      return;
+    }
+    // 若当前在播闹钟通道，先停掉闹钟定时器和节点再切入助眠音景
+    if (this.currentType === 'alarm') {
+      this.stop();
+    }
     // 新会话推进纪元：同 playAlarm，作废 stop() 的 150ms 延迟回调——
     // 否则 150ms 内快速开播的层会被回调判死，随机事件层全部静默
     this.sessionEpoch++;
@@ -139,7 +166,7 @@ class SleepAudioSynthesizer {
     gain.gain.setValueAtTime(0.0001, this.ctx.currentTime);
     gain.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, vol)), this.ctx.currentTime + 0.35);
     gain.connect(master);
-    const nodes: (AudioNode | number)[] = [];
+    const nodes: (AudioNode | TimerHandle)[] = [];
     switch (type) {
       case 'rain': this.startRain(gain, (...ns) => ns.forEach((n) => nodes.push(n))); break;
       case 'ocean': this.startOcean(gain, (...ns) => ns.forEach((n) => nodes.push(n))); break;
@@ -153,6 +180,7 @@ class SleepAudioSynthesizer {
     }
     this.layers.set(type, { gain, nodes });
     this.isPlaying = true;
+    this.currentType = type;
   }
 
   /** 停止一层 */
@@ -160,27 +188,34 @@ class SleepAudioSynthesizer {
     const layer = this.layers.get(type);
     if (!layer) return;
     this.layers.delete(type);
+    const layerAudioNodes: AudioNode[] = [];
+    for (const item of layer.nodes) {
+      if (isTimerHandle(item)) {
+        window.clearInterval(item as unknown as number);
+      } else {
+        layerAudioNodes.push(item);
+      }
+    }
     if (this.ctx) {
       layer.gain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.08);
     }
     window.setTimeout(() => {
-      for (const item of layer.nodes) {
-        if (typeof item === 'number') {
-          window.clearInterval(item);
-        } else {
-          try {
-            if ('stop' in item && typeof (item as any).stop === 'function') {
-              (item as any).stop();
-            }
-            item.disconnect();
-          } catch { /* ignore */ }
-        }
+      for (const item of layerAudioNodes) {
+        try {
+          if ('stop' in item && typeof (item as any).stop === 'function') {
+            (item as any).stop();
+          }
+          item.disconnect();
+        } catch { /* ignore */ }
       }
       try { layer.gain.disconnect(); } catch { /* ignore */ }
     }, 200);
-    if (this.layers.size === 0) {
+    if (this.layers.size === 0 && this.currentType !== 'alarm') {
       this.isPlaying = false;
       this.currentType = null;
+    } else if (this.currentType === type) {
+      const remaining = [...this.layers.keys()];
+      this.currentType = remaining[remaining.length - 1] ?? null;
     }
   }
 
@@ -191,8 +226,8 @@ class SleepAudioSynthesizer {
         const layer = this.layers.get(type)!;
         this.layers.delete(type);
         for (const item of layer.nodes) {
-          if (typeof item === 'number') {
-            window.clearInterval(item);
+          if (isTimerHandle(item)) {
+            window.clearInterval(item as unknown as number);
           } else {
             try {
               if ('stop' in item && typeof (item as any).stop === 'function') {
@@ -201,13 +236,13 @@ class SleepAudioSynthesizer {
               item.disconnect();
             } catch { /* ignore */ }
           }
-          try { layer.gain.disconnect(); } catch { /* ignore */ }
         }
+        try { layer.gain.disconnect(); } catch { /* ignore */ }
       } else {
         this.stopLayer(type);
       }
     }
-    if (this.layers.size === 0) {
+    if (this.layers.size === 0 && this.currentType !== 'alarm') {
       this.isPlaying = false;
       this.currentType = null;
     }

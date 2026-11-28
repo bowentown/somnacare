@@ -111,9 +111,8 @@ jobs:
           # Capacitor 出新版本后模板漂移会让下面所有 sed 静默失配
           # （A10：^8 收成精确版本，升级一律走显式提交而非 CI 静默漂移）
           npm install --legacy-peer-deps --save-dev @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/android@8.5.2
-          # 7 个领域化本地原生插件（按领域解耦，各自独立管理 Manifest 与 Gradle 依赖）
+          # 6 个领域化本地原生插件（按领域解耦，各自独立管理 Manifest 与 Gradle 依赖）
           npm install --legacy-peer-deps --save-dev \
-            ./plugins/cap-gemma-llm \
             ./plugins/cap-sleep-core \
             ./plugins/cap-sleep-widgets \
             ./plugins/cap-eye-care \
@@ -212,12 +211,11 @@ jobs:
           # 主入口 LAUNCHER 意图移至 4 个 activity-alias（主题换图标机制）
           python3 tools/inject-aliases.py android/app/src/main/AndroidManifest.xml
 
-      - name: Pre-compile All 7 Native Plugin Modules (Fast Fail)
+      - name: Pre-compile All 6 Native Plugin Modules (Fast Fail)
         run: |
           cd android
           chmod +x gradlew
           ./gradlew \
-            :cap-gemma-llm:compileDebugJavaWithJavac \
             :cap-sleep-core:compileDebugJavaWithJavac \
             :cap-sleep-widgets:compileDebugJavaWithJavac \
             :cap-eye-care:compileDebugJavaWithJavac \
@@ -331,7 +329,7 @@ jobs:
           ### ✨ 功能
           - 🌙 睡眠记录 + 床头实时声级监测（纯本地计算）
           - 📊 趋势图表与 90 分钟睡眠周期推演（模型估算值，非医疗诊断）
-          - ✨ AI 睡眠顾问（DeepSeek / 端侧 Gemma / 纯离线规则引擎）
+          - ✨ AI 睡眠顾问（DeepSeek / 自建 OpenAI 兼容接口 / 纯离线规则引擎）
           - 👁 全局护眼滤镜（暖色减蓝 + 减光，四场景 + 自定义色，定时开关）
           - 🔄 应用内更新（偏好页显式检查 GitHub Release；下载后校验签名/包名/版本）
           - ⚙️ 四套主题（桌面图标联动换色）+ 原生精确闹钟 + 数据备份

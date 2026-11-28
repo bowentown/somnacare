@@ -18,15 +18,19 @@ import {
   uiStore,
   useUIStore,
 } from '../shared/store/uiStore';
-import { ActiveSleepModal } from '../features/sleep/components/ActiveSleepModal';
-import { ManualLogModal } from '../features/sleep/components/ManualLogModal';
 import { BedtimeReminder } from '../features/sleep/components/BedtimeReminder';
 import { isNativePlatform } from '../features/sleep/utils/nativeAlarmScheduler';
 import { eyeCareInAppStyles, isInEyeCareWindow } from '../features/eyecare/utils/eyeCare';
 import { clearPendingArrival } from '../features/pet/services/travelService';
 import { useAlarmRinging } from './hooks/useAlarmRinging';
 
-// 47KB 明信片文案库仅在打开图鉴 / 送达弹窗时懒加载，不进首包
+// 首屏不可见的全屏弹层（实时监测含 730 行 audioSynth、手动补录、图鉴与明信片）全部懒加载
+const ActiveSleepModal = lazy(() =>
+  import('../features/sleep/components/ActiveSleepModal').then((m) => ({ default: m.ActiveSleepModal })),
+);
+const ManualLogModal = lazy(() =>
+  import('../features/sleep/components/ManualLogModal').then((m) => ({ default: m.ManualLogModal })),
+);
 const TravelCodexModal = lazy(() =>
   import('../features/pet/travel/TravelCodexModal').then((m) => ({ default: m.TravelCodexModal })),
 );
@@ -169,28 +173,36 @@ export const AppOverlays: React.FC = () => {
       )}
 
       {/* 核心弹窗：实时睡眠监测 / 手动补录 / 漫游图鉴 / 明信片送达 */}
-      <ActiveSleepModal
-        isOpen={activeSleepOpen}
-        onClose={closeActiveSleepModal}
-        onFinishSleep={saveActiveSleepRecord}
-        theme={currentTheme}
-        targetDurationHours={userProfile.targetDurationHours}
-        records={records}
-        chronotype={userProfile.chronotype ?? 'night'}
-      />
-      <ManualLogModal
-        isOpen={manualLogOpen}
-        onClose={closeManualLogModal}
-        editing={editTarget ?? undefined}
-        onSaveRecord={saveManualSleepRecord}
-        theme={currentTheme}
-        targetDurationHours={userProfile.targetDurationHours}
-        records={records}
-        initialDate={manualLogPrefill?.date}
-        initialBedtime={manualLogPrefill?.bedtime}
-        initialWakeTime={manualLogPrefill?.wakeTime}
-        chronotype={userProfile.chronotype ?? 'night'}
-      />
+      {activeSleepOpen && (
+        <Suspense fallback={null}>
+          <ActiveSleepModal
+            isOpen={activeSleepOpen}
+            onClose={closeActiveSleepModal}
+            onFinishSleep={saveActiveSleepRecord}
+            theme={currentTheme}
+            targetDurationHours={userProfile.targetDurationHours}
+            records={records}
+            chronotype={userProfile.chronotype ?? 'night'}
+          />
+        </Suspense>
+      )}
+      {manualLogOpen && (
+        <Suspense fallback={null}>
+          <ManualLogModal
+            isOpen={manualLogOpen}
+            onClose={closeManualLogModal}
+            editing={editTarget ?? undefined}
+            onSaveRecord={saveManualSleepRecord}
+            theme={currentTheme}
+            targetDurationHours={userProfile.targetDurationHours}
+            records={records}
+            initialDate={manualLogPrefill?.date}
+            initialBedtime={manualLogPrefill?.bedtime}
+            initialWakeTime={manualLogPrefill?.wakeTime}
+            chronotype={userProfile.chronotype ?? 'night'}
+          />
+        </Suspense>
+      )}
       {codexOpen &&
         createPortal(
           <Suspense fallback={null}>

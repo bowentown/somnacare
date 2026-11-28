@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { fetchJsonWithTimeout } from '../../shared/utils/fetchJson';
 import {
   Cpu,
@@ -10,26 +10,10 @@ import {
   Loader2,
   UserCheck,
   HardDrive,
-  Download,
-  Trash2,
 } from 'lucide-react';
 import { CustomAIConfig, AIProvider } from '../../shared/types/sleep';
 import { ThemeConfig } from '../../shared/theme/themeStyles';
 import { useModalA11y } from '../../shared/utils/modalA11y';
-import {
-  NATIVE_LLM_MODEL,
-  getActiveModelLabel,
-  isNativeLlmAvailable,
-  getHfToken,
-  setHfToken,
-  getLocalLlmSupport,
-  getLocalLlmCacheState,
-  downloadLocalLlm,
-  deleteLocalLlm,
-  consumeLlmCrashFlag,
-  type LocalLlmSupport,
-  type LocalLlmCacheState,
-} from './utils/localLlmEngine';
 
 interface CustomAISettingsModalProps {
   isOpen: boolean;
@@ -39,6 +23,11 @@ interface CustomAISettingsModalProps {
   theme: ThemeConfig;
 }
 
+function normalizeProvider(raw: unknown): AIProvider {
+  if (raw === 'deepseek' || raw === 'custom_openai' || raw === 'local_rules') return raw;
+  return 'local_rules';
+}
+
 export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   isOpen,
   onClose,
@@ -46,7 +35,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   onSaveConfig,
   theme,
 }) => {
-  const [provider, setProvider] = useState<AIProvider>(config.provider || 'deepseek');
+  const [provider, setProvider] = useState<AIProvider>(() => normalizeProvider(config.provider || 'deepseek'));
   const [deepseekApiKey, setDeepseekApiKey] = useState(config.deepseekApiKey || '');
   const [deepseekModel, setDeepseekModel] = useState(config.deepseekModel || 'deepseek-flash');
   const [customBaseUrl, setCustomBaseUrl] = useState(config.customBaseUrl || 'https://api.deepseek.com');
@@ -67,73 +56,13 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   const [queriedModels, setQueriedModels] = useState<string[]>([]);
   const [queryError, setQueryError] = useState<string | null>(null);
 
-  // 端侧小模型状态（支持性 / 缓存 / 下载进度 / 错误）
-  const [llmSupport, setLlmSupport] = useState<LocalLlmSupport | null>(null);
-  const [llmCache, setLlmCache] = useState<LocalLlmCacheState | null>(null);
-  const [llmProgress, setLlmProgress] = useState<number | null>(null);
-  const [llmError, setLlmError] = useState<string | null>(null);
-  const [hfTokenVal, setHfTokenVal] = useState(getHfToken());
-  const [llmCrashNote, setLlmCrashNote] = useState<string | null>(null);
-  const llmAbortRef = useRef<AbortController | null>(null);
   // 保存校验错误（第 54 轮）：hook 必须在 if (!isOpen) 早退之前声明
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setSaveError(null);
-    let cancelled = false;
-    const crash = consumeLlmCrashFlag();
-    if (crash && !cancelled) {
-      setLlmCrashNote(
-        crash === 'loading'
-          ? '上次会话在加载端侧模型时被中断（可能是内存不足、主动停止或系统回收）。已自动改用更保守的内存配置；若反复发生，可删除模型并改用规则引擎档位。'
-          : '上次会话在端侧模型工作中被中断（可能是内存不足、主动停止或系统回收）。若反复发生且并非你主动停止，可删除模型并改用规则引擎档位。'
-      );
-    }
-    Promise.all([getLocalLlmSupport(), getLocalLlmCacheState()]).then(([s, c]) => {
-      if (!cancelled) {
-        setLlmSupport(s);
-        setLlmCache(c);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
   }, [isOpen]);
-
-  const handleDownloadLlm = async () => {
-    setLlmError(null);
-    setLlmProgress(0);
-    const ac = new AbortController();
-    llmAbortRef.current = ac;
-    try {
-      await downloadLocalLlm((percent) => setLlmProgress(percent), ac.signal);
-    } catch (e: any) {
-      if (!ac.signal.aborted) {
-        const detail = e?.message || String(e);
-        setLlmError(
-          `下载失败：${detail}。请检查网络能否访问 hf-mirror.com 与 HuggingFace 访问令牌是否有效。`
-        );
-      }
-    }
-    llmAbortRef.current = null;
-    setLlmProgress(null);
-    const [s, c] = await Promise.all([getLocalLlmSupport(), getLocalLlmCacheState()]);
-    setLlmSupport(s);
-    setLlmCache(c);
-  };
-
-  const handleDeleteLlm = async () => {
-    setLlmError(null);
-    try {
-      await deleteLocalLlm();
-    } catch (e: any) {
-      setLlmError(`删除模型失败：${e?.message || e}`);
-    }
-    const [s, c] = await Promise.all([getLocalLlmSupport(), getLocalLlmCacheState()]);
-    setLlmSupport(s);
-    setLlmCache(c);
-  };
 
   const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, 'AI 顾问模型设置');
   if (!isOpen) return null;
@@ -212,7 +141,6 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
       setSaveError('请填写自建服务 API Key（若端点无鉴权可填任意占位符）');
       return;
     }
-    setHfToken(hfTokenVal.trim());
     onSaveConfig({
       provider,
       deepseekApiKey: deepseekApiKey.trim(),
@@ -254,7 +182,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
         {/* Provider Selection Tabs - 3-Tier Fallback Chain */}
         <div className="mt-3 space-y-3">
-          <div className="grid grid-cols-4 gap-1.5 text-xs">
+          <div className="grid grid-cols-3 gap-1.5 text-xs">
             <button
               type="button"
               onClick={() => setProvider('deepseek')}
@@ -277,18 +205,6 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
               }`}
             >
               规则引擎
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setProvider('local_llm')}
-              className={`py-2 px-1 rounded-xl border text-center font-bold transition-all cursor-pointer ${
-                provider === 'local_llm'
-                  ? `${theme.accentBg.split(' ')[0]} border-white ${theme.accentFg}`
-                  : `${theme.cardInnerBg} border-slate-700 text-slate-300`
-              }`}
-            >
-              端侧小模型
             </button>
 
             <button
@@ -320,145 +236,6 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 按 CBT-I 失眠认知行为治疗指南本地推理，结合你当夜的真实数据作答，含危机安全护栏。
               </p>
-            </div>
-          )}
-
-          {/* 2. On-Device Local LLM Pane (Qwen3-0.6B via llama.cpp WASM) */}
-          {provider === 'local_llm' && (
-            <div className={`p-4 rounded-2xl ${theme.cardInnerBg} border border-slate-700 space-y-3 text-xs`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Cpu className={`w-4 h-4 ${theme.accentText}`} />
-                  <span className="font-bold text-white">端侧小模型 · {getActiveModelLabel()}</span>
-                </div>
-                <span
-                  className={`text-[10px] ${theme.accentText} px-2 py-0.5 rounded border ${theme.accentBorder}`}
-                  style={{ backgroundColor: `${theme.accentHex}33` }}
-                >
-                  离线可用 · 隐私不上传
-                </span>
-              </div>
-
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                {isNativeLlmAvailable()
-                  ? 'APK 内使用原生 MediaPipe 引擎在本机推理（Gemma 3 1B int4，约 529 MB，mmap 加载）。仅接管日常聊天；睡眠生理报告始终由规则引擎完成；危机与用药安全护栏优先于模型。'
-                  : '端侧小模型（MediaPipe Gemma 3 1B int4）仅在 Android APK 原生环境运行；当前预览环境请使用本地规则引擎或自配云端 API。'}
-              </p>
-
-              {/* 上次崩溃警告 */}
-              {llmCrashNote && provider === 'local_llm' && (
-                <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-800/60 text-[11px] text-amber-200 leading-relaxed">
-                  ⚠️ {llmCrashNote}
-                </div>
-              )}
-
-              {/* 设备支持性 */}
-              {llmSupport && (
-                <div
-                  className={`p-2.5 rounded-xl border text-[11px] leading-relaxed ${
-                    llmSupport.supported
-                      ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-300'
-                      : 'bg-amber-950/30 border-amber-800/60 text-amber-300/90'
-                  }`}
-                >
-                  {llmSupport.supported ? (
-                    <>
-                      ✓ 设备满足运行要求（内存档位 {llmSupport.deviceMemoryGB ?? '未知'}GB，可用存储{' '}
-                      {llmSupport.freeStorageGB !== null ? `${llmSupport.freeStorageGB.toFixed(1)}GB` : '未知'}）
-                    </>
-                  ) : (
-                    <>⚠ 本设备不建议启用：{llmSupport.reason}。聊天仍可使用规则引擎档位。</>
-                  )}
-                </div>
-              )}
-              {!llmSupport && !llmError && (
-                <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400">
-                  正在检测设备支持性...
-                </div>
-              )}
-
-              {/* 错误信息 */}
-              {llmError && (
-                <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-[11px] text-rose-200 leading-relaxed">
-                  ❌ {llmError}
-                </div>
-              )}
-
-              {/* HF 门控模型令牌（仅原生） */}
-              {isNativeLlmAvailable() && (
-                <div className={`p-3 rounded-xl bg-[#0a0f1d] border border-slate-700 space-y-2`}>
-                  <span className="text-[11px] font-bold text-white block">HuggingFace 访问令牌（首次下载需要）</span>
-                  <span className="text-[9px] text-slate-400 block">只保存在本机、不进备份文件；下载时它会作为只读凭据发送给你选择的模型下载源（默认含第三方镜像 hf-mirror.com）。建议在 HF 上创建只读（read）权限的令牌。</span>
-                  <input
-                    type="password"
-                    value={hfTokenVal}
-                    onChange={(e) => setHfTokenVal(e.target.value)}
-                    onBlur={() => setHfToken(hfTokenVal.trim())}   // 失焦才落盘：此前每敲一键写一次存储
-                    placeholder="hf_xxxxxxxxxxxx"
-                    className={`w-full bg-[#0a0f1d] border border-slate-600 rounded-xl px-2.5 py-2 text-xs text-white font-mono placeholder-slate-400 focus:outline-none ${theme.focusRing}`}
-                  />
-                  <p className="text-[10px] text-slate-400 leading-relaxed">
-                    Gemma 为门控模型：在 huggingface.co 登录 → 打开 litert-community/gemma-3-1b-it →
-                    同意许可 → Settings → Access Tokens 生成只读令牌粘贴于此。令牌仅保存在本机。
-                  </p>
-                </div>
-              )}
-
-              {/* 下载管理 */}
-              <div className={`p-3 rounded-xl bg-[#0a0f1d] border border-slate-700 space-y-2.5`}>
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-bold text-white">模型文件（首次需下载，建议 Wi-Fi）</span>
-                  {llmCache?.cached && (
-                    <span className="text-emerald-400 font-display">{(llmCache.cachedBytes / 1024 ** 2).toFixed(0)} MB 已就绪</span>
-                  )}
-                </div>
-
-                {llmProgress !== null ? (
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[11px] text-slate-300">
-                      <span className="flex items-center gap-1.5">
-                        <Loader2 className={`w-3.5 h-3.5 animate-spin ${theme.accentText}`} />
-                        正在下载端侧模型...
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => llmAbortRef.current?.abort()}
-                        className="text-slate-400 hover:text-white underline cursor-pointer"
-                      >
-                        取消
-                      </button>
-                    </div>
-                    <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div style={{ width: `${llmProgress}%` }} className={`h-full ${theme.accentBg.split(' ')[0]} transition-all duration-300`} />
-                    </div>
-                    <div className="text-right text-[10px] text-slate-400 font-mono">{llmProgress}%</div>
-                  </div>
-                ) : llmCache?.cached ? (
-                  <button
-                    type="button"
-                    onClick={handleDeleteLlm}
-                    className="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-rose-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>删除模型，释放存储空间</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleDownloadLlm}
-                    disabled={llmSupport !== null && !llmSupport.supported}
-                    className={`w-full py-2.5 rounded-xl ${theme.accentBg} disabled:opacity-40 disabled:cursor-not-allowed ${theme.accentFg} font-bold flex items-center justify-center gap-1.5 shadow cursor-pointer`}
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>下载端侧模型（约 {Math.round(NATIVE_LLM_MODEL.expectedBytes / 1_000_000)} MB）</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[10px] text-slate-400 leading-relaxed">
-                ⚡ 性能说明：APK 原生进程通过 MediaPipe mmap 加载本地模型，完全离线推理、对话隐私不离开本机；
-                首次对话加载模型需数秒，切后台自动释放内存。模型文件保存在本机私有存储，卸载应用或删除模型即彻底清除。
-              </div>
             </div>
           )}
 

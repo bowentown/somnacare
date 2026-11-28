@@ -83,7 +83,7 @@ export interface CustomAlarmSetting {
   smartWakeWindowMinutes: number; // e.g. 20
 }
 
-export type AIProvider = 'deepseek' | 'custom_openai' | 'local_rules' | 'local_llm';
+export type AIProvider = 'deepseek' | 'custom_openai' | 'local_rules';
 
 export interface CustomAIConfig {
   provider: AIProvider;
@@ -93,7 +93,6 @@ export interface CustomAIConfig {
   customApiKey?: string;
   customModelName?: string;
   systemPersona?: string; // AI role & tone prompt
-  localModelVariant?: 'qwen_0_6b' | 'gemma_1b';
 }
 
 export interface EyeCareConfig {
@@ -139,7 +138,6 @@ export interface UserProfile {
   /** 作息类型：决定自动记录（提议）的采样窗口。缺省 night 与现状一致 */
   chronotype?: 'night' | 'day' | 'irregular';
   bedtimeReminderEnabled?: boolean; // 到点提醒我（默认关闭；开启后按作息目标弹出提醒动画）
-  nightRescueEnabled?: boolean; // 深夜救援（默认开启；夜间解锁时按情境给一句话干预，CBT-I 口径）
   alarms?: CustomAlarmSetting[];
   /** 睡眠区主卡的记录方式：manual=手动监测按钮；auto=使用信号自动提议（第 38 轮） */
   sleepRecordMode?: 'manual' | 'auto';

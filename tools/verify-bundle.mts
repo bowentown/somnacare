@@ -70,17 +70,38 @@ check('无第三方日历库指纹（react-activity-calendar 已移除，月历�
 check('主包不含重打分实现（rescoreRecordsIfNeeded 已随补水落懒 chunk）',
   !has(main, 'rescoreRecordsIfNeeded'));
 
-// 主包体积上界（防止下一个重库悄悄进来）：第 103 轮实测 637K 字符
-// （.length 口径；磁盘 689KB 字节，差异来自包内 CJK 字符串）。超限不是
-// 必错，但必须先解释再放宽。
-const mainKB = Math.round(main.length / 1024);
-check('主包体积上界（第 103 轮实测 637K 字符 + 余量）', mainKB < 800, `${mainKB}K 字符`);
+// v1.44.0 M1 懒加载瘦身：730 行 Web Audio 合成器随弹窗/子页拆入独立懒 chunk
+check('主包不含 Web Audio 合成器（createBiquadFilter 指纹）',
+  !has(main, 'createBiquadFilter'));
+check('Web Audio 合成器落在独立懒 chunk（audioSynth-*.js）',
+  allJs.some((c) => /^audioSynth-.*\.js$/.test(c.name) && has(c.src, 'createBiquadFilter')));
 
-// 反向自检：伪主包含指纹必须被同一判据抓住
+// v1.44.0 M1 字体裁剪：仅打包 Space Grotesk latin 3 个 .woff2（禁止回流 vietnamese / latin-ext / .woff）
+const isValidFontSet = (files: string[]): boolean => {
+  const fonts = files.filter((f) => /\.(woff2?|ttf|otf|eot)$/i.test(f));
+  const allowed = /^space-grotesk-latin-(400|500|700)-normal-.*\.woff2$/;
+  return fonts.length === 3 && fonts.every((f) => allowed.test(f));
+};
+const distAssetFiles = readdirSync(ASSETS);
+const fontFiles = distAssetFiles.filter((f) => /\.(woff2?|ttf|otf|eot)$/i.test(f));
+check('字体子集裁剪（仅含 3 个 space-grotesk-latin .woff2，无 vietnamese/latin-ext/.woff）',
+  isValidFontSet(distAssetFiles), `${fontFiles.length} 个字体文件`);
+
+// 主包体积上界（防止下一个重库或懒加载分区悄悄回流主包）：
+// v1.43.2 实测 602K 字符 → v1.44.0 M1 懒加载后实测 379K 字符（.length 口径；
+// 磁盘 398KB 字节，差异来自包内 CJK 字符串）。460K 上界保留 ~21% 余量；
+// 超限不是必错，但必须先解释再放宽。
+const mainKB = Math.round(main.length / 1024);
+check('主包体积上界（v1.44.0 M1 实测 379K 字符 + 余量）', mainKB < 460, `${mainKB}K 字符`);
+
+// 反向自检：伪主包含指纹 / 伪字体集含多子集或 .woff 必须被同一判据抓住
 {
-  const fake = 'var CartesianGrid=1,WebGLRenderer=1;';
+  const fake = 'var CartesianGrid=1,WebGLRenderer=1,createBiquadFilter=1;';
   check('反向自检：含指纹的伪主包被同一判据抓住',
-    has(fake, 'CartesianGrid') && has(fake, 'WebGLRenderer'));
+    has(fake, 'CartesianGrid') && has(fake, 'WebGLRenderer') && has(fake, 'createBiquadFilter'));
+  check('反向自检：含 .woff 或 latin-ext 的伪字体集被同一判据抓住',
+    !isValidFontSet([...fontFiles, 'space-grotesk-latin-ext-400-normal-abc.woff2'])
+    && !isValidFontSet(['space-grotesk-latin-400-normal-a.woff', 'space-grotesk-latin-500-normal-b.woff2', 'space-grotesk-latin-700-normal-c.woff2']));
 }
 
 if (failures > 0) {

@@ -4,9 +4,6 @@
  * 这些 effect 彼此独立、只依赖传入的参数与稳定 setter——原来平铺在
  * App.tsx 里 300 行，App 壳因此膨胀到 1400+ 行。抽到这里后 App.tsx 只保留
  * 状态编排与渲染。行为逐字迁移，依赖数组与原来完全一致。
- *
- * 相关护栏：verify-night-rescue（nightRescueSet）、verify-audit-hardening
- * （就寝提醒 fired 键）——它们读的是本文件。
  */
 import { useEffect, useRef } from 'react';
 import { UserProfile, CustomAlarmSetting } from '../../shared/types/sleep';
@@ -300,9 +297,7 @@ export function useBedtimeReminderWatch(
  */
 export function useBedtimeNativeSync(
   targetBedtime: string,
-  targetWakeTime: string,
   reminderEnabled: boolean | undefined,
-  nightRescueEnabled: boolean | undefined,
   onGoodPath: () => void,
 ): void {
   const goodPathRef = useRef(onGoodPath);
@@ -317,11 +312,6 @@ export function useBedtimeNativeSync(
       } else {
         nativePlugin('SleepCore')?.bedtimeReminderCancel?.();
       }
-      // 深夜救援开关 + 醒来目标（夜间窗口用；默认开启，!== false 语义）
-      nativePlugin('SleepCore')?.nightRescueSet?.({
-        enabled: nightRescueEnabled !== false,
-        wake: targetWakeTime,
-      });
       nativePlugin('SleepCore')?.bedtimeAutoStartConsume?.().then((res: any) => {
         if (res?.consume) goodPathRef.current();
       });
@@ -341,5 +331,5 @@ export function useBedtimeNativeSync(
     }
     return () => { listenerCleanupRef.current?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetBedtime, targetWakeTime, reminderEnabled, nightRescueEnabled]);
+  }, [targetBedtime, reminderEnabled]);
 }

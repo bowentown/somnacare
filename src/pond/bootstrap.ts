@@ -87,8 +87,12 @@ export function createPond(
     settings.set(["koi", "initialCount"], clamp(opts.koiCount, 1, 12));
   }
 
+  const staticSteps = opts.staticSteps ?? 0;
   let paused = false;
+  let disposed = false;
   let raf = 0;
+  let staticRaf1 = 0;
+  let staticRaf2 = 0;
   let accumulator = 0;
   let simulationTime = 0;
   let previousTime = performance.now();
@@ -98,6 +102,11 @@ export function createPond(
   const FRAME_MS = 1000 / 30;
 
   const animate = (now: number): void => {
+    // 暂停或释放态不再续排 rAF，彻底消灭切 Tab 后的 60–120Hz WebGL 空转
+    if (disposed || paused) {
+      raf = 0;
+      return;
+    }
     raf = requestAnimationFrame(animate);
     // 可测试性（第 89 轮）：?pond-live 下暴露帧计数——WebGL 画布无法用
     // toDataURL/getContext('2d') 做像素差分（e2e 曾因此假绿/假红）
@@ -105,8 +114,8 @@ export function createPond(
       const w = window as unknown as { __pondFrames?: number };
       w.__pondFrames = (w.__pondFrames ?? 0) + 1;
     }
-    if (paused || isGestureLive()) {
-      previousTime = now; // 暂停/拖拽期间不积累时间，恢复时不跳变
+    if (isGestureLive()) {
+      previousTime = now; // 拖拽期间不积累时间，恢复时不跳变
       return;
     }
     if (now - previousTime < FRAME_MS) return;   // 未到 33ms 的中间帧直接让出
@@ -130,11 +139,13 @@ export function createPond(
     }
   };
 
-  let disposed = false;
   const handle: PondHandle = {
     dispose(): void {
       disposed = true;
-      cancelAnimationFrame(raf);
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
       cancelAnimationFrame(staticRaf1);
       cancelAnimationFrame(staticRaf2);
       unsubscribeWeather();
@@ -155,14 +166,23 @@ export function createPond(
       school.ripples.trigger('touch', vec(width * 0.7, cy + height * 0.06));
     },
     setPaused(p: boolean): void {
+      if (disposed || paused === p) return;
       paused = p;
-      if (!p) previousTime = performance.now();
+      if (p) {
+        // 切离首屏或页面隐藏时立即取消 rAF，恢复前保持零帧调度
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+      } else {
+        previousTime = performance.now();
+        if (staticSteps === 0 && !raf) {
+          raf = requestAnimationFrame(animate);
+        }
+      }
     },
   };
 
-  const staticSteps = opts.staticSteps ?? 0;
-  let staticRaf1 = 0;
-  let staticRaf2 = 0;
   if (staticSteps > 0) {
     // settings 的部分效果延迟到 rAF 刷新（settings/effects.ts flushLight），
     // 静帧没有自己的循环：搭两帧真实 rAF 让效果落地再开始推进。

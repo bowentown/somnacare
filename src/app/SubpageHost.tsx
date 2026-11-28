@@ -1,13 +1,24 @@
 import React, { Suspense, lazy } from 'react';
+import { getCurrentTheme, useProfileStore } from '../shared/store/profileStore';
 import { useUIStore } from '../shared/store/uiStore';
-import { AppearanceSubpage } from '../settings/subpages/AppearanceSubpage';
-import { ScheduleSubpage } from '../settings/subpages/ScheduleSubpage';
-import { PetSubpage } from '../settings/subpages/PetSubpage';
-import { DataSubpage } from '../settings/subpages/DataSubpage';
-import { AdSkipSubpage } from '../features/extensions/ad-skip/AdSkipSubpage';
 import { PaneErrorBoundary } from '../shared/ui/PaneErrorBoundary';
 
-// 进阶二级子页按需懒加载，保证首屏主包轻量
+// 全部二级子页按需懒加载，保证首屏主包轻量
+const AppearanceSubpage = lazy(() =>
+  import('../settings/subpages/AppearanceSubpage').then((m) => ({ default: m.AppearanceSubpage })),
+);
+const ScheduleSubpage = lazy(() =>
+  import('../settings/subpages/ScheduleSubpage').then((m) => ({ default: m.ScheduleSubpage })),
+);
+const PetSubpage = lazy(() =>
+  import('../settings/subpages/PetSubpage').then((m) => ({ default: m.PetSubpage })),
+);
+const DataSubpage = lazy(() =>
+  import('../settings/subpages/DataSubpage').then((m) => ({ default: m.DataSubpage })),
+);
+const AdSkipSubpage = lazy(() =>
+  import('../features/extensions/ad-skip/AdSkipSubpage').then((m) => ({ default: m.AdSkipSubpage })),
+);
 const WidgetsSubpage = lazy(() =>
   import('../settings/subpages/WidgetsSubpage').then((m) => ({ default: m.WidgetsSubpage })),
 );
@@ -41,7 +52,7 @@ export const SubpageHost: React.FC = () => {
 
   return (
     <PaneErrorBoundary label={top.id}>
-      <Suspense fallback={null}>
+      <Suspense fallback={<SubpageSkeleton />}>
         {top.id === 'settings/appearance' && <AppearanceSubpage />}
         {top.id === 'settings/schedule' && <ScheduleSubpage />}
         {top.id === 'settings/pet' && <PetSubpage />}
@@ -58,5 +69,26 @@ export const SubpageHost: React.FC = () => {
         {top.id === 'eyecare/health' && <EyeCareHealthSubpage />}
       </Suspense>
     </PaneErrorBoundary>
+  );
+};
+
+const SubpageSkeleton: React.FC = () => {
+  const userProfile = useProfileStore((s) => s.profile);
+  const theme = getCurrentTheme(userProfile);
+  return (
+    <div
+      aria-hidden
+      className={`fixed inset-0 z-[60] ${theme.pageBg} ${theme.textPrimary} flex flex-col overflow-hidden`}
+    >
+      <div className="w-full flex-1 max-w-lg mx-auto p-4 space-y-3">
+        <div className="h-9 w-36 rounded-xl bg-slate-800/50" />
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="rounded-3xl border border-slate-700/60 bg-slate-900/40 p-5">
+            <div className="h-3 w-24 rounded-full bg-slate-700/60" />
+            <div className="mt-3 h-24 rounded-2xl bg-slate-800/50" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };

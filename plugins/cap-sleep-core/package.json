@@ -1,7 +1,7 @@
 {
   "name": "cap-sleep-core",
   "version": "1.0.0",
-  "description": "Core native sleep alarms, bedtime reminder, night rescue, launcher icon, and in-app updater for SomnaCare",
+  "description": "Core native sleep alarms, bedtime reminder, launcher icon, and in-app updater for SomnaCare",
   "main": "index.js",
   "capacitor": {
     "android": {

@@ -1,11 +1,5 @@
 import type { ChatMessage, SleepRecord, UserProfile } from '../../../shared/types/sleep';
 import { classifyIntent, generateLocalChatReply } from './clinicalSleepEngine';
-import {
-  generateLocalLlmReply,
-  getActiveModelLabel,
-  getLocalLlmCacheState,
-  getLocalLlmSupport,
-} from './localLlmEngine';
 import { nightsOnly } from '../../sleep/utils/recordFilter';
 import { fetchJsonWithTimeout } from '../../../shared/utils/fetchJson';
 
@@ -26,18 +20,15 @@ export interface SendCoachChatParams {
   userProfile: UserProfile;
   personalCtx: string;
   onProviderNameChange: (name: string) => void;
-  onStageChange: (stage: 'loading' | 'generating' | null) => void;
-  onAbortController: (ctrl: AbortController | null) => void;
   updateMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
 }
 
 /**
  * AI 顾问对话路由分发器：
  * 0. 危机 / 用药安全护栏统一短路（优先于所有云端/本地引擎）
- * 1. 原生端侧小模型流式生成（60s 首 token 熔断兜底）
- * 2. 本地临床规则引擎（纯离线零出网）
- * 3. DeepSeek / 自建 OpenAI 兼容接口直连（前缀缓存优化 + 粘性历史窗口）
- * 4. 任何异常自动回退到本地临床规则引擎并诚实更新来源标签
+ * 1. 本地临床规则引擎（纯离线零出网）
+ * 2. DeepSeek / 自建 OpenAI 兼容接口直连（前缀缓存优化 + 粘性历史窗口）
+ * 3. 任何异常自动回退到本地临床规则引擎并诚实更新来源标签
  */
 export async function dispatchCoachChat(params: SendCoachChatParams): Promise<void> {
   const {
@@ -47,8 +38,6 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
     userProfile,
     personalCtx,
     onProviderNameChange,
-    onStageChange,
-    onAbortController,
     updateMessages,
   } = params;
 
@@ -74,85 +63,9 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
       return;
     }
 
-    // 1. 原生端侧小模型
-    if (cfg?.provider === 'local_llm') {
-      const [support, cache] = await Promise.all([getLocalLlmSupport(), getLocalLlmCacheState()]);
-      if (!support.supported || !cache.cached) {
-        onProviderNameChange('本地引擎（端侧模型未就绪）');
-        const hint = support.supported
-          ? '\n\n（提示：可在 设置 → AI 顾问模型设置 中下载启用端侧小模型）'
-          : `\n\n（端侧模型在当前设备不可用：${support.reason}）`;
-        const fallbackReply = generateLocalChatReply(text, latestRecord, records) + hint;
-        updateMessages((prev) => [
-          ...prev,
-          { id: `ai-${Date.now()}`, role: 'assistant', content: fallbackReply, timestamp: makeTime() },
-        ]);
-        return;
-      }
-
-      onProviderNameChange(getActiveModelLabel());
-      const aiId = `ai-${Date.now()}`;
-      updateMessages((prev) => [
-        ...prev,
-        { id: aiId, role: 'assistant', content: '……', timestamp: makeTime() },
-      ]);
-      const abortCtrl = new AbortController();
-      onAbortController(abortCtrl);
-      let gotFirstToken = false;
-      const firstTokenTimer = window.setTimeout(() => {
-        if (!gotFirstToken) abortCtrl.abort();
-      }, 60000);
-
-      try {
-        const systemContent = `${systemPrompt}\n${personalCtx}`;
-        const history = newHistory.slice(-4).map((m) => ({
-          role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-          content: m.content,
-        }));
-        await generateLocalLlmReply(
-          [{ role: 'system', content: systemContent }, ...history],
-          {
-            onToken: (token) => {
-              if (!gotFirstToken) {
-                gotFirstToken = true;
-                window.clearTimeout(firstTokenTimer);
-              }
-              updateMessages((prev) =>
-                prev.map((m) =>
-                  m.id === aiId ? { ...m, content: m.content === '……' ? token : m.content + token } : m,
-                ),
-              );
-            },
-            onStage: onStageChange,
-          },
-          abortCtrl.signal,
-        );
-        updateMessages((prev) =>
-          prev.map((m) =>
-            m.id === aiId && (m.content.trim() === '' || m.content.trim() === '……')
-              ? { ...m, content: generateLocalChatReply(text, latestRecord, records) }
-              : m,
-          ),
-        );
-      } catch (err: unknown) {
-        const errObj = err as { name?: string; message?: string } | null;
-        const aborted =
-          abortCtrl.signal.aborted || errObj?.name === 'AbortError' || /abort/i.test(String(errObj?.message));
-        if (!aborted) {
-          onProviderNameChange('本地引擎（端侧模型异常，规则兜底）');
-        }
-        const fallbackReply = generateLocalChatReply(text, latestRecord, records);
-        updateMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: fallbackReply } : m)));
-      } finally {
-        window.clearTimeout(firstTokenTimer);
-        onAbortController(null);
-        onStageChange(null);
-      }
-      return;
-    }
-
-    // 1b. 本地临床离线规则引擎
-    if (cfg?.provider === 'local_rules' || (cfg?.provider as string) === 'local_gemma') {
+    // 1. 本地临床离线规则引擎（兼容历史 local_llm / local_gemma 档位平滑回退）
+    const rawProvider = cfg?.provider as string | undefined;
+    if (rawProvider === 'local_rules' || rawProvider === 'local_gemma' || rawProvider === 'local_llm') {
       onProviderNameChange('本地临床规则引擎');
       await new Promise((resolve) => setTimeout(resolve, 260));
       const localReply = generateLocalChatReply(text, latestRecord, records);

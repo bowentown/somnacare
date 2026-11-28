@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useMinuteTick } from '../../../shared/hooks/useMinuteTick';
 import { SleepRecord, UserProfile } from '../../../shared/types/sleep';
 import { nightsOnly } from '../utils/recordFilter';
 import { computeSleepDebtRatio } from '../utils/sleepScore';
 import { ThemeConfig } from '../../../shared/theme/themeStyles';
+import { useUIStore } from '../../../shared/store/uiStore';
 
 /**
  * 活的海 · 池塘横幅（nagomi 渲染核心移植版，第一期）
@@ -61,9 +62,23 @@ export const PondCard: React.FC<{
     return THEME_WEATHER[theme.id];
   }, [records, userProfile, theme.id, isLateNight]);
 
+  const pondObscured = useUIStore(
+    (s) =>
+      s.activeTab !== 'today' ||
+      s.subpageStack.length > 0 ||
+      s.activeSleepOpen ||
+      s.manualLogOpen ||
+      s.codexOpen ||
+      !!s.pendingPostcardId ||
+      s.momentsOpen ||
+      s.aiConfigOpen,
+  );
   const handleRef = useRef<PondHandle | null>(null);
   const inViewRef = useRef(true);
+  const obscuredRef = useRef(pondObscured);
+  obscuredRef.current = pondObscured;
   const weatherRef = useRef(weather);
+  weatherRef.current = weather;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -81,6 +96,10 @@ export const PondCard: React.FC<{
     // Playwright 超时）；真实用户减少动态需要 240 步让天气渐变收敛
     const staticSteps = automated ? 30 : reduced ? 240 : 0;
 
+    const syncPaused = (): void => {
+      handleRef.current?.setPaused(!inViewRef.current || document.hidden || obscuredRef.current);
+    };
+
     void (async (): Promise<void> => {
       const { createPond } = await import('../../../pond/bootstrap');
       if (disposed) return;
@@ -90,15 +109,16 @@ export const PondCard: React.FC<{
         staticSteps,
         forceLive,
       });
+      syncPaused();
     })();
 
     const io = new IntersectionObserver((entries) => {
       inViewRef.current = entries[0]?.isIntersecting ?? true;
-      handleRef.current?.setPaused(!inViewRef.current || document.hidden);
+      syncPaused();
     });
     io.observe(canvas);
     const onVis = (): void => {
-      handleRef.current?.setPaused(!inViewRef.current || document.hidden);
+      syncPaused();
     };
     document.addEventListener('visibilitychange', onVis);
 
@@ -119,6 +139,11 @@ export const PondCard: React.FC<{
       handleRef.current = null;
     };
   }, []);
+
+  // 切离首屏或全屏子页/弹窗（含整夜 ActiveSleepModal）遮挡时立刻停 rAF，彻底省电
+  useEffect(() => {
+    handleRef.current?.setPaused(!inViewRef.current || document.hidden || pondObscured);
+  }, [pondObscured]);
 
   // 主题切换 / 睡眠债跨档 → 池塘渐变到对应天气（月夜/晴日/黄昏/阴雨）
   useEffect(() => {

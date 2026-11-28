@@ -154,6 +154,41 @@ test('旅程26 池塘逐帧动画：pond-live 下画布持续变化', async ({ p
   const f1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
   expect(f0).toBeGreaterThan(0);            // 逐帧循环已启动
   expect(f1 - f0).toBeGreaterThanOrEqual(20);   // 1.5s 内推进 ≥20 帧（30fps 路径）
+
+  // M1 省电回归锁 ①：切到偏好 Tab 后 rAF 立即 cancel，零空转
+  const nav = page.getByRole('navigation', { name: '主标签栏' });
+  await nav.getByRole('button', { name: '偏好' }).click();
+  await page.waitForTimeout(200);
+  const fTab0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  await page.waitForTimeout(600);
+  const fTab1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  expect(fTab1 - fTab0).toBe(0);
+
+  // 切回睡眠 Tab 后 rAF 恢复推进
+  await nav.getByRole('button', { name: '睡眠' }).click();
+  await page.waitForTimeout(300);
+  const fBack0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  await page.waitForTimeout(600);
+  const fBack1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  expect(fBack1 - fBack0).toBeGreaterThanOrEqual(8);
+
+  // M1 省电回归锁 ②：从首页打开全屏二级子页（如睡前仪式）遮挡池塘时同样立即停 rAF
+  await page.getByRole('button', { name: /睡前仪式/ }).first().click();
+  await expect(page.getByRole('heading', { name: '睡前仪式', exact: true })).toBeVisible();
+  await page.waitForTimeout(150);
+  const fSub0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  await page.waitForTimeout(600);
+  const fSub1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  expect(fSub1 - fSub0).toBe(0);
+
+  // 返回首页后 rAF 恢复
+  await page.getByRole('button', { name: '返回' }).click();
+  await page.waitForTimeout(200);
+  const fRes0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  await page.waitForTimeout(600);
+  const fRes1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
+  expect(fRes1 - fRes0).toBeGreaterThanOrEqual(8);
+
   expect(errors).toEqual([]);
 });
 

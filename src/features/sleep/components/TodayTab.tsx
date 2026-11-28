@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useMinuteTick } from '../../../shared/hooks/useMinuteTick';
 import {
   ChevronDown,
@@ -16,7 +16,6 @@ import { computeSleepDebt, computeSleepNeed, formatDurationChinese } from '../ut
 import { OneTapSleepTracker } from './OneTapSleepTracker';
 import { nightsOnly, napsOnly } from '../utils/recordFilter';
 import { nightKeyOfBed, toLocalDateString, localDateOffset } from '../../../shared/utils/dateUtils';
-import { SoundscapePlayer } from '../../intervention/SoundscapePlayer';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { queryWindDownApps, type WindDownResult } from '../utils/usageSignal';
 import { getDayPhase } from '../../../shared/utils/dayPhase';
@@ -38,27 +37,35 @@ import { PondCard } from './PondCard';
 import { SleepDial } from './SleepDial';
 import { MoonEnergy } from './MoonEnergy';
 
+// 助眠音景弹窗含 730 行 Web Audio 合成器，仅点击打开时懒加载
+const SoundscapePlayer = lazy(() =>
+  import('../../intervention/SoundscapePlayer').then((m) => ({ default: m.SoundscapePlayer })),
+);
+
 const TodayTabInner: React.FC = () => {
   const records = useSleepStore((s) => s.records);
   const celebrateSignal = useSleepStore((s) => s.pondCelebrateCount);
   const userProfile = useProfileStore((s) => s.profile);
   const theme = getCurrentTheme(userProfile);
   const startSignal = useUIStore((s) => s.sleepStartSignal);
+  const chronotype = userProfile.chronotype;
 
   const onUpdateProfile = updateProfile;
   const onOpenActiveSleep = openActiveSleepModal;
-  const onOpenManualLog = () => openManualLogModal();
-  const onOpenManualLogPrefilled = (p: { date: string; bedtime: string; wakeTime: string }) =>
-    openManualLogModal(p);
-  const onMonitoringStart = () => {
+  const onOpenManualLog = useCallback(() => openManualLogModal(), []);
+  const onOpenManualLogPrefilled = useCallback(
+    (p: { date: string; bedtime: string; wakeTime: string }) => openManualLogModal(p),
+    [],
+  );
+  const onMonitoringStart = useCallback(() => {
     void scheduleMorningConfirmNotify(
-      nightKeyOfBed(Date.now(), userProfile.chronotype === 'day' ? 'day' : 'night'),
+      nightKeyOfBed(Date.now(), chronotype === 'day' ? 'day' : 'night'),
     );
-  };
-  const onNavigateToTrends = () => setActiveTab('trends');
+  }, [chronotype]);
+  const onNavigateToTrends = useCallback(() => setActiveTab('trends'), []);
   const onSaveRecord = saveManualSleepRecord;
   const onOpenAutoCheck = openAutoCheckSubpage;
-  const onOpenCodex = () => uiStore.setState({ codexOpen: true });
+  const onOpenCodex = useCallback(() => uiStore.setState({ codexOpen: true }), []);
 
   const latestRecord = useMemo(() => nightsOnly(records)[0] || null, [records]);
   const todayNaps = useMemo(
@@ -491,7 +498,11 @@ const TodayTabInner: React.FC = () => {
           </span>
         </button>
 
-        {mixerOpen && <SoundscapePlayer theme={theme} onClose={() => setMixerOpen(false)} />}
+        {mixerOpen && (
+          <Suspense fallback={null}>
+            <SoundscapePlayer theme={theme} onClose={() => setMixerOpen(false)} />
+          </Suspense>
+        )}
       </div>
     </div>
   );
