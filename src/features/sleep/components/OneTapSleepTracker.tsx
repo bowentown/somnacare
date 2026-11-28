@@ -10,7 +10,7 @@ import { Smartphone } from 'lucide-react';
 import { computeProposal, computeModelProposal, type Proposal } from '../utils/proposal';
 import { recordEngineRun, recordOutcome, recordAdjustment, recordNegativeLabel } from '../utils/modelShadow';
 import { ensureUsageLoaded, subscribeUsage, getCachedUsageDays } from '../utils/usageStore';
-import { queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
+import { getScreenOnEventsCacheAt, queryScreenOnEvents, usageHasPermission, usageOpenSettings } from '../utils/usageSignal';
 import { clearProposalUnlock, getProposalUnlock, initProposalUnlockFromStorage, subscribeProposalUnlock } from '../utils/proposalUnlock';
 import { recordResumeOutcome, subscribeAppResume } from '../../../shared/utils/appResume';
 import {
@@ -148,9 +148,13 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(
   // 链不再强制、重试也失效。现在同一个 tick 的所有后继重跑都保持强制，
   // 直到某条链真正跑完（成功或最终失败）才标记消费。
   const consumedResumeTickRef = useRef(0);
+  const resumeTriggeredAtRef = useRef(0);
   const lastHandledRef = useRef(handledDate);
   const lastRecordsRef = useRef(records);
-  useEffect(() => subscribeAppResume(() => setResumeTick((t) => t + 1)), []);
+  useEffect(() => subscribeAppResume(() => {
+    resumeTriggeredAtRef.current = Date.now();
+    setResumeTick((t) => t + 1);
+  }), []);
 
   useEffect(() => {
     if (!isNativePlatform() || chronotype === 'irregular') {
@@ -169,8 +173,11 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(
     if (!forced || interacted) setModelResult({ phase: 'pending', proposal: null });
     let cancelled = false;
     void (async () => {
-      // 恢复触发的查询强制绕 30min TTL：起床信号可能就在缓存写入之后
-      let ev = await queryScreenOnEvents(14, forced);
+      // 恢复触发时：若 useResumeUsageRefresh 的前置查询正在途，queryScreenOnEvents 会直接复用其 Promise；
+      // 若该前置查询已在本轮恢复后落盘缓存，则直接命中缓存，彻底消除二次 14 天全量扫描
+      const refreshedByResume = forced && resumeTriggeredAtRef.current > 0
+        && getScreenOnEventsCacheAt(14) >= resumeTriggeredAtRef.current;
+      let ev = await queryScreenOnEvents(14, forced && !refreshedByResume);
       // 恢复瞬间桥接可能尚未就绪（返回 null 或抛错）——1.5s 后重试一次
       if (!ev && forced && !cancelled) {
         await new Promise((r) => setTimeout(r, 1500));

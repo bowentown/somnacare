@@ -23,6 +23,8 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * APK 更新下载与安装（第 61 轮）。
@@ -46,6 +48,19 @@ final class AppUpdateManager {
     static final String KEY_VERIFIED_NAME = "app_update_verified_name";
     static final String KEY_VERIFIED_CODE = "app_update_verified_code";
     static final String APK_NAME = "somnacare-update.apk";
+
+    // 大文件 SHA-256 与 APK 签名校验独立到后台单线程执行，避免阻塞 Capacitor 插件队列
+    private static final ExecutorService VERIFY_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "somnacare-update-verify");
+        t.setDaemon(true);
+        return t;
+    });
+    private static final Object VERIFY_LOCK = new Object();
+    private static long verifyGeneration = 0L;
+    private static long verifyingId = -1L;
+    private static long failedVerifyId = -1L;
+    private static String failedVerifyReason = "";
+    private static long staleVerifyId = -1L;
 
     private AppUpdateManager() {
     }
@@ -124,6 +139,14 @@ final class AppUpdateManager {
             ret.put("reason", "外部存储不可用，无法下载安装包");
             return ret;
         }
+        // 先递增校验代次并清除旧状态，确保任何在途后台校验立即作废，绝不会误删新包或清空新偏好
+        synchronized (VERIFY_LOCK) {
+            verifyGeneration += 1L;
+            verifyingId = -1L;
+            failedVerifyId = -1L;
+            failedVerifyReason = "";
+            staleVerifyId = -1L;
+        }
         File apk = new File(dir, APK_NAME);
         if (apk.exists() && !apk.delete()) {
             ret.put("reason", "旧安装包无法删除，请重启应用后重试");
@@ -151,13 +174,20 @@ final class AppUpdateManager {
                 try { dm.remove(new long[]{oldId}); } catch (Exception ignored) { }
             }
             long id = dm.enqueue(request);
-            SharedPreferences.Editor editor = prefs(context).edit()
-                    .putLong(KEY_DOWNLOAD_ID, id)
-                    .putString(KEY_SHA256, sha256 == null ? "" : sha256.trim().toLowerCase(Locale.ROOT))
-                    .remove(KEY_VERIFIED_ID)
-                    .remove(KEY_VERIFIED_NAME)
-                    .remove(KEY_VERIFIED_CODE);
-            editor.apply();
+            synchronized (VERIFY_LOCK) {
+                verifyGeneration += 1L;
+                verifyingId = -1L;
+                failedVerifyId = -1L;
+                failedVerifyReason = "";
+                staleVerifyId = -1L;
+                prefs(context).edit()
+                        .putLong(KEY_DOWNLOAD_ID, id)
+                        .putString(KEY_SHA256, sha256 == null ? "" : sha256.trim().toLowerCase(Locale.ROOT))
+                        .remove(KEY_VERIFIED_ID)
+                        .remove(KEY_VERIFIED_NAME)
+                        .remove(KEY_VERIFIED_CODE)
+                        .commit();
+            }
             ret.put("ok", true);
             ret.put("downloadId", id);
         } catch (Exception e) {
@@ -179,7 +209,21 @@ final class AppUpdateManager {
         Cursor cursor = null;
         try {
             cursor = dm.query(new DownloadManager.Query().setFilterById(id));
-            if (cursor == null || !cursor.moveToFirst()) return ret;
+            if (cursor == null || !cursor.moveToFirst()) {
+                synchronized (VERIFY_LOCK) {
+                    if (staleVerifyId == id) {
+                        ret.put("status", "stale");
+                        ret.put("reason", "该安装包已安装过，已清理；请重新下载新版");
+                        return ret;
+                    }
+                    if (failedVerifyId == id) {
+                        ret.put("status", "failed");
+                        ret.put("reason", failedVerifyReason);
+                        return ret;
+                    }
+                }
+                return ret;
+            }
 
             int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
             long soFar = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
@@ -248,30 +292,91 @@ final class AppUpdateManager {
             ret.put("versionCode", cachedCode);
             return ret;
         }
-        File apk = apkFile(context);
-        Verified verified = verify(context, apk, sp.getString(KEY_SHA256, ""));
-        if (!verified.ok) {
-            deleteQuietly(apk);
-            clearDownloadPrefs(context);
-            ret.put("status", "failed");
-            ret.put("reason", verified.reason);
-            return ret;
+
+        // 检查后台异步校验是否已得出结果，或正在执行中；绝不在同步 status() 线程算大文件 SHA-256
+        boolean needLaunch = false;
+        final long gen;
+        synchronized (VERIFY_LOCK) {
+            if (staleVerifyId == id) {
+                ret.put("status", "stale");
+                ret.put("reason", "该安装包已安装过，已清理；请重新下载新版");
+                return ret;
+            }
+            if (failedVerifyId == id) {
+                ret.put("status", "failed");
+                ret.put("reason", failedVerifyReason);
+                return ret;
+            }
+            if (verifyingId != id) {
+                verifyingId = id;
+                needLaunch = true;
+            }
+            gen = verifyGeneration;
         }
-        if (verified.versionCode <= currentCode) {
-            cleanupStale(context, id);
-            ret.put("status", "stale");
-            ret.put("reason", "该安装包已安装过，已清理；请重新下载新版");
-            return ret;
+        if (needLaunch) {
+            final Context appCtx = context.getApplicationContext();
+            final String expectedSha = sp.getString(KEY_SHA256, "");
+            VERIFY_EXECUTOR.execute(() -> runAsyncVerify(appCtx, id, expectedSha, gen));
         }
-        sp.edit()
-                .putLong(KEY_VERIFIED_ID, id)
-                .putString(KEY_VERIFIED_NAME, verified.versionName)
-                .putLong(KEY_VERIFIED_CODE, verified.versionCode)
-                .apply();
-        ret.put("status", "ready");
-        ret.put("versionName", verified.versionName);
-        ret.put("versionCode", verified.versionCode);
+        ret.put("status", "running");
+        ret.put("verifying", true);
         return ret;
+    }
+
+    /** 纯算法：根据校验结果归类最终状态（ready / stale / failed），确保 stale 不会被 failed 吞掉。 */
+    static String classifyVerifyOutcome(boolean ok, boolean stale) {
+        if (stale) return "stale";
+        return ok ? "ready" : "failed";
+    }
+
+    /** 在独立后台线程执行 SHA-256 与 APK 包名/版本/签名四重校验并缓存结果。 */
+    private static void runAsyncVerify(Context appCtx, long id, String expectedSha, long expectedGen) {
+        try {
+            synchronized (VERIFY_LOCK) {
+                if (verifyGeneration != expectedGen || prefs(appCtx).getLong(KEY_DOWNLOAD_ID, -1L) != id) {
+                    return;
+                }
+            }
+            File apk = apkFile(appCtx);
+            Verified verified = verify(appCtx, apk, expectedSha);
+            String outcome = classifyVerifyOutcome(verified.ok, verified.stale);
+            synchronized (VERIFY_LOCK) {
+                if (verifyGeneration != expectedGen || prefs(appCtx).getLong(KEY_DOWNLOAD_ID, -1L) != id) {
+                    // 校验期间已发起新一轮下载，不误删新文件或污染新偏好
+                    return;
+                }
+                if ("stale".equals(outcome)) {
+                    cleanupStale(appCtx, id);
+                    staleVerifyId = id;
+                    return;
+                }
+                if (!"ready".equals(outcome)) {
+                    deleteQuietly(apk);
+                    clearDownloadPrefs(appCtx);
+                    failedVerifyId = id;
+                    failedVerifyReason = verified.reason;
+                    return;
+                }
+                prefs(appCtx).edit()
+                        .putLong(KEY_VERIFIED_ID, id)
+                        .putString(KEY_VERIFIED_NAME, verified.versionName)
+                        .putLong(KEY_VERIFIED_CODE, verified.versionCode)
+                        .commit();
+            }
+        } catch (Exception e) {
+            synchronized (VERIFY_LOCK) {
+                if (verifyGeneration == expectedGen) {
+                    failedVerifyId = id;
+                    failedVerifyReason = "校验安装包失败: " + e.getMessage();
+                }
+            }
+        } finally {
+            synchronized (VERIFY_LOCK) {
+                if (verifyGeneration == expectedGen && verifyingId == id) {
+                    verifyingId = -1L;
+                }
+            }
+        }
     }
 
     /** 已装过的旧下载：删 APK + 移除 DownloadManager 记录 + 清偏好，一次清干净 */
@@ -410,6 +515,7 @@ final class AppUpdateManager {
 
     private static final class Verified {
         boolean ok;
+        boolean stale;
         String reason = "";
         String versionName = "";
         long versionCode;
@@ -443,6 +549,7 @@ final class AppUpdateManager {
             long archiveCode = versionCodeOf(archive);
             long currentCode = versionCodeOf(current);
             if (archiveCode <= currentCode) {
+                result.stale = true;
                 result.reason = "安装包构建号（" + archiveCode + "）不高于当前（" + currentCode
                         + "），系统会拒绝覆盖；请先导出备份，再卸载旧版安装";
                 return result;
@@ -467,6 +574,7 @@ final class AppUpdateManager {
         }
     }
 
+    @SuppressWarnings("deprecation")
     private static PackageInfo archiveInfo(PackageManager pm, File apk) {
         String path = apk.getAbsolutePath();
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
@@ -478,6 +586,7 @@ final class AppUpdateManager {
         return pm.getPackageArchiveInfo(path, flags);
     }
 
+    @SuppressWarnings("deprecation")
     private static PackageInfo currentInfo(PackageManager pm, String packageName) throws Exception {
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                 ? PackageManager.GET_SIGNING_CERTIFICATES
@@ -488,6 +597,7 @@ final class AppUpdateManager {
         return pm.getPackageInfo(packageName, flags);
     }
 
+    @SuppressWarnings("deprecation")
     private static byte[] firstSigner(PackageInfo info) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo != null) {
             Signature[] signatures = info.signingInfo.getApkContentsSigners();
@@ -499,6 +609,7 @@ final class AppUpdateManager {
         return null;
     }
 
+    @SuppressWarnings("deprecation")
     private static long versionCodeOf(PackageInfo info) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return info.getLongVersionCode();
         return info.versionCode;

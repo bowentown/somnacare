@@ -3,6 +3,7 @@
     <!-- 核心闹钟、通知与进程级息屏唤醒权限 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -49,7 +50,7 @@
                 android:value="alarm_ring_loop" />
         </service>
 
-        <!-- 开机/时间变更重排闹钟 -->
+        <!-- 开机/时间变更/覆盖更新/精确闹钟授权变更重排闹钟与就寝提醒 -->
         <receiver
             android:name="com.somnacare.gemmallm.BootReceiver"
             android:exported="false">
@@ -57,6 +58,8 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
     </application>

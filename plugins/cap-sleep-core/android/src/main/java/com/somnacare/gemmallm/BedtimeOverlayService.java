@@ -39,7 +39,11 @@ import android.widget.TextView;
  */
 public class BedtimeOverlayService extends Service {
 
-    private static final String CHANNEL_ID = "somnacare-bedtime";
+    // 区分前台静音常驻渠道与高优降级提醒渠道：此前共用 CHANNEL_ID 且 startForegroundCompat
+    // 先行创建为 IMPORTANCE_LOW，导致 fallbackNotification 永远被静音低优渠道锁死
+    private static final String LEGACY_CHANNEL_ID = "somnacare-bedtime";
+    private static final String FGS_CHANNEL_ID = "somnacare-bedtime-service";
+    private static final String FALLBACK_CHANNEL_ID = "somnacare-bedtime-alert";
     private static final int NOTIFICATION_ID = 20260929;
     // 兜底通知（无悬浮窗权限时发普通通知）必须用独立 id：+1 曾恰好撞上
     // PetOverlayService 的前台通知 id（20260930），把桌宠常驻通知顶掉串台
@@ -49,13 +53,16 @@ public class BedtimeOverlayService extends Service {
 
     private static View overlay;
 
-    /** 悬浮卡是否正在显示（深夜救援据此避让，不叠加打断）。 */
+    /** 悬浮卡是否正在显示。 */
     public static boolean isShowing() {
         return overlay != null;
     }
 
     private static final long AUTO_DISMISS_MS = 90_000;   // 全屏提醒的自动收场时限
+    // 统一单一主线程 Handler 实例：此前每处 new Handler(...) 导致 removeCallbacks(autoDismiss) 永远失效
+    private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable autoDismiss;                          // 未触发的超时回调引用，dismiss 时取消
+    private boolean dismissing = false;
     private static WindowManager wmRef;
 
     @Override
@@ -150,10 +157,12 @@ public class BedtimeOverlayService extends Service {
     private void showOverlay() {
         if (!Settings.canDrawOverlays(this)) {
             fallbackNotification();
+            stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
         if (overlay != null) return; // 已在显示
+        dismissing = false;
 
         WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         if (wm == null) return;
@@ -211,7 +220,10 @@ public class BedtimeOverlayService extends Service {
             GradientDrawable lg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                     new int[]{0x00A8E6FF, 0xFFA8E6FF, 0x00A8E6FF});
             line.setBackground(lg);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(150 - i * 40), dp(1));
+            // water 容器是 FrameLayout：此前误传 LinearLayout.LayoutParams 导致缺少 Gravity，两条涟漪线堆在左上角
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    dp(150 - i * 40), dp(1), Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+            lp.topMargin = dp(8 + i * 5);
             water.addView(line, lp);
             line.setAlpha(0f);
             line.animate().alpha(i == 0 ? 0.9f : 0.55f).setStartDelay(560 + i * 150).setDuration(400).start();
@@ -289,10 +301,11 @@ public class BedtimeOverlayService extends Service {
             // 全屏窗曾在用户未点击时永久盖屏（无超时、返回键也收不到）。
             // 90 秒后自动收场：到点人可能已经睡着，提醒的意义只在弹出的那一刻
             autoDismiss = () -> dismiss(0);
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(autoDismiss, AUTO_DISMISS_MS);
+            mainHandler.postDelayed(autoDismiss, AUTO_DISMISS_MS);
         } catch (Exception e) {
             overlay = null;
             fallbackNotification();
+            stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
@@ -368,16 +381,18 @@ public class BedtimeOverlayService extends Service {
     }
 
     private void dismiss(long delay) {
+        if (dismissing) return;
+        dismissing = true;
         if (autoDismiss != null) {
-            new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(autoDismiss);
+            mainHandler.removeCallbacks(autoDismiss);
             autoDismiss = null;   // 已进入收场流程，取消未触发的超时回调
         }
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+        mainHandler.postDelayed(() -> {
             try {
                 if (overlay != null && wmRef != null) {
                     View v = overlay;
                     v.animate().alpha(0f).setDuration(240).start();
-                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    mainHandler.postDelayed(() -> {
                         try {
                             wmRef.removeView(v);
                         } catch (Exception ignored) {
@@ -395,13 +410,22 @@ public class BedtimeOverlayService extends Service {
         }, delay);
     }
 
-    /** 无悬浮窗权限时的兜底：普通高优先级通知（点击拉起应用）。 */
+    @SuppressWarnings("deprecation")
+    private Notification.Builder createNotificationBuilder(String channelId) {
+        return Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, channelId)
+                : new Notification.Builder(this);
+    }
+
+    /** 无悬浮窗权限时的兜底：独立高优先级通知渠道（不被前台静音渠道锁死）。 */
     private void fallbackNotification() {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-                NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "就寝提醒",
+            if (nm == null) return;
+            if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(FALLBACK_CHANNEL_ID) == null) {
+                NotificationChannel ch = new NotificationChannel(FALLBACK_CHANNEL_ID, "就寝提醒",
                         NotificationManager.IMPORTANCE_HIGH);
+                ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
                 nm.createNotificationChannel(ch);
             }
             Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
@@ -409,14 +433,12 @@ public class BedtimeOverlayService extends Service {
                     ? PendingIntent.getActivity(this, 3002, launch,
                             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
                     : null;
-            Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                    ? new Notification.Builder(this, CHANNEL_ID)
-                    : new Notification.Builder(this);
-            Notification notif = builder
+            Notification notif = createNotificationBuilder(FALLBACK_CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                     .setContentTitle("夜深喽，该睡了")
                     .setContentText("距你的作息目标就寝时间已到")
                     .setContentIntent(pi)
+                    .setVisibility(Notification.VISIBILITY_PUBLIC)
                     .setAutoCancel(true)
                     .build();
             nm.notify(FALLBACK_NOTIFICATION_ID, notif);
@@ -427,16 +449,20 @@ public class BedtimeOverlayService extends Service {
     private void startForegroundCompat() {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-                NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "就寝提醒",
-                        NotificationManager.IMPORTANCE_LOW);
-                ch.setShowBadge(false);
-                nm.createNotificationChannel(ch);
+            if (nm != null && Build.VERSION.SDK_INT >= 26) {
+                if (nm.getNotificationChannel(LEGACY_CHANNEL_ID) != null) {
+                    nm.deleteNotificationChannel(LEGACY_CHANNEL_ID);
+                }
+                if (nm.getNotificationChannel(FGS_CHANNEL_ID) == null) {
+                    NotificationChannel ch = new NotificationChannel(FGS_CHANNEL_ID, "就寝提醒服务",
+                            NotificationManager.IMPORTANCE_LOW);
+                    ch.setSound(null, null);
+                    ch.enableVibration(false);
+                    ch.setShowBadge(false);
+                    nm.createNotificationChannel(ch);
+                }
             }
-            Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                    ? new Notification.Builder(this, CHANNEL_ID)
-                    : new Notification.Builder(this);
-            Notification notif = builder
+            Notification notif = createNotificationBuilder(FGS_CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                     .setContentTitle("就寝提醒待确认")
                     .setOngoing(true)
@@ -460,6 +486,9 @@ public class BedtimeOverlayService extends Service {
 
     @Override
     public void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        autoDismiss = null;
+        dismissing = false;
         try {
             if (overlay != null && wmRef != null) {
                 wmRef.removeView(overlay);

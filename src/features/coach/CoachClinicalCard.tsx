@@ -6,6 +6,11 @@ import { generateLocalClinicalAnalysis, type PersonalInsight } from './utils/cli
 import { buildAnalysisPrompts } from './utils/clinicalAnalysisPrompt';
 import { nightsOnly } from '../sleep/utils/recordFilter';
 import { fetchJsonWithTimeout } from '../../shared/utils/fetchJson';
+import {
+  formatCloudLlmError,
+  isOfficialDeepSeekThinkingEndpoint,
+  normalizeChatCompletionsEndpoint,
+} from '../../shared/utils/llmCompat';
 
 const ANALYSIS_CACHE_KEY = 'somnacare_analysis_v1';
 const ANALYSIS_TTL_MS = 12 * 3600000;
@@ -33,6 +38,7 @@ interface CoachClinicalCardProps {
   insights: PersonalInsight[];
   activeProviderName: string;
   onProviderNameChange: (name: string) => void;
+  onCloudError?: (reason: string) => void;
   onAskPrompt: (prompt: string) => void;
   onOpenMoments: () => void;
 }
@@ -44,6 +50,7 @@ export const CoachClinicalCard: React.FC<CoachClinicalCardProps> = React.memo(fu
   insights,
   activeProviderName,
   onProviderNameChange,
+  onCloudError,
   onAskPrompt,
   onOpenMoments,
 }) {
@@ -158,13 +165,19 @@ export const CoachClinicalCard: React.FC<CoachClinicalCardProps> = React.memo(fu
     };
 
     const cfg = userProfile.aiConfig;
+    const rawProvider = cfg?.provider as string | undefined;
+    // 严格遵守离线规则引擎选择：即使用户此前保存过 DeepSeek Key，切到 local_rules 后绝不偷偷出网
+    const isOfflineRules =
+      rawProvider === 'local_rules' || rawProvider === 'local_gemma' || rawProvider === 'local_llm';
     const isCustom = cfg?.provider === 'custom_openai';
-    const directKey = isCustom ? cfg?.customApiKey : cfg?.deepseekApiKey;
-    const directEndpoint = isCustom
-      ? cfg?.customBaseUrl
-        ? `${String(cfg.customBaseUrl).replace(/\/+$/, '')}/chat/completions`
-        : null
-      : 'https://api.deepseek.com/chat/completions';
+    const directKey = isOfflineRules ? '' : isCustom ? cfg?.customApiKey : cfg?.deepseekApiKey;
+    const directEndpoint = isOfflineRules
+      ? null
+      : isCustom
+        ? cfg?.customBaseUrl
+          ? normalizeChatCompletionsEndpoint(cfg.customBaseUrl)
+          : null
+        : 'https://api.deepseek.com/chat/completions';
 
     try {
       if (directKey && directEndpoint) {
@@ -180,6 +193,7 @@ export const CoachClinicalCard: React.FC<CoachClinicalCardProps> = React.memo(fu
           slimLogsForAI(nightsOnly(records).slice(0, 7)),
           userProfile,
         );
+        const includeThinking = isOfficialDeepSeekThinkingEndpoint(directEndpoint, wireModel, isCustom);
         const res = await fetchJsonWithTimeout(
           directEndpoint,
           {
@@ -196,19 +210,22 @@ export const CoachClinicalCard: React.FC<CoachClinicalCardProps> = React.memo(fu
               ],
               response_format: { type: 'json_object' },
               temperature: 0.3,
-              ...(isCustom ? {} : { thinking: { type: 'disabled' }, max_tokens: 800 }),
+              max_tokens: 800,
+              ...(includeThinking ? { thinking: { type: 'disabled' } } : {}),
             }),
           },
           30000,
         );
 
-        const envelope = res.ok
-          ? (res.data as {
-              choices?: Array<{ message?: { content?: string } }>;
-              usage?: Record<string, unknown>;
-              model?: string;
-            } | null)
-          : null;
+        if (!res.ok) {
+          throw new Error(formatCloudLlmError({ status: res.status, errorBody: res.data }));
+        }
+
+        const envelope = res.data as {
+          choices?: Array<{ message?: { content?: string } }>;
+          usage?: Record<string, unknown>;
+          model?: string;
+        } | null;
         if (envelope?.usage) {
           console.log('[llm usage]', { model: envelope.model, kind: 'analyze', ...envelope.usage });
         }
@@ -218,20 +235,32 @@ export const CoachClinicalCard: React.FC<CoachClinicalCardProps> = React.memo(fu
           try {
             parsed = JSON.parse(content) as SleepAnalysisResult;
           } catch {
-            parsed = null;
+            const fenced = content.match(/\{[\s\S]*\}/);
+            if (fenced) {
+              try {
+                parsed = JSON.parse(fenced[0]) as SleepAnalysisResult;
+              } catch {
+                parsed = null;
+              }
+            }
           }
         }
         if (parsed?.chronotype) {
           commit(parsed, isCustom ? `自建 API (${modelToUse})` : `DeepSeek (${modelToUse})`);
           return;
         }
-        throw new Error('direct LLM failed');
+        throw new Error('云端返回评估格式不完整');
       }
 
       const localResult = generateLocalClinicalAnalysis(nightsOnly(records).slice(0, 7), userProfile);
       commit(localResult, '本地临床规则引擎');
-    } catch {
+    } catch (err) {
       if (requestFp !== analysisFingerprintRef.current) return;
+      const reason =
+        err instanceof Error && err.name !== 'AbortError' && !/failed to fetch/i.test(err.message)
+          ? err.message
+          : formatCloudLlmError({ err });
+      onCloudError?.(reason);
       const localResult = generateLocalClinicalAnalysis(nightsOnly(records).slice(0, 7), userProfile);
       setAnalysis(localResult);
       onProviderNameChange('本地临床规则引擎');

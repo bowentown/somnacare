@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { fetchJsonWithTimeout } from '../../shared/utils/fetchJson';
+import { formatCloudLlmError, normalizeModelsEndpoint } from '../../shared/utils/llmCompat';
 import {
   Cpu,
   CheckCircle2,
@@ -14,6 +15,9 @@ import {
 import { CustomAIConfig, AIProvider } from '../../shared/types/sleep';
 import { ThemeConfig } from '../../shared/theme/themeStyles';
 import { useModalA11y } from '../../shared/utils/modalA11y';
+
+const DEFAULT_PERSONA =
+  '你是一位资深临床睡眠医学与生理节律顾问。以温暖、关怀、专业的语气为用户提供科学根据的睡眠调优与助眠行动方案。';
 
 interface CustomAISettingsModalProps {
   isOpen: boolean;
@@ -42,10 +46,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   const [customApiKey, setCustomApiKey] = useState(config.customApiKey || '');
   const [customModelName, setCustomModelName] = useState(config.customModelName || 'deepseek-flash');
 
-  const [systemPersona, setSystemPersona] = useState(
-    config.systemPersona ||
-      '你是一位资深临床睡眠医学与生理节律顾问。以温暖、关怀、专业的语气为用户提供科学根据的睡眠调优与助眠行动方案。'
-  );
+  const [systemPersona, setSystemPersona] = useState(config.systemPersona || DEFAULT_PERSONA);
 
   const [showDeepseekKey, setShowDeepseekKey] = useState(false);
   const [showCustomKey, setShowCustomKey] = useState(false);
@@ -58,11 +59,49 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
   // 保存校验错误（第 54 轮）：hook 必须在 if (!isOpen) 早退之前声明
   const [saveError, setSaveError] = useState<string | null>(null);
+  const queryReqIdRef = useRef(0);
+  const saveCloseTimerRef = useRef<number | null>(null);
 
+  // 清理未完成的保存关闭延时器，防关闭后迅速重开被旧 timer 意外关闭
+  useEffect(() => {
+    if (!isOpen && saveCloseTimerRef.current !== null) {
+      window.clearTimeout(saveCloseTimerRef.current);
+      saveCloseTimerRef.current = null;
+      setSaveSuccess(false);
+    }
+    return () => {
+      if (saveCloseTimerRef.current !== null) {
+        window.clearTimeout(saveCloseTimerRef.current);
+        saveCloseTimerRef.current = null;
+      }
+    };
+  }, [isOpen]);
+
+  // 外部 config 变动（备份恢复、外部更新）或重新打开弹窗时同步表单状态
   useEffect(() => {
     if (!isOpen) return;
+    queryReqIdRef.current += 1;
+    setIsQueryingModels(false);
+    setProvider(normalizeProvider(config.provider || 'deepseek'));
+    setDeepseekApiKey(config.deepseekApiKey || '');
+    setDeepseekModel(config.deepseekModel || 'deepseek-flash');
+    setCustomBaseUrl(config.customBaseUrl || 'https://api.deepseek.com');
+    setCustomApiKey(config.customApiKey || '');
+    setCustomModelName(config.customModelName || 'deepseek-flash');
+    setSystemPersona(config.systemPersona || DEFAULT_PERSONA);
     setSaveError(null);
-  }, [isOpen]);
+    setQueryError(null);
+    setQueriedModels([]);
+  }, [
+    isOpen,
+    config.provider,
+    config.deepseekApiKey,
+    config.deepseekModel,
+    config.customBaseUrl,
+    config.customApiKey,
+    config.customModelName,
+    config.systemPersona,
+  ]);
 
   const { ref: a11yRef, dialogProps } = useModalA11y(isOpen, onClose, 'AI 顾问模型设置');
   if (!isOpen) return null;
@@ -80,12 +119,20 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   // Real-time API Endpoint Model Query Function
   const handleQueryRemoteModels = async () => {
     if (!ensureHttpsEndpoint()) return;
+    const reqId = ++queryReqIdRef.current;
+    const activeProvider = provider;
     setIsQueryingModels(true);
     setQueryError(null);
     setQueriedModels([]);
 
-    const baseUrl = provider === 'deepseek' ? 'https://api.deepseek.com' : customBaseUrl;
-    const apiKey = provider === 'deepseek' ? deepseekApiKey : customApiKey;
+    const baseUrl = activeProvider === 'deepseek' ? 'https://api.deepseek.com' : customBaseUrl.trim();
+    const apiKey = (activeProvider === 'deepseek' ? deepseekApiKey : customApiKey).trim();
+
+    if (!baseUrl) {
+      setQueryError('请先填入接口地址 (Base URL)，再执行端口查询');
+      setIsQueryingModels(false);
+      return;
+    }
 
     if (!apiKey) {
       setQueryError('请先填入 API 密钥，再执行端口查询');
@@ -94,8 +141,7 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
     }
 
     try {
-      const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const modelsEndpoint = cleanUrl.endsWith('/v1') ? `${cleanUrl}/models` : `${cleanUrl}/v1/models`;
+      const modelsEndpoint = normalizeModelsEndpoint(baseUrl);
 
       // 15s 超时：填了一个挂起的地址（打错端口/内网地址）时此前永久转圈
       const r = await fetchJsonWithTimeout(modelsEndpoint, {
@@ -106,35 +152,72 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
         },
       }, 15000);
 
+      if (queryReqIdRef.current !== reqId) return;
+
       if (!r.ok) {
-        throw new Error(`端点响应 HTTP ${r.status}`);
+        throw new Error(formatCloudLlmError({ status: r.status, errorBody: r.data }));
       }
 
-      const data = r.data;
+      const data = r.data as any;
       if (!data) throw new Error('端点返回了非 JSON 数据');
-      if (Array.isArray(data.data)) {
-        const ids = data.data.map((m: any) => m.id).filter(Boolean);
-        setQueriedModels(ids);
+      const rawList: any[] | null = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+          ? data.models
+          : Array.isArray(data)
+            ? data
+            : null;
+      if (rawList) {
+        const ids = Array.from(
+          new Set(
+            rawList
+              .map((m: any) =>
+                typeof m === 'string'
+                  ? m.trim()
+                  : typeof m?.id === 'string'
+                    ? m.id.trim()
+                    : typeof m?.name === 'string'
+                      ? m.name.trim()
+                      : '',
+              )
+              .filter(Boolean),
+          ),
+        );
+        if (ids.length === 0) {
+          setQueryError('端点返回了空的模型列表，请直接手动填写模型名称');
+        } else {
+          setQueriedModels(ids);
+        }
       } else {
         throw new Error('未在返回数据中检测到 models 数组');
       }
     } catch (err: any) {
-      setQueryError(`查询失败 (${err.message})。服务商若不支持 /v1/models 查询，可直接手动填写`);
-      if (provider === 'deepseek') {
+      if (queryReqIdRef.current !== reqId) return;
+      const msg = err instanceof Error && err.name !== 'AbortError' && !/failed to fetch/i.test(err.message)
+        ? err.message
+        : formatCloudLlmError({ err });
+      setQueryError(`查询失败（${msg}）。服务商若不支持 /models 查询，可直接手动填写`);
+      if (activeProvider === 'deepseek') {
         // 与 normalizeDeepSeekModel 口径一致（legacy 名已退役，不再提供）
         setQueriedModels(['deepseek-flash', 'deepseek-pro', 'deepseek-v4-pro']);
       }
     } finally {
-      setIsQueryingModels(false);
+      if (queryReqIdRef.current === reqId) {
+        setIsQueryingModels(false);
+      }
     }
   };
 
   const handleSave = () => {
     setSaveError(null);
     if (!ensureHttpsEndpoint()) return;
-    // 空 Key 保存会静默回退本地规则引擎，用户却看到"已保存"（第 54 轮）
+    // 空 Key / 空端点保存会静默回退本地规则引擎，用户却看到"已保存"（第 54 轮）
     if (provider === 'deepseek' && !deepseekApiKey.trim()) {
       setSaveError('请填写 DeepSeek API Key；留空将始终使用本地规则引擎');
+      return;
+    }
+    if (provider === 'custom_openai' && !customBaseUrl.trim()) {
+      setSaveError('请填写自建服务的 https:// 接口地址 (Base URL)');
       return;
     }
     if (provider === 'custom_openai' && !customApiKey.trim()) {
@@ -151,7 +234,11 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
       systemPersona: systemPersona.trim(),
     });
     setSaveSuccess(true);
-    setTimeout(() => {
+    if (saveCloseTimerRef.current !== null) {
+      window.clearTimeout(saveCloseTimerRef.current);
+    }
+    saveCloseTimerRef.current = window.setTimeout(() => {
+      saveCloseTimerRef.current = null;
       setSaveSuccess(false);
       onClose();
     }, 800);
@@ -185,7 +272,14 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
           <div className="grid grid-cols-3 gap-1.5 text-xs">
             <button
               type="button"
-              onClick={() => setProvider('deepseek')}
+              onClick={() => {
+                queryReqIdRef.current += 1;
+                setIsQueryingModels(false);
+                setProvider('deepseek');
+                setQueriedModels([]);
+                setQueryError(null);
+                setSaveError(null);
+              }}
               className={`py-2 px-1 rounded-xl border text-center font-bold transition-all cursor-pointer ${
                 provider === 'deepseek'
                   ? `${theme.accentBg.split(' ')[0]} border-white ${theme.accentFg}`
@@ -197,7 +291,14 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
             <button
               type="button"
-              onClick={() => setProvider('local_rules')}
+              onClick={() => {
+                queryReqIdRef.current += 1;
+                setIsQueryingModels(false);
+                setProvider('local_rules');
+                setQueriedModels([]);
+                setQueryError(null);
+                setSaveError(null);
+              }}
               className={`py-2 px-1 rounded-xl border text-center font-bold transition-all cursor-pointer ${
                 provider === 'local_rules'
                   ? `${theme.accentBg.split(' ')[0]} border-white ${theme.accentFg}`
@@ -209,7 +310,14 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
 
             <button
               type="button"
-              onClick={() => setProvider('custom_openai')}
+              onClick={() => {
+                queryReqIdRef.current += 1;
+                setIsQueryingModels(false);
+                setProvider('custom_openai');
+                setQueriedModels([]);
+                setQueryError(null);
+                setSaveError(null);
+              }}
               className={`py-2 px-1 rounded-xl border text-center font-bold transition-all cursor-pointer ${
                 provider === 'custom_openai'
                   ? `${theme.accentBg.split(' ')[0]} border-white ${theme.accentFg}`
@@ -385,6 +493,39 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
                   placeholder="如 gpt-4o-mini 或 qwen-plus"
                   className="w-full bg-[#0a0f1d] border border-slate-600 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
                 />
+
+                {queriedModels.length > 0 && (
+                  <div className="mt-2 p-2 rounded-xl bg-slate-900 border border-slate-700 space-y-1.5">
+                    <span className="text-[10px] text-slate-400 block">
+                      端口支持的模型（共 {queriedModels.length} 个，点击一键填入）：
+                    </span>
+                    <div className="flex flex-wrap gap-1 max-h-36 overflow-y-auto no-scrollbar">
+                      {queriedModels.map((m) => {
+                        const selected = customModelName.trim() === m;
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setCustomModelName(m)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono border cursor-pointer transition-colors ${
+                              selected
+                                ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-bold'
+                                : 'bg-emerald-950 text-emerald-200 border-emerald-700 hover:border-emerald-400'
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {queryError && (
+                  <p role="alert" className="text-[10px] text-amber-300 mt-1.5 leading-relaxed">
+                    {queryError}
+                  </p>
+                )}
               </div>
             </div>
           )}

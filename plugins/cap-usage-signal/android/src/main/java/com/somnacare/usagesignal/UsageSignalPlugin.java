@@ -348,9 +348,164 @@ public class UsageSignalPlugin extends Plugin {
         }
     }
 
+    /** 用眼日报纯数据行（供纯 JVM 单测与 queryDailyHealth 共用）。 */
+    static final class DailyHealthRow {
+        final String date;
+        final int screenMinutes;
+        final int unlocks;
+        final String unlockSource;
+
+        DailyHealthRow(String date, int screenMinutes, int unlocks, String unlockSource) {
+            this.date = date;
+            this.screenMinutes = screenMinutes;
+            this.unlocks = unlocks;
+            this.unlockSource = unlockSource;
+        }
+    }
+
+    /**
+     * 纯算法：严格以 nowMs 当日 00:00:00.000（nowCal）向前推 days 天生成自然日桶，
+     * 绝不与事件/统计格式化用的 eventCal 混用（修复反复篡改 dayCal 导致“今天”消失或 7 天错位）。
+     */
+    static java.util.List<DailyHealthRow> buildDailyHealthRows(
+            long nowMs,
+            int days,
+            java.util.TimeZone tz,
+            java.util.Map<String, Long> screenByDay,
+            java.util.Map<String, Integer> unlocksByDay,
+            boolean unlockFromKeyguard) {
+        return buildDailyHealthRows(nowMs, days, tz, screenByDay, unlocksByDay, null, unlockFromKeyguard);
+    }
+
+    static java.util.List<DailyHealthRow> buildDailyHealthRows(
+            long nowMs,
+            int days,
+            java.util.TimeZone tz,
+            java.util.Map<String, Long> screenByDay,
+            java.util.Map<String, Integer> unlocksByDay,
+            java.util.Set<String> keyguardDays,
+            boolean defaultUnlockFromKeyguard) {
+        java.util.TimeZone zone = tz != null ? tz : java.util.TimeZone.getDefault();
+        java.text.SimpleDateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        df.setTimeZone(zone);
+        // 独立锚定今日 00:00:00.000，循环中只 clone、绝不就地篡改
+        Calendar nowCal = Calendar.getInstance(zone);
+        nowCal.setTimeInMillis(nowMs);
+        nowCal.set(Calendar.HOUR_OF_DAY, 0);
+        nowCal.set(Calendar.MINUTE, 0);
+        nowCal.set(Calendar.SECOND, 0);
+        nowCal.set(Calendar.MILLISECOND, 0);
+
+        boolean anyKgInWindow = false;
+        if (keyguardDays != null) {
+            for (int i = days - 1; i >= 0; i--) {
+                Calendar d = (Calendar) nowCal.clone();
+                d.add(Calendar.DAY_OF_YEAR, -i);
+                if (keyguardDays.contains(df.format(d.getTime()))) {
+                    anyKgInWindow = true;
+                    break;
+                }
+            }
+        } else {
+            anyKgInWindow = defaultUnlockFromKeyguard;
+        }
+
+        java.util.List<DailyHealthRow> rows = new java.util.ArrayList<>();
+        for (int i = days - 1; i >= 0; i--) {
+            Calendar d = (Calendar) nowCal.clone();
+            d.add(Calendar.DAY_OF_YEAR, -i);
+            String key = df.format(d.getTime());
+            Long screenMs = screenByDay.get(key);
+            if (screenMs == null) continue;   // 无数据的自然日跳过
+            // 物理上限（第 102 轮）：单日亮屏不可能超过当天的自然分钟数（兼容夏令时 23h/25h 日）
+            Calendar dayEnd = (Calendar) d.clone();
+            dayEnd.add(Calendar.DAY_OF_YEAR, 1);
+            long capMs = Math.max(1L, dayEnd.getTimeInMillis() - d.getTimeInMillis());
+            long shown = Math.min(Math.max(0L, screenMs), capMs);
+            int unlocks = unlocksByDay.getOrDefault(key, 0);
+            String source;
+            if (keyguardDays != null) {
+                source = keyguardDays.contains(key)
+                        ? "keyguard"
+                        : (unlocks > 0 ? "screen" : (anyKgInWindow ? "keyguard" : "screen"));
+            } else {
+                source = anyKgInWindow ? "keyguard" : "screen";
+            }
+            rows.add(new DailyHealthRow(
+                    key,
+                    (int) Math.round(shown / 60000.0),
+                    unlocks,
+                    source));
+        }
+        return rows;
+    }
+
+    /**
+     * 纯算法端到端聚合：将原始 UsageStats 区间 [firstTs, lastTs, fgMs] 与
+     * UsageEvents [ts, eventType] 用独立 eventCal 归桶，再用独立 nowCal 回推 days 天。
+     */
+    static java.util.List<DailyHealthRow> aggregateDailyHealthRaw(
+            long nowMs,
+            int days,
+            java.util.TimeZone tz,
+            java.util.List<long[]> statSpans,
+            java.util.List<long[]> unlockEvents) {
+        java.util.TimeZone zone = tz != null ? tz : java.util.TimeZone.getDefault();
+        java.text.SimpleDateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        df.setTimeZone(zone);
+        Calendar eventCal = Calendar.getInstance(zone);
+
+        java.util.Map<String, Long> screenByDay = new java.util.HashMap<>();
+        if (statSpans != null) {
+            for (long[] s : statSpans) {
+                if (s == null || s.length < 3) continue;
+                long firstTs = s[0];
+                long lastTs = s[1];
+                long ft = s[2];
+                if (ft <= 0) continue;
+                long span = Math.max(0L, lastTs - firstTs);
+                eventCal.setTimeInMillis(firstTs + span / 2);
+                String key = df.format(eventCal.getTime());
+                Long prev = screenByDay.get(key);
+                screenByDay.put(key, (prev == null ? 0L : prev) + ft);
+            }
+        }
+
+        java.util.Map<String, Integer> kgByDay = new java.util.HashMap<>();
+        java.util.Map<String, Integer> siByDay = new java.util.HashMap<>();
+        long lastKgTs = -1;
+        long lastSiTs = -1;
+        if (unlockEvents != null) {
+            for (long[] ev : unlockEvents) {
+                if (ev == null || ev.length < 2) continue;
+                long ts = ev[0];
+                int type = (int) ev[1];
+                if (type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE) continue;
+                long last = type == EVT_KEYGUARD_HIDDEN ? lastKgTs : lastSiTs;
+                if (last >= 0 && ts >= last && ts - last < 5000) continue;
+                eventCal.setTimeInMillis(ts);
+                String key = df.format(eventCal.getTime());
+                java.util.Map<String, Integer> target = type == EVT_KEYGUARD_HIDDEN ? kgByDay : siByDay;
+                target.merge(key, 1, Integer::sum);
+                if (type == EVT_KEYGUARD_HIDDEN) lastKgTs = ts;
+                else lastSiTs = ts;
+            }
+        }
+
+        java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
+        for (String key : siByDay.keySet()) {
+            Integer kg = kgByDay.get(key);
+            unlocksByDay.put(key, kg != null ? kg : siByDay.get(key));
+        }
+        for (java.util.Map.Entry<String, Integer> e : kgByDay.entrySet()) {
+            unlocksByDay.putIfAbsent(e.getKey(), e.getValue());
+        }
+        return buildDailyHealthRows(nowMs, days, zone, screenByDay, unlocksByDay, kgByDay.keySet(), !kgByDay.isEmpty());
+    }
+
     /**
      * 每日屏幕健康（第 77 轮，Phase 2）：近 N 天的每日前台总时长（分钟）
-     * 与解锁次数——真实测量（UsageStats 聚合 + USER_PRESENT 事件计数），
+     * 与解锁次数——真实测量（UsageStats 聚合 + KEYGUARD_HIDDEN/亮屏 事件计数），
      * 供护眼页的「用眼日报」展示。与 queryDailyUsage 的夜归属口径不同：
      * 这里按自然日聚合（用眼健康按"哪一天"看）。
      */
@@ -372,93 +527,73 @@ public class UsageSignalPlugin extends Plugin {
                 return;
             }
             long now = System.currentTimeMillis();
-            java.text.DateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
-            java.util.Calendar dayCal = java.util.Calendar.getInstance();
-            dayCal.set(java.util.Calendar.HOUR_OF_DAY, 0);
-            dayCal.set(java.util.Calendar.MINUTE, 0);
-            dayCal.set(java.util.Calendar.SECOND, 0);
-            dayCal.set(java.util.Calendar.MILLISECOND, 0);
+            java.util.TimeZone tz = java.util.TimeZone.getDefault();
+            java.text.SimpleDateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            df.setTimeZone(tz);
+            // 拆分独立 nowCal（严格锚定今日零点，在 buildDailyHealthRows 内构建）与 eventCal（专供遍历归日），
+            // 彻底消除复用篡改 dayCal 导致“今天”消失或 7 天错位的问题
+            Calendar eventCal = Calendar.getInstance(tz);
 
             // 前台总时长：UsageStats 按日聚合（系统已按自然日分桶）
             java.util.Map<String, Long> screenByDay = new java.util.HashMap<>();
             java.util.List<android.app.usage.UsageStats> stats =
                     usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - days * DAY_MS, now);
-            for (android.app.usage.UsageStats s : stats) {
-                if (s == null) continue;
-                long ft = s.getTotalTimeInForeground();
-                if (ft <= 0) continue;
-                // 桶归日（第 102 轮）：此前按 FirstTimeStamp 键——时钟变更/系统对齐
-                // 后系统桶可能跨自然日或互相重叠，整桶前台时长被记进起始日 →
-                // 单日 34.6 小时（物理不可能，用户实测 10-26）。归给【跨度中点】
-                // 所在的自然日，跨日桶不再整体压给起始日。
-                long span = s.getLastTimeStamp() - s.getFirstTimeStamp();
-                dayCal.setTimeInMillis(s.getFirstTimeStamp() + span / 2);
-                String key = df.format(dayCal.getTime());
-                Long prev = screenByDay.get(key);
-                screenByDay.put(key, (prev == null ? 0L : prev) + ft);
+            if (stats != null) {
+                for (android.app.usage.UsageStats s : stats) {
+                    if (s == null) continue;
+                    long ft = s.getTotalTimeInForeground();
+                    if (ft <= 0) continue;
+                    // 归给【跨度中点】所在的自然日，跨日桶不再整体压给起始日
+                    long span = Math.max(0L, s.getLastTimeStamp() - s.getFirstTimeStamp());
+                    eventCal.setTimeInMillis(s.getFirstTimeStamp() + span / 2);
+                    String key = df.format(eventCal.getTime());
+                    Long prev = screenByDay.get(key);
+                    screenByDay.put(key, (prev == null ? 0L : prev) + ft);
+                }
             }
 
-            // 解锁次数（第 86 轮修正）：UsageEvents.Event 没有 USER_PRESENT 常量——
-            // 此前按 getEventType()==1（ACTIVITY_RESUMED，应用回前台）计数，实测把
-            // 60 次真解锁数成 ~180。真解锁 = KEYGUARD_HIDDEN(18，本文件类头已定义)。
-            // 兜底：API 24–27 设备不发 KEYGUARD 事件（见类头注释）——整窗一个都
-            // 没有时回退亮屏起始事件（SCREEN_INTERACTIVE，无锁屏设备的"拿起"）。
-            // 两路各自 5s 去重（亮屏+解锁几乎同刻，不去重会双计）
+            // 解锁次数（KEYGUARD_HIDDEN(18)，单日缺失时回退 SCREEN_INTERACTIVE(15)，5s 去重）
             java.util.Map<String, Integer> kgByDay = new java.util.HashMap<>();
             java.util.Map<String, Integer> siByDay = new java.util.HashMap<>();
             UsageEvents events = usm.queryEvents(now - days * DAY_MS, now);
             UsageEvents.Event ev = new UsageEvents.Event();
             long lastKgTs = -1;
             long lastSiTs = -1;
-            while (events.hasNextEvent()) {
-                events.getNextEvent(ev);
-                int type = ev.getEventType();
-                if (type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE) continue;
-                long last = type == EVT_KEYGUARD_HIDDEN ? lastKgTs : lastSiTs;
-                if (last >= 0 && ev.getTimeStamp() - last < 5000) continue;
-                dayCal.setTimeInMillis(ev.getTimeStamp());
-                String key = df.format(dayCal.getTime());
-                java.util.Map<String, Integer> target = type == EVT_KEYGUARD_HIDDEN ? kgByDay : siByDay;
-                target.merge(key, 1, Integer::sum);
-                if (type == EVT_KEYGUARD_HIDDEN) lastKgTs = ev.getTimeStamp();
-                else lastSiTs = ev.getTimeStamp();
+            if (events != null) {
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(ev);
+                    int type = ev.getEventType();
+                    if (type != EVT_KEYGUARD_HIDDEN && type != EVT_SCREEN_INTERACTIVE) continue;
+                    long last = type == EVT_KEYGUARD_HIDDEN ? lastKgTs : lastSiTs;
+                    long ts = ev.getTimeStamp();
+                    if (last >= 0 && ts >= last && ts - last < 5000) continue;
+                    eventCal.setTimeInMillis(ts);
+                    String key = df.format(eventCal.getTime());
+                    java.util.Map<String, Integer> target = type == EVT_KEYGUARD_HIDDEN ? kgByDay : siByDay;
+                    target.merge(key, 1, Integer::sum);
+                    if (type == EVT_KEYGUARD_HIDDEN) lastKgTs = ts;
+                    else lastSiTs = ts;
+                }
             }
-            // per-day 回退（第 88 轮）：混合窗口下有的天只有亮屏事件——整窗级
-            // 回退会把它们打成 0。逐天取：有锁屏事件的天用解锁数，否则用亮屏数
+
             java.util.Map<String, Integer> unlocksByDay = new java.util.HashMap<>();
-            boolean anyKg = false;
             for (String key : siByDay.keySet()) {
                 Integer kg = kgByDay.get(key);
-                if (kg != null) anyKg = true;
                 unlocksByDay.put(key, kg != null ? kg : siByDay.get(key));
             }
             for (java.util.Map.Entry<String, Integer> e : kgByDay.entrySet()) {
-                anyKg = true;
                 unlocksByDay.putIfAbsent(e.getKey(), e.getValue());
             }
-            // 计数来源随数据回传（第 90 轮 N4）：整窗无 KEYGUARD 事件（API 24–27
-            // 或纯亮屏设备）时，数的是亮屏次数而非解锁——UI 据此改文案，不冒充解锁
-            final boolean unlockFromKeyguard = anyKg;
 
+            java.util.List<DailyHealthRow> rows = buildDailyHealthRows(
+                    now, days, tz, screenByDay, unlocksByDay, kgByDay.keySet(), !kgByDay.isEmpty());
             JSArray arr = new JSArray();
-            for (int i = days - 1; i >= 0; i--) {
-                java.util.Calendar d = (java.util.Calendar) dayCal.clone();
-                d.add(java.util.Calendar.DAY_OF_YEAR, -i);
-                String key = df.format(d.getTime());
-                Long screenMs = screenByDay.get(key);
-                if (screenMs == null) continue;   // 无数据的自然日跳过
-                // 物理上限（第 102 轮）：单日亮屏不可能超过当天的自然分钟数。
-                // 桶重叠/时钟变更导致的系统级双计超出容量时，钳到当天容量——
-                // 不编造分配方式，只承认"这一天的亮屏 ≤ 这一天有多长"。
-                java.util.Calendar dayEnd = (java.util.Calendar) d.clone();
-                dayEnd.add(java.util.Calendar.DAY_OF_YEAR, 1);
-                long capMs = Math.max(1, dayEnd.getTimeInMillis() - d.getTimeInMillis());
-                long shown = Math.min(screenMs, capMs);
+            for (DailyHealthRow row : rows) {
                 JSObject item = new JSObject();
-                item.put("date", key);
-                item.put("screenMinutes", (int) Math.round(shown / 60000.0));
-                item.put("unlocks", unlocksByDay.getOrDefault(key, 0));
-                item.put("unlockSource", unlockFromKeyguard ? "keyguard" : "screen");
+                item.put("date", row.date);
+                item.put("screenMinutes", row.screenMinutes);
+                item.put("unlocks", row.unlocks);
+                item.put("unlockSource", row.unlockSource);
                 arr.put(item);
             }
             JSObject ret = new JSObject();

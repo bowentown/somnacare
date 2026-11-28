@@ -30,16 +30,33 @@ export function useStartupAlarmSync(
   useEffect(() => {
     if (!isNativePlatform()) return;
     void (async () => {
-      // "仅一次"闹钟的时刻已过且原生表里已无此条 → 已响过、被原生剔除，
-      // 这里在档案中停用；否则本次 enabled 全量同步会把它送回原生，
-      // 被按"今天已过则明天"续排——一次性闹钟变相成为永久每日闹钟
+      // "仅一次"闹钟已响过并被原生消费 → 优先使用原生持久化的 consumedIds 精准停用
+      // （彻底解决跨午夜 23:55→07:30 复活与恢复备份 22:00 误关次日 07:00）；
+      // 兼容旧版原生未返回 consumedIds 时回退至今日 HH:mm <= now 启发式。
       let nativeIds: Set<string> | null = null;
+      let consumedIds: Set<string> | null = null;
       try {
         const tbl = await nativePlugin('SleepCore')?.alarmRingTable?.();
         nativeIds = new Set<string>((JSON.parse(tbl?.json || '[]') as Array<{ id?: string }>).map((x) => x.id || ''));
+        if (Array.isArray(tbl?.consumedIds)) {
+          consumedIds = new Set<string>(
+            (tbl.consumedIds as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0),
+          );
+        }
       } catch { /* 读不到原生表时不动档案，只做常规同步 */ }
       let alarms = userProfile.alarms || [];
-      if (nativeIds) {
+      if (consumedIds) {
+        let changed = false;
+        alarms = alarms.map((a) => {
+          if (!a.enabled || a.repeatDays.length !== 0) return a;
+          if (consumedIds!.has(a.id) && !nativeIds?.has(a.id)) {
+            changed = true;
+            return { ...a, enabled: false };
+          }
+          return a;
+        });
+        if (changed) setUserProfile((prev) => ({ ...prev, alarms }));
+      } else if (nativeIds) {
         const now = new Date();
         let changed = false;
         alarms = alarms.map((a) => {
@@ -202,21 +219,30 @@ export function useResumeUsageRefresh(chronotype: 'night' | 'day' | 'irregular')
     let lastRun = 0;
     let inFlight = false;
     const refresh = (source: 'visibility' | 'appstate') => {
-      if (chronotype === 'irregular') return;   // 不规律作息：自动提议整体关闭，无需刷新
       // 双通道去抖：appStateChange 与 visibilitychange 常在恢复时先后各发一次。
       // inFlight 是同步守卫（首个查询返回前第二通道不会双触发）；失败时
       // inFlight 立即释放且不写 lastRun，允许另一通道补位（第 54 轮修正）
       const now = Date.now();
       if (inFlight || now - lastRun < 1500) return;
+      // 不规律作息跳过自动睡眠提议扫描，但仍需广播 notifyAppResume 给闹钟响铃、护眼、桌宠与时区同步
+      if (chronotype === 'irregular') {
+        lastRun = now;
+        notifyAppResume(source);
+        return;
+      }
       inFlight = true;
-      // 广播给睡眠页引擎：即使下面的聚合查询失败/返回空，引擎也会被强制
-      // 重跑一次（不依赖 usageStore emit 的间接链路）
+      // 先拉起 14 天事件查询占位 in-flight Promise，再广播 notifyAppResume，
+      // 确保 OneTapSleepTracker 同步/随后发起的 queryScreenOnEvents 直接复用同一请求而非并发扫多遍
+      const evPromise = queryScreenOnEvents(14, true);
       notifyAppResume(source);
       void (async () => {
-        const ok = !!(await queryScreenOnEvents(14, true));
-        if (ok) lastRun = Date.now();
-        inFlight = false;
-        await forceRefreshUsage(2, chronotype);
+        try {
+          const ok = !!(await evPromise);
+          if (ok) lastRun = Date.now();
+          await forceRefreshUsage(2, chronotype);
+        } finally {
+          inFlight = false;
+        }
       })();
     };
     const onVisible = () => {

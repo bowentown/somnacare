@@ -180,3 +180,132 @@ test('旅程32 报告缓存命中：来源标签随缓存还原（不退回初�
   await expect(page.getByText(/模型：DeepSeek \(deepseek-flash\)/)).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────
+// 旅程33 自建 API 模型列表查询、配置保存实时刷新 CoachTab 徽章与错误透出（v1.44.0 M3）
+// ─────────────────────────────────────────────────────────────
+test('旅程33 自建 API：查询可用模型点击填入、保存后 CoachTab 徽章立即刷新、对话剥离 thinking 并透出 401 原因', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 86)], {
+    somnacare_record_date_schema: 'night-v1',
+    somnacare_user_profile: JSON.stringify({
+      name: '自建用户',
+      age: 30,
+      targetHours: 8,
+      aiConfig: { provider: 'local_rules' },
+    }),
+  });
+
+  let chatBody: any = null;
+  let modelsHits = 0;
+  await page.route('https://openrouter.ai/api/v1/models', (route) => {
+    modelsHits++;
+    if (modelsHits === 1) {
+      return route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: 'bad key' } }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [{ id: 'openai/gpt-4o-mini' }, { id: 'anthropic/claude-3.5-sonnet' }],
+      }),
+    });
+  });
+  await page.route('https://openrouter.ai/api/v1/chat/completions', (route) => {
+    chatBody = route.request().postDataJSON();
+    return route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'Invalid auth key' } }),
+    });
+  });
+
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+
+  // 1. 先挂载 AI顾问页（初始为本地临床规则引擎）
+  await navTo(page, 'AI顾问');
+  await page.getByRole('button', { name: /睡眠医学完整评估/ }).click();
+  await expect(page.getByText(/模型：本地临床规则引擎/)).toBeVisible();
+
+  // 2. 前往偏好页打开 AI 配置弹窗 → 自建 API → 首次查询 401 显示错误提示 → 再次查询渲染候选并一键填入 → 保存
+  await navTo(page, '偏好');
+  await page.getByRole('button', { name: '配置与探查' }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 顾问模型设置' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: '自建 API' }).click();
+  await dialog.getByPlaceholder('https://api.openai.com/v1').fill('https://openrouter.ai/api/v1');
+  await dialog.getByPlaceholder('sk-...').fill('sk-or-test-key');
+  await dialog.getByRole('button', { name: '查询可用模型' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('密钥无效或已过期（401）', { timeout: 10000 });
+
+  await dialog.getByRole('button', { name: '查询可用模型' }).click();
+  const candidate = dialog.getByRole('button', { name: 'openai/gpt-4o-mini' });
+  await expect(candidate).toBeVisible({ timeout: 10000 });
+  await candidate.click();
+  await expect(dialog.getByPlaceholder('如 gpt-4o-mini 或 qwen-plus')).toHaveValue('openai/gpt-4o-mini');
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog).toBeHidden({ timeout: 5000 });
+
+  // 3. 切回常驻的 AI顾问页：无需重载，顶栏模型徽章立即刷新
+  await navTo(page, 'AI顾问');
+  await expect(page.getByText(/模型：自建 API \(openai\/gpt-4o-mini\)/)).toBeVisible();
+
+  // 4. 发送提问：验证无 thinking 字段、无连续 user 消息，且 401 透出可读错误原因
+  await page.getByPlaceholder('输入睡眠疑问...').fill('怎么提高深睡比例？');
+  await page.getByRole('button', { name: '发送睡眠疑问' }).click();
+  await expect(page.getByText(/密钥无效或已过期（401）/).first()).toBeVisible({ timeout: 10000 });
+  expect(chatBody).not.toBeNull();
+  expect('thinking' in chatBody).toBe(false);
+  expect(chatBody.messages.map((m: any) => m.role)).toEqual(['system', 'user']);
+  expect(errors.filter((e) => !e.includes('status of 401'))).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 旅程34 切回规则引擎零出网隐私边界（残留 DeepSeek Key 不得偷偷打云端）
+// ─────────────────────────────────────────────────────────────
+test('旅程34 切回规则引擎：即使保留旧 DeepSeek Key，生成评估也绝不出网', async ({ page }) => {
+  const errors = watchErrors(page);
+  const fixed = new Date();
+  fixed.setHours(9, 0, 0, 0);
+  await page.clock.install({ time: fixed });
+  await seed(page, [mkRecord(dstr(-1, fixed), '23:30', '07:30', 88)], {
+    somnacare_record_date_schema: 'night-v1',
+    somnacare_user_profile: JSON.stringify({
+      name: '离线守护者',
+      age: 30,
+      targetHours: 8,
+      aiConfig: {
+        provider: 'local_rules',
+        deepseekApiKey: 'sk-old-lingering-key',
+        deepseekModel: 'deepseek-pro',
+      },
+    }),
+  });
+
+  let cloudHits = 0;
+  await page.route('https://api.deepseek.com/**', (route) => {
+    cloudHits++;
+    return route.abort();
+  });
+
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(4200);
+  await navTo(page, 'AI顾问');
+  await page.getByRole('button', { name: /睡眠医学完整评估/ }).click();
+  await page.getByRole('button', { name: '生成评估' }).click();
+
+  await expect(page.getByRole('button', { name: '刷新评估' })).toBeVisible({ timeout: 15000 });
+  expect(cloudHits).toBe(0);
+  await expect(page.getByText(/模型：本地临床规则引擎/)).toBeVisible();
+  expect(errors).toEqual([]);
+});

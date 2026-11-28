@@ -27,9 +27,14 @@ interface CapacitorLocalNotificationsPlugin {
     vibration?: boolean;
     visibility?: number;
   }) => Promise<any>;
+  deleteChannel?: (channel: { id: string }) => Promise<any>;
   checkExactNotificationSetting?: () => Promise<{ exactAlarm: string }>;
   changeExactNotificationSetting?: () => Promise<{ exactAlarm: string }>;
 }
+
+/** 静音无震闹钟辅助渠道 ID（与 SleepCorePlugin.BANNER_CHANNEL_ID 对齐，解决 Android O+ 旧渠道不可原地降级静音）。 */
+export const ALARM_BANNER_CHANNEL_ID = 'somnacare-alarm-silent';
+const LEGACY_ALARM_BANNER_CHANNEL_ID = 'somnacare-alarm';
 
 export async function requestAlarmPermissions(): Promise<boolean> {
   const plugin = nativePlugin<CapacitorLocalNotificationsPlugin>('LocalNotifications');
@@ -77,15 +82,22 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
   }
 
   try {
-    // 专用闹钟通知通道：IMPORTANCE_HIGH 但不出声——持续响铃由 AlarmRingService
-    // 的 MediaPlayer 循环负责，通知只出横幅（渠道出声会与服务叠放）。
-    // 注意：Android 渠道创建后不可变，旧安装需卸载重装才去掉原 30 秒铃声。
+    // 清理旧版高优有声渠道（Android O+ 对已存在渠道无法原地降级静音），
+    // 并迁移至显式静音无震的 somnacare-alarm-silent 辅助渠道——
+    // 持续响铃、闹钟音频焦点与穿透勿扰震动完全由 AlarmRingService 负责，避免双通知叠音。
+    try {
+      await plugin.deleteChannel?.({ id: LEGACY_ALARM_BANNER_CHANNEL_ID });
+    } catch {
+      // 旧渠道不存在或低版本不支持删除时静默跳过
+    }
     try {
       await plugin.createChannel({
-        id: 'somnacare-alarm',
-        name: '极光睡眠闹钟',
-        description: '定时睡眠唤醒（重要级，熄屏可响）',
-        importance: 5,
+        id: ALARM_BANNER_CHANNEL_ID,
+        name: '极光睡眠闹钟（静默）',
+        description: '闹钟静默提醒通道（持续响铃与震动由原生闹钟服务负责）',
+        importance: 2,
+        sound: '',
+        vibration: false,
         visibility: 1,
       });
     } catch {
@@ -112,7 +124,8 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
     const validAlarms = alarms.filter((a) => a.enabled && /^([01]\d|2[0-3]):[0-5]\d$/.test(a.time || ''));
     const invalidCount = alarms.filter((a) => a.enabled).length - validAlarms.length;
     if (validAlarms.length === 0) {
-      try { await nativePlugin('SleepCore')?.alarmRingCancel?.(); } catch { /* ignore */ }
+      // 仅取消常规闹钟，保留尚未到点的 5/10 分钟贪睡闹钟（唯一一次性闹钟响后自动关闭时不能误杀贪睡）
+      try { await nativePlugin('SleepCore')?.alarmRingCancel?.({ includeSnooze: false }); } catch { /* ignore */ }
       return { success: true, nativeScheduledCount: 0, invalidCount };
     }
 
@@ -139,7 +152,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
             at: targetDate,
             allowWhileIdle: true,
           },
-          channelId: 'somnacare-alarm',
+          channelId: ALARM_BANNER_CHANNEL_ID,
           extra: { alarmId: alarm.id },
         });
       } else {
@@ -159,7 +172,7 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
               },
               allowWhileIdle: true,
             },
-            channelId: 'somnacare-alarm',
+            channelId: ALARM_BANNER_CHANNEL_ID,
             extra: { alarmId: alarm.id, isoDay },
           });
         });
@@ -170,18 +183,34 @@ export async function syncAlarmsToNative(alarms: CustomAlarmSetting[]): Promise<
       await plugin.schedule({ notifications: notificationsToSchedule });
     }
 
-    // 持续响铃排程：熄屏循环铃声+振动直到用户关闭（最长 5 分钟）——
-    // Capacitor 通知只有渠道 30 秒铃声，播完即止，这就是"响一声就没"的根因
+    // 持续响铃排程：熄屏循环铃声+穿透勿扰震动直到用户关闭/贪睡（最长 5 分钟）——
+    // 透传 vibrate 开关与一次性闹钟的精确 triggerAtMs，避免跨夜响铃误删明天早起闹钟
     try {
+      const nowMs = Date.now();
       await nativePlugin('SleepCore')?.alarmRingSchedule?.({
         alarmsJson: JSON.stringify(
-          validAlarms.map((a) => ({
-            id: a.id,
-            time: a.time,
-            repeatDays: a.repeatDays ?? [],
-            tone: a.tone,
-            label: a.label,
-          })),
+          validAlarms.map((a) => {
+            const isOneShot = !a.repeatDays || a.repeatDays.length === 0;
+            let triggerAtMs: number | undefined;
+            if (isOneShot) {
+              const [h, m] = a.time.split(':').map(Number);
+              const target = new Date(nowMs);
+              target.setHours(h, m, 0, 0);
+              if (target.getTime() <= nowMs) {
+                target.setDate(target.getDate() + 1);
+              }
+              triggerAtMs = target.getTime();
+            }
+            return {
+              id: a.id,
+              time: a.time,
+              repeatDays: a.repeatDays ?? [],
+              tone: a.tone,
+              label: a.label,
+              vibrate: a.vibrate !== false,
+              ...(triggerAtMs !== undefined ? { triggerAtMs } : {}),
+            };
+          }),
         ),
       });
     } catch { /* 响铃排程失败不阻断通知调度 */ }

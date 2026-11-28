@@ -7,21 +7,28 @@
  * 构造与数字白名单校验。
  */
 import { nativePlugin } from '../../../shared/native/nativeBridge';
+import {
+  isOfficialDeepSeekThinkingEndpoint,
+  normalizeChatCompletionsEndpoint,
+} from '../../../shared/utils/llmCompat';
 
 export async function callLlm(cfg: any, system: string, user: string, kind?: string): Promise<string | null> {
   try {
+    const isCustom = cfg.provider === 'custom_openai';
+    const endpoint = llmEndpoint(cfg);
     const model = llmModel(cfg);
+    const includeThinking = isOfficialDeepSeekThinkingEndpoint(endpoint, model, isCustom);
     // 25s 超时：此前裸 fetch 挂起会让 busy 永远 true、整个弹窗像坏了
     const ctrl = new AbortController();
     const deadline = Date.now() + 25000;
     const timer = setTimeout(() => ctrl.abort(), 25000);
     let res: Response;
     try {
-      res = await fetch(llmEndpoint(cfg), {
+      res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${cfg.provider === 'custom_openai' ? (cfg.customApiKey ?? '') : (cfg.deepseekApiKey ?? '')}`,
+          Authorization: `Bearer ${String(isCustom ? (cfg.customApiKey ?? '') : (cfg.deepseekApiKey ?? '')).trim()}`,
         },
         body: JSON.stringify({
           model,
@@ -31,7 +38,7 @@ export async function callLlm(cfg: any, system: string, user: string, kind?: str
           ],
           temperature: 1.1,
           max_tokens: 600,
-          thinking: { type: 'disabled' },   // 朋友圈文案 ≤百字，不需要思考（默认 enabled 按输出计费）
+          ...(includeThinking ? { thinking: { type: 'disabled' } } : {}),
         }),
         signal: ctrl.signal,
       });
@@ -68,9 +75,9 @@ export function hasLlm(cfg: any): boolean {
 
 function llmEndpoint(cfg: any): string {
   const base = cfg.provider === 'custom_openai' && cfg.customBaseUrl
-    ? String(cfg.customBaseUrl).replace(/\/+$/, '')
+    ? String(cfg.customBaseUrl)
     : 'https://api.deepseek.com';
-  return `${base}/chat/completions`;
+  return normalizeChatCompletionsEndpoint(base);
 }
 
 function llmModel(cfg: any): string {

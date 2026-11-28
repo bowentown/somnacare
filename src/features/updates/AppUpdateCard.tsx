@@ -57,6 +57,9 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
   const [busy, setBusy] = useState(false);
   const [comparable, setComparable] = useState(true);
   const installBusy = useRef(false);
+  // 仅当本次会话用户主动点了「下载并安装」时，校验就绪才自动调起系统安装器；
+  // 后台恢复的 pending 项完成异步校验后只进入「待安装」态，不在用户刚进偏好页时突兀弹窗
+  const autoInstallOnReadyRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -82,6 +85,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
         setDownload(pending);
         setMessage(`已下载${pending.versionName ? ` v${pending.versionName}` : '更新包'}，等待安装`);
       } else if (ACTIVE_DOWNLOAD.includes(pending.status)) {
+        autoInstallOnReadyRef.current = false;
         setDownload(pending);
       }
     })();
@@ -134,7 +138,12 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
           setMessage('之前下载的安装包已经装过，已清理；点「重新检查」下载新版');
           return;
         }
-        void handleInstall(st.downloadId);
+        if (autoInstallOnReadyRef.current) {
+          autoInstallOnReadyRef.current = false;
+          void handleInstall(st.downloadId);
+        } else {
+          setMessage(`已下载${st.versionName ? ` v${st.versionName}` : '更新包'}，等待安装`);
+        }
       } else if (st.status === 'failed') {
         setMessage(st.reason ?? '下载失败，请重试');
       }
@@ -209,6 +218,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
         setMessage(started.reason ?? '无法开始下载');
         return;
       }
+      autoInstallOnReadyRef.current = true;
       setDownload({
         downloadId: started.downloadId,
         status: 'pending',
@@ -233,7 +243,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
   const readyToInstall = !!download
     && (download.status === 'installing' || (download.status === 'ready' && readyInstallable));
   const summary = downloadBusy
-    ? `下载中 ${pct ?? 0}%`
+    ? (download?.verifying ? '正在校验安装包…' : `下载中 ${pct ?? 0}%`)
     : readyToInstall
       ? '待安装'
       : phase === 'latest'
@@ -345,7 +355,9 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                         <span>
                           {download.status === 'paused'
                             ? download.pausedReason === 'wifi' ? '等待 Wi-Fi（默认不用移动流量）' : '下载已暂停'
-                            : '正在下载'}
+                            : download.verifying
+                              ? '正在后台校验 SHA-256 与签名…'
+                              : '正在下载'}
                         </span>
                         <span className="font-mono text-slate-400">
                           {pct !== null ? `${pct}%` : formatBytes(download.bytesDownloaded)}
@@ -402,7 +414,7 @@ export const AppUpdateCard: React.FC<Props> = ({ theme }) => {
                     className={`flex-1 py-2.5 rounded-xl ${theme.accentBg} ${theme.accentFg} text-[11px] font-black shadow-md active:scale-[0.98] transition-transform cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5`}
                   >
                     {downloadBusy ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> 下载中…</>
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {download?.verifying ? '校验中…' : '下载中…'}</>
                     ) : readyToInstall ? (
                       <><DownloadCloud className="w-3.5 h-3.5" /> 继续安装</>
                     ) : (

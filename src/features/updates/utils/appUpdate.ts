@@ -55,6 +55,8 @@ export interface DownloadStatus {
   status: DownloadPhase;
   bytesDownloaded: number;
   totalBytes: number;
+  /** 下载完成后正在后台线程计算 SHA-256 与签名校验 */
+  verifying?: boolean;
   reason?: string;
   /** paused 时的机器可读原因：wifi=等待 Wi-Fi（可改用流量）network=无网 retry=稍后重试 */
   pausedReason?: 'wifi' | 'network' | 'retry';
@@ -78,6 +80,7 @@ function normalizeStatus(raw: any): DownloadStatus {
     status: status as DownloadPhase,
     bytesDownloaded: toInt(raw?.bytesDownloaded),
     totalBytes: toInt(raw?.totalBytes),
+    ...(raw?.verifying === true ? { verifying: true } : {}),
     ...(typeof raw?.reason === 'string' && raw.reason ? { reason: raw.reason } : {}),
     ...(pausedReason === 'wifi' || pausedReason === 'network' || pausedReason === 'retry'
       ? { pausedReason }

@@ -183,8 +183,23 @@ export interface ModelProposalResult {
 }
 
 // 拟合结果缓存（单条）：键见 computeModelProposal 内注释；
-// observedUntil 单存供"近似命中"判定（见 computeModelProposal 内注释）
-let fitCache: { events: number[]; key: string; outcome: ReturnType<typeof fitSleepModel>; observedUntil: number; eventCount: number } | null = null;
+// observedUntil 按 5 分钟时间桶归一进 fitKey，同时留存原始毫秒值与事件计数供近似命中判定
+const OBSERVED_BUCKET_MS = 5 * 60_000;
+const MIN_MODEL_EVENTS_THRESHOLD = 30;
+let fitCache: {
+  events: number[];
+  key: string;
+  outcome: ReturnType<typeof fitSleepModel>;
+  observedUntil: number;
+  eventCount: number;
+  offCount: number;
+  rawOnCount: number;
+} | null = null;
+
+/** 清空单条拟合缓存（测试或清理使用数据时调用）。 */
+export function clearProposalFitCache(): void {
+  fitCache = null;
+}
 
 export function computeModelProposal(input: ModelProposalInput): ModelProposalResult {
   if (input.chronotype === 'irregular') return { proposal: null, fallbackAllowed: false, fit: { status: 'skipped', reason: '作息类型=不规律：自动提议整体关闭（设计内）' } };  // gate 0
@@ -199,18 +214,34 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
 
   // 拟合缓存：events 数组在 usageSignal 的 30min TTL 内是同一引用，而
   // records/handledDate 的每次变化都会触发 effect 重跑——坐标上升不必重跑。
-  // 缓存命中后 gate 4/6/窗口闸仍全量复查（它们不进缓存键，语义不变）
-  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${input.observedUntil}|${modelWindowStart((input.now ?? new Date()).getTime(), input.chronotype === 'day' ? 'day' : 'night', habitBedMin, habitWakeMin)}|${input.offEvents?.length ?? 0}|${input.rawOnEvents?.length ?? 0}`;
+  // 1) observedUntil 按 5 分钟桶归一，否则毫秒级推进会让 fitKey 每次变化、导致 approximateHit 恒假；
+  // 2) offEvents / rawOnEvents 在 fitKey 中只记存在位（而非精确长度），允许同 5 分钟桶内少量新亮灭屏
+  //    依然命中 approximateHit，同时在从无到有或大跨度变化时精准失效；
+  // 3) 缓存命中后 gate 4/6/窗口闸仍全量复查（它们不进缓存键，语义不变）
+  const observedBucket = Math.floor(input.observedUntil / OBSERVED_BUCKET_MS);
+  const offCount = input.offEvents?.length ?? 0;
+  const rawOnCount = input.rawOnEvents?.length ?? 0;
+  const fitKey = `${input.chronotype === 'day' ? 'day' : 'night'}|${habitBedMin ?? ''}|${habitWakeMin ?? ''}|${observedBucket}|${modelWindowStart((input.now ?? new Date()).getTime(), input.chronotype === 'day' ? 'day' : 'night', habitBedMin, habitWakeMin)}|${offCount > 0 ? 1 : 0}|${rawOnCount > 0 ? 1 : 0}`;
   let fit: ReturnType<typeof fitSleepModel>;
-  // 精确命中：events 同引用且键全同。近似命中（第 51 轮审计 P1）：后台恢复
-  // 的 force 刷新总换出新 events 引用，但观测端点只前进 <30min 时（夜睡段
-  // 在夜里、白天增量不影响拟合结果），坐标上升的百万级对数运算会在主线程
-  // 白白重跑 50–300ms——同键且 observedUntil 相差 <30min 直接复用
+  const exactHit =
+    !!fitCache &&
+    fitCache.events === input.events &&
+    fitCache.key === fitKey &&
+    fitCache.offCount === offCount &&
+    fitCache.rawOnCount === rawOnCount;
+  // 近似命中（第 51 轮审计 P1 + v1.44 M3 真正生效）：后台恢复的 force 刷新总换出新数组引用，
+  // 同一 5 分钟桶且数据量级未剧变（且不跨越 0 / MIN_EVENTS 下界）时直接复用
   const approximateHit =
-    !!fitCache && fitCache.key === fitKey &&
+    !!fitCache &&
+    fitCache.key === fitKey &&
+    input.events.length > 0 &&
+    fitCache.eventCount > 0 &&
+    (input.events.length < MIN_MODEL_EVENTS_THRESHOLD) === (fitCache.eventCount < MIN_MODEL_EVENTS_THRESHOLD) &&
     Math.abs(input.observedUntil - fitCache.observedUntil) < 30 * 60_000 &&
-    Math.abs(input.events.length - fitCache.eventCount) < 50;   // 数据规模必须同一量级（截断输入不算演进）
-  if (fitCache && (fitCache.events === input.events || approximateHit) && fitCache.key === fitKey) {
+    Math.abs(input.events.length - fitCache.eventCount) < 50 &&
+    Math.abs(offCount - fitCache.offCount) < 10 &&
+    Math.abs(rawOnCount - fitCache.rawOnCount) < 10;
+  if (fitCache && (exactHit || approximateHit)) {
     fit = fitCache.outcome;
   } else {
     fit = fitSleepModel({
@@ -223,7 +254,15 @@ export function computeModelProposal(input: ModelProposalInput): ModelProposalRe
       habitWakeMin,
       now: (input.now ?? new Date()).getTime(),
     });
-    fitCache = { events: input.events, key: fitKey, outcome: fit, observedUntil: input.observedUntil, eventCount: input.events.length };
+    fitCache = {
+      events: input.events,
+      key: fitKey,
+      outcome: fit,
+      observedUntil: input.observedUntil,
+      eventCount: input.events.length,
+      offCount,
+      rawOnCount,
+    };
   }
   if (fit.status === 'insufficient') {
     return { proposal: null, fallbackAllowed: true, fit: { status: 'insufficient', reason: fit.reason } };   // 跑不了模型 → 旧算法顶上

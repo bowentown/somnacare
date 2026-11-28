@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { ChatMessage, SleepRecord } from '../../shared/types/sleep';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import { useSleepStore } from '../sleep/store/sleepStore';
-import { closeMoments, openMoments, useUIStore } from '../../shared/store/uiStore';
+import { closeMoments, openMoments, showToast, useUIStore } from '../../shared/store/uiStore';
 import { generatePersonalInsights } from './utils/clinicalSleepEngine';
 import { nightsOnly } from '../sleep/utils/recordFilter';
 import {
@@ -35,11 +35,48 @@ const CoachTabInner: React.FC = () => {
       case 'local_rules':
         return '本地临床规则引擎';
       case 'custom_openai':
-        return userProfile.aiConfig?.customApiKey ? '自建 API' : '本地临床规则引擎';
+        return userProfile.aiConfig?.customApiKey && userProfile.aiConfig?.customBaseUrl
+          ? '自建 API'
+          : '本地临床规则引擎';
       default:
         return userProfile.aiConfig?.deepseekApiKey ? 'DeepSeek' : '本地临床规则引擎';
     }
   });
+
+  // 在偏好页保存 AI 配置后（CoachTab 常驻滑动轨道不会重新挂载），立即同步顶栏模型徽章
+  const aiConfigKey = [
+    userProfile.aiConfig?.provider ?? '',
+    userProfile.aiConfig?.deepseekApiKey ?? '',
+    userProfile.aiConfig?.deepseekModel ?? '',
+    userProfile.aiConfig?.customBaseUrl ?? '',
+    userProfile.aiConfig?.customApiKey ?? '',
+    userProfile.aiConfig?.customModelName ?? '',
+  ].join('|');
+  const prevAiConfigKeyRef = useRef(aiConfigKey);
+  useEffect(() => {
+    if (prevAiConfigKeyRef.current === aiConfigKey) return;
+    prevAiConfigKeyRef.current = aiConfigKey;
+    const cfg = userProfile.aiConfig;
+    switch (cfg?.provider) {
+      case 'local_rules':
+        setActiveProviderName('本地临床规则引擎');
+        break;
+      case 'custom_openai':
+        setActiveProviderName(
+          cfg.customApiKey && cfg.customBaseUrl
+            ? `自建 API (${cfg.customModelName || 'deepseek-chat'})`
+            : '本地临床规则引擎',
+        );
+        break;
+      default:
+        setActiveProviderName(
+          cfg?.deepseekApiKey
+            ? `DeepSeek (${cfg.deepseekModel || 'deepseek-flash'})`
+            : '本地临床规则引擎',
+        );
+        break;
+    }
+  }, [aiConfigKey, userProfile.aiConfig]);
 
   // 多会话管理与防抖落盘
   const [chat, setChat] = useState<ChatState>(() => loadChatState());
@@ -207,6 +244,9 @@ const CoachTabInner: React.FC = () => {
         personalCtx,
         onProviderNameChange: setActiveProviderName,
         updateMessages: (updater) => setChatMessagesFor(targetId, updater),
+        onCloudError: (reason) => {
+          if (reason) showToast(`云端顾问：${reason}`, 4500);
+        },
       });
     } finally {
       setIsSendingChat(false);
@@ -222,6 +262,7 @@ const CoachTabInner: React.FC = () => {
         insights={insights}
         activeProviderName={activeProviderName}
         onProviderNameChange={setActiveProviderName}
+        onCloudError={(reason) => showToast(`云端评估已回退本地：${reason}`, 4500)}
         onAskPrompt={(prompt) => void handleSendMessage(prompt)}
         onOpenMoments={openMoments}
       />

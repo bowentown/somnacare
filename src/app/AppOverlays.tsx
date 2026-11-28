@@ -58,7 +58,7 @@ export const AppOverlays: React.FC = () => {
   const pendingPostcardId = useUIStore((s) => s.pendingPostcardId);
   const bedtimeReminder = useUIStore((s) => s.bedtimeReminder);
 
-  const { ringingAlarm, handleStopRinging, ringA11y } = useAlarmRinging(userProfile.alarms);
+  const { ringingAlarm, handleStopRinging, handleSnoozeRinging, ringA11y } = useAlarmRinging(userProfile.alarms);
   const eyeCareCfg = userProfile.eyeCare ?? DEFAULT_EYE_CARE;
 
   return (
@@ -120,26 +120,44 @@ export const AppOverlays: React.FC = () => {
           <div
             ref={ringA11y.ref}
             {...ringA11y.dialogProps}
-            className="fixed top-0 left-0 right-0 z-[300] p-4 bg-gradient-to-r from-amber-800 via-indigo-600 to-violet-600 text-white shadow-2xl animate-pulse flex items-center justify-between"
+            className="fixed top-0 left-0 right-0 z-[300] p-4 bg-gradient-to-r from-amber-800 via-indigo-600 to-violet-600 text-white shadow-2xl space-y-3"
           >
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center">
-                <Bell className="w-6 h-6 animate-spin text-amber-200" />
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <Bell className="w-6 h-6 animate-spin text-amber-200" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-amber-100">闹钟响铃中 · 晨安唤醒</div>
+                  <h4 className="text-xl font-black truncate">
+                    {ringingAlarm.time} {ringingAlarm.label}
+                  </h4>
+                </div>
               </div>
-              <div>
-                <div className="text-xs font-bold text-amber-100">闹钟响铃中 · 晨安唤醒</div>
-                <h4 className="text-xl font-black">
-                  {ringingAlarm.time} {ringingAlarm.label}
-                </h4>
-              </div>
+              <button
+                type="button"
+                onClick={handleStopRinging}
+                className="px-4 py-2.5 bg-white text-slate-900 font-black text-sm rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer shrink-0"
+              >
+                停止响铃
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleStopRinging}
-              className="px-5 py-2.5 bg-white text-slate-900 font-black text-sm rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
-            >
-              停止响铃
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleSnoozeRinging(5)}
+                className="flex-1 py-2 rounded-xl bg-black/30 border border-white/30 text-white font-bold text-xs active:scale-95 transition-all cursor-pointer"
+              >
+                再睡 5 分钟
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSnoozeRinging(10)}
+                className="flex-1 py-2 rounded-xl bg-black/30 border border-white/30 text-white font-bold text-xs active:scale-95 transition-all cursor-pointer"
+              >
+                再睡 10 分钟
+              </button>
+            </div>
           </div>,
           document.body,
         )}

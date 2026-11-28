@@ -226,7 +226,9 @@ export function clearUsageData(): void {
   try {
     localStorage.removeItem(CACHE_KEY);
   } catch { /* ignore */ }
+  eventsCacheEpoch += 1;
   eventsCache = null;   // 亮屏事件缓存一并失效
+  eventsInFlight.clear();
 }
 
 // ── 原始亮屏事件（SensibleSleep 模型输入，第 26 轮）──
@@ -243,41 +245,69 @@ export interface ScreenOnEvents {
 }
 
 // 事件查询与聚合查询共用 30 分钟 TTL：提议引擎每处挂载都会要一次，
-// 14 天的原始事件不适合反复过桥
-let eventsCache: { at: number; data: ScreenOnEvents } | null = null;
+// 14 天的原始事件不适合反复过桥；并发调用按 days 复用同一条 in-flight Promise，
+// 消除回前台时 useResumeUsageRefresh 与 OneTapSleepTracker 并发 2-3 次全量原生扫描
+let eventsCache: { at: number; days: number; data: ScreenOnEvents } | null = null;
+let eventsCacheEpoch = 0;
+const eventsInFlight = new Map<number, Promise<ScreenOnEvents | null>>();
 const EVENTS_TTL_MS = 30 * 60 * 1000;
 
+/** 返回最近一次亮屏事件缓存写入时间戳（无缓存返回 0），供回前台协作去重。 */
+export function getScreenOnEventsCacheAt(days = 14): number {
+  return eventsCache && eventsCache.days === days ? eventsCache.at : 0;
+}
+
 /** 拉取最近 N 天的亮屏事件时间戳（非 native / 无权限 / 失败 → null，调用方回退）。
- *  force=true 绕过 30min TTL：模型诊断卡"自检"要用最新数据，不能吃旧缓存。 */
+ *  force=true 绕过 30min TTL；若同 days 已有在途原生扫描则直接复用同一 Promise。 */
 export async function queryScreenOnEvents(days = 14, force = false): Promise<ScreenOnEvents | null> {
   const pl = usage();
   if (!pl) return null;
-  if (!force && eventsCache && Date.now() - eventsCache.at < EVENTS_TTL_MS) return eventsCache.data;
-  try {
-    const res = await pl.queryScreenOnEvents?.({ days });
-    if (!res || !Array.isArray(res.events)) {
-      lastUsageError = '亮屏事件查询返回为空（可能内核不支持或事件日志被系统裁剪）';
+  // 优先复用同 days 在途扫描（即使当前调用 force=false，也不应返回旧 TTL 缓存而绕过正在刷新的在途请求）
+  const existing = eventsInFlight.get(days);
+  if (existing) return existing;
+  if (!force && eventsCache && eventsCache.days === days && Date.now() - eventsCache.at < EVENTS_TTL_MS) {
+    return eventsCache.data;
+  }
+
+  const epoch = eventsCacheEpoch;
+  const run = async (): Promise<ScreenOnEvents | null> => {
+    try {
+      const res = await pl.queryScreenOnEvents?.({ days });
+      if (!res || !Array.isArray(res.events)) {
+        lastUsageError = '亮屏事件查询返回为空（可能内核不支持或事件日志被系统裁剪）';
+        return null;
+      }
+      const cleanNums = (raw: unknown): number[] | undefined =>
+        Array.isArray(raw)
+          ? raw.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+          : undefined;
+      const data: ScreenOnEvents = {
+        events: (res.events as unknown[]).filter((n): n is number =>
+          typeof n === 'number' && Number.isFinite(n)),
+        offEvents: cleanNums(res.offEvents),
+        rawOnEvents: cleanNums(res.rawOnEvents),
+        observedUntil: typeof res.observedUntil === 'number' ? res.observedUntil : Date.now(),
+      };
+      if (epoch === eventsCacheEpoch) {
+        eventsCache = { at: Date.now(), days, data };
+      }
+      lastUsageError = null;
+      lastUsageOkAt = Date.now();
+      return data;
+    } catch (err) {
+      lastUsageError = `亮屏事件查询失败：${err instanceof Error ? err.message : String(err)}`;
       return null;
     }
-    const cleanNums = (raw: unknown): number[] | undefined =>
-      Array.isArray(raw)
-        ? raw.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
-        : undefined;
-    const data: ScreenOnEvents = {
-      events: (res.events as unknown[]).filter((n): n is number =>
-        typeof n === 'number' && Number.isFinite(n)),
-      offEvents: cleanNums(res.offEvents),
-      rawOnEvents: cleanNums(res.rawOnEvents),
-      observedUntil: typeof res.observedUntil === 'number' ? res.observedUntil : Date.now(),
-    };
-    eventsCache = { at: Date.now(), data };
-    lastUsageError = null;
-    lastUsageOkAt = Date.now();
-    return data;
-  } catch (err) {
-    lastUsageError = `亮屏事件查询失败：${err instanceof Error ? err.message : String(err)}`;
-    return null;
-  }
+  };
+
+  let task!: Promise<ScreenOnEvents | null>;
+  task = run().finally(() => {
+    if (eventsInFlight.get(days) === task) {
+      eventsInFlight.delete(days);
+    }
+  });
+  eventsInFlight.set(days, task);
+  return task;
 }
 
 /**

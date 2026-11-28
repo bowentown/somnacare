@@ -2,6 +2,23 @@ import type { ChatMessage, SleepRecord, UserProfile } from '../../../shared/type
 import { classifyIntent, generateLocalChatReply } from './clinicalSleepEngine';
 import { nightsOnly } from '../../sleep/utils/recordFilter';
 import { fetchJsonWithTimeout } from '../../../shared/utils/fetchJson';
+import {
+  formatCloudLlmError,
+  isOfficialDeepSeekThinkingEndpoint,
+  mergeConsecutiveUserMessages,
+  normalizeChatCompletionsEndpoint,
+  normalizeModelsEndpoint,
+  type OpenAIChatMessage,
+} from '../../../shared/utils/llmCompat';
+
+export {
+  formatCloudLlmError,
+  isOfficialDeepSeekThinkingEndpoint,
+  mergeConsecutiveUserMessages,
+  normalizeChatCompletionsEndpoint,
+  normalizeModelsEndpoint,
+  type OpenAIChatMessage,
+};
 
 const OUTPUT_CONTRACT =
   '\n\n【回答格式·必须遵守】每次回答不超过150字：先一句结论，再给至多2条可执行的建议；纯文本，不用任何markdown符号和序号列表；不寒暄、不复述我的问题；引用数字只用我提供的真实数据，没有就不编。';
@@ -13,6 +30,34 @@ function recentHistory<T>(h: T[]): T[] {
   return h.length > HIST_HARD ? h.slice(-HIST_SOFT) : h;
 }
 
+/** 构建发往云端对话接口的请求体（按端点兼容性决定是否携带 `thinking` 字段）。 */
+export function buildCoachChatPayload(params: {
+  endpoint: string;
+  model: string;
+  isCustom: boolean;
+  systemPrompt: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  personalCtx?: string;
+}): Record<string, unknown> {
+  const rawMessages: OpenAIChatMessage[] = [
+    { role: 'system', content: params.systemPrompt },
+    ...params.history.map((m) => ({ role: m.role, content: m.content })),
+    ...(params.personalCtx
+      ? [{ role: 'user' as const, content: `${params.personalCtx}\n\n（以上是我的真实睡眠数据，请结合它们回答我的问题）` }]
+      : []),
+  ];
+  const payload: Record<string, unknown> = {
+    model: params.model,
+    messages: mergeConsecutiveUserMessages(rawMessages),
+    temperature: 0.7,
+    max_tokens: 600,
+  };
+  if (isOfficialDeepSeekThinkingEndpoint(params.endpoint, params.model, params.isCustom)) {
+    payload.thinking = { type: 'disabled' };
+  }
+  return payload;
+}
+
 export interface SendCoachChatParams {
   text: string;
   newHistory: ChatMessage[];
@@ -21,14 +66,23 @@ export interface SendCoachChatParams {
   personalCtx: string;
   onProviderNameChange: (name: string) => void;
   updateMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  onCloudError?: (reason: string | null) => void;
+}
+
+class CloudRequestError extends Error {
+  readonly readableReason: string;
+  constructor(readableReason: string) {
+    super(readableReason);
+    this.readableReason = readableReason;
+  }
 }
 
 /**
  * AI 顾问对话路由分发器：
  * 0. 危机 / 用药安全护栏统一短路（优先于所有云端/本地引擎）
  * 1. 本地临床规则引擎（纯离线零出网）
- * 2. DeepSeek / 自建 OpenAI 兼容接口直连（前缀缓存优化 + 粘性历史窗口）
- * 3. 任何异常自动回退到本地临床规则引擎并诚实更新来源标签
+ * 2. DeepSeek / 自建 OpenAI 兼容接口直连（前缀缓存优化 + 合并连续 user + 端点参数兼容）
+ * 3. 任何云端异常自动回退到本地临床规则引擎，同时透出可读错误原因（不再静默吞错）
  */
 export async function dispatchCoachChat(params: SendCoachChatParams): Promise<void> {
   const {
@@ -39,10 +93,12 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
     personalCtx,
     onProviderNameChange,
     updateMessages,
+    onCloudError,
   } = params;
 
   const makeTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const latestRecord = nightsOnly(records)[0] ?? null;
+  onCloudError?.(null);
 
   try {
     const cfg = userProfile.aiConfig;
@@ -83,7 +139,7 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
     ) {
       const isCustom = cfg.provider === 'custom_openai';
       const endpoint = isCustom
-        ? `${String(cfg.customBaseUrl).replace(/\/+$/, '')}/chat/completions`
+        ? normalizeChatCompletionsEndpoint(cfg.customBaseUrl || '')
         : 'https://api.deepseek.com/chat/completions';
       const modelToUse = isCustom
         ? cfg.customModelName || 'deepseek-chat'
@@ -96,32 +152,35 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
           ? 'deepseek-v4-pro'
           : modelToUse;
 
+      const requestBody = buildCoachChatPayload({
+        endpoint,
+        model: wireModel,
+        isCustom,
+        systemPrompt,
+        history: recentHistory(newHistory).map((m) => ({ role: m.role, content: m.content })),
+        personalCtx,
+      });
+
       const ds = await fetchJsonWithTimeout(
         endpoint,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${isCustom ? cfg.customApiKey : cfg.deepseekApiKey}`,
+            Authorization: `Bearer ${String(isCustom ? cfg.customApiKey : cfg.deepseekApiKey).trim()}`,
           },
-          body: JSON.stringify({
-            model: wireModel,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              ...recentHistory(newHistory).map((m) => ({ role: m.role, content: m.content })),
-              ...(personalCtx
-                ? [{ role: 'user' as const, content: `${personalCtx}\n\n（以上是我的真实睡眠数据，请结合它们回答我的问题）` }]
-                : []),
-            ],
-            temperature: 0.7,
-            max_tokens: 600,
-            thinking: { type: 'disabled' },
-          }),
+          body: JSON.stringify(requestBody),
         },
         30000,
       );
 
-      if (ds.ok && ds.data) {
+      if (!ds.ok) {
+        throw new CloudRequestError(
+          formatCloudLlmError({ status: ds.status, errorBody: ds.data }),
+        );
+      }
+
+      if (ds.data) {
         const dsData = ds.data as {
           model?: string;
           usage?: {
@@ -146,15 +205,16 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
         const rawContent = dsData.choices?.[0]?.message?.content;
         const replyText = rawContent?.replace(/\*\*/g, '').replace(/(?<![a-zA-Z])\*(?![a-zA-Z\s])/g, '');
         if (replyText && replyText.trim()) {
+          onCloudError?.(null);
           updateMessages((prev) => [
             ...prev,
             { id: `ai-${Date.now()}`, role: 'assistant', content: replyText, timestamp: makeTime() },
           ]);
           return;
         }
-        console.warn('[chat] 云端返回空内容，转本地规则兜底');
       }
-      throw new Error('direct LLM failed');
+      console.warn('[chat] 云端返回空内容，转本地规则兜底');
+      throw new CloudRequestError('云端返回空内容');
     }
 
     // 3. 无云端 Key：纯离线规则回复
@@ -164,12 +224,22 @@ export async function dispatchCoachChat(params: SendCoachChatParams): Promise<vo
       ...prev,
       { id: `ai-${Date.now()}`, role: 'assistant', content: localReplyText, timestamp: makeTime() },
     ]);
-  } catch {
+  } catch (err) {
+    const reason = err instanceof CloudRequestError
+      ? err.readableReason
+      : formatCloudLlmError({ err });
+    console.warn('[chat] 云端调用失败，已回退本地规则引擎:', reason);
+    onCloudError?.(reason);
     onProviderNameChange('本地临床规则引擎');
     const localReplyText = generateLocalChatReply(text, latestRecord, records);
     updateMessages((prev) => [
       ...prev,
-      { id: `ai-${Date.now()}`, role: 'assistant', content: localReplyText, timestamp: makeTime() },
+      {
+        id: `ai-${Date.now()}`,
+        role: 'assistant',
+        content: `（云端接口失败：${reason}，已由本地规则引擎兜底）\n${localReplyText}`,
+        timestamp: makeTime(),
+      },
     ]);
   }
 }

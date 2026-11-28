@@ -8,36 +8,45 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.os.VibratorManager;
 
 /**
  * 闹钟持续响铃服务。
  *
- * 之前熄屏响铃只靠通知渠道的 30 秒铃声——播一声就停，用户听不到就错过了。
- * 本服务由 AlarmManager 精确闹钟（AlarmRingReceiver）拉起：
- * MediaPlayer 循环播放铃声（CHANNEL 用途 ALAM，独立于通知音）+ 振动循环 +
- * 亮屏，用户不关就一直响，最长 5 分钟自动收场。
+ * 本服务由 AlarmManager.setAlarmClock（AlarmRingReceiver）拉起：
+ * MediaPlayer 循环播放铃声（USAGE_ALARM 独立闹钟音频焦点）+ 穿透勿扰震动循环 +
+ * 锁屏直达（setFullScreenIntent）+ 「再睡 5 分钟 / 再睡 10 分钟 / 停止响铃」动作，
+ * 用户不关就一直响，最长 5 分钟自动收场。
  */
 public class AlarmRingService extends Service {
 
     public static final String ACTION_STOP = "com.somnacare.gemmallm.alarmring.STOP";
+    public static final String ACTION_SNOOZE = "com.somnacare.gemmallm.alarmring.SNOOZE";
+    public static final String EXTRA_SNOOZE_MINUTES = "snooze_minutes";
     private static final String CHANNEL_ID = "somnacare-alarm-ring";
     private static final long AUTO_STOP_MS = 5 * 60 * 1000L;   // 最长响 5 分钟
 
-    // 响铃状态（同进程静态可达）：插件 alarmRingStatus 查询用——
-    // App 侧横幅只在响铃那一分钟对表才出，错过这一分钟打开 App 就没有停止入口
+    // 响铃状态（同进程静态可达）：插件 alarmRingStatus / alarmRingSnooze 查询用
     public static volatile boolean ringing = false;
     public static volatile String ringTime = null;
     public static volatile String ringLabel = null;
+    public static volatile String ringTone = "gentle_chime";
+    public static volatile boolean ringVibrate = true;
 
     private MediaPlayer player;
     private Vibrator vibrator;
     private PowerManager.WakeLock wakeLock;
+    private AudioManager.OnAudioFocusChangeListener audioFocusListener;
+    private AudioFocusRequest audioFocusRequest;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable autoStop = this::stopRing;
 
@@ -49,13 +58,18 @@ public class AlarmRingService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-            // 渠道不出声：循环铃声由 MediaPlayer 负责，避免通知音与服务音叠放
-            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "闹钟响铃", NotificationManager.IMPORTANCE_HIGH);
-            ch.setSound(null, null);
-            ch.enableVibration(false);
-            nm.createNotificationChannel(ch);
+        SleepCorePlugin.ensureSilentAlarmBannerChannel(this);
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                // 渠道不出声无震：循环铃声与穿透勿扰震动由本服务接管，避免与通知音叠放
+                NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "闹钟响铃", NotificationManager.IMPORTANCE_HIGH);
+                ch.setSound(null, null);
+                ch.enableVibration(false);
+                ch.setBypassDnd(true);
+                ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                nm.createNotificationChannel(ch);
+            }
         }
     }
 
@@ -66,86 +80,165 @@ public class AlarmRingService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (ACTION_STOP.equals(intent.getAction())) {
+        String action = intent.getAction();
+        if (ACTION_STOP.equals(action)) {
+            stopRing();
+            return START_NOT_STICKY;
+        }
+        if (ACTION_SNOOZE.equals(action)) {
+            int mins = intent.getIntExtra(EXTRA_SNOOZE_MINUTES, 5);
+            String snoozeLabel = intent.getStringExtra("label");
+            if (snoozeLabel == null) snoozeLabel = ringLabel;
+            String snoozeTone = intent.getStringExtra("tone");
+            if (snoozeTone == null) snoozeTone = ringTone;
+            boolean snoozeVibrate = intent.hasExtra("vibrate")
+                    ? intent.getBooleanExtra("vibrate", true)
+                    : ringVibrate;
+            SleepCorePlugin.scheduleSnoozeAlarm(this, mins, snoozeLabel, snoozeTone, snoozeVibrate);
             stopRing();
             return START_NOT_STICKY;
         }
         // 两条闹钟落在同一分钟会二次投递：先撤掉上一轮的 5 分钟自动收场回调，
-        // 否则旧回调先到时会把新一轮响铃一并停掉（上限缩成"第一次投递起 5 分钟"）；
-        // 再释放旧 player/vibrator/wakelock——旧 MediaPlayer 仍在循环且无引用可达时，
-        // 停铃与超时都停不掉它
+        // 再释放旧 player/vibrator/wakelock
         main.removeCallbacks(autoStop);
         releaseRingResources();
         String label = intent.getStringExtra("label");
         String time = intent.getStringExtra("time");
         String tone = intent.getStringExtra("tone");
-        startRingForeground(label, time);
+        boolean vibrate = intent.getBooleanExtra("vibrate", true);
+        startRingForeground(label, time, tone, vibrate);
         startSound(tone);
-        startVibrate();
+        if (vibrate) {
+            startVibrate();
+        }
         wakeScreen();
         // 用户不关就一直响，5 分钟后自动收场
         main.postDelayed(autoStop, AUTO_STOP_MS);
-        return START_NOT_STICKY;   // 被杀即停：null intent 重启曾重置 5 分钟计时
+        return START_NOT_STICKY;
     }
 
-    private void startRingForeground(String label, String time) {
-        // 点通知的任何位置（本体或按钮）都=停铃：此前本体是「打开 App」的
-        // PendingIntent，早上点弹屏只会进 App、响铃照旧，像停止键被删了
+    private PendingIntent buildSnoozePendingIntent(int requestCode, int minutes,
+            String label, String tone, boolean vibrate) {
+        Intent snooze = new Intent(this, AlarmRingService.class)
+                .setAction(ACTION_SNOOZE)
+                .putExtra(EXTRA_SNOOZE_MINUTES, minutes)
+                .putExtra("label", label != null ? label : "")
+                .putExtra("tone", tone != null ? tone : "gentle_chime")
+                .putExtra("vibrate", vibrate);
+        return PendingIntent.getService(this, requestCode, snooze,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    @SuppressWarnings("deprecation")
+    private Notification.Builder createNotificationBuilder() {
+        return Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+    }
+
+    private void startRingForeground(String label, String time, String tone, boolean vibrate) {
+        // 点通知本体直接停铃，同时提供「再睡 5 分钟」「再睡 10 分钟」「停止响铃」三个显式按钮
         Intent stop = new Intent(this, AlarmRingService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 7, stop,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent snooze5Pi = buildSnoozePendingIntent(8, 5, label, tone, vibrate);
+        PendingIntent snooze10Pi = buildSnoozePendingIntent(9, 10, label, tone, vibrate);
 
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, CHANNEL_ID)
-                : new Notification.Builder(this);
-        Notification n = b.setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-                .setContentTitle(time != null ? time + " 闹钟响铃中" : "闹钟响铃中")
-                .setContentText(label != null ? label + " · 点击停止响铃" : "点击停止响铃")
+        Notification.Builder b = createNotificationBuilder()
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(time != null && !time.isEmpty() ? time + " 闹钟响铃中" : "闹钟响铃中")
+                .setContentText(label != null && !label.isEmpty() ? label + " · 点击停止或选择贪睡" : "点击停止响铃或选择贪睡")
                 .setContentIntent(stopPi)
                 // 锁屏上也完整可见可点（闹钟类通知按惯例公开）
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .addAction(new Notification.Action.Builder(
-                        null, "停止响铃", stopPi).build())
+                .addAction(new Notification.Action.Builder(null, "再睡 5 分钟", snooze5Pi).build())
+                .addAction(new Notification.Action.Builder(null, "再睡 10 分钟", snooze10Pi).build())
+                .addAction(new Notification.Action.Builder(null, "停止响铃", stopPi).build())
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build();
+                .setOnlyAlertOnce(true);
+
+        // 锁屏直达（setFullScreenIntent）：Android 14+ 若未授予全屏意图权限安全降级为高优横幅
+        try {
+            Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                launch.putExtra("somnacare_alarm_ringing", true);
+                PendingIntent fullScreenPi = PendingIntent.getActivity(this, 10, launch,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                boolean allowFullScreen = Build.VERSION.SDK_INT < 34
+                        || nm == null
+                        || nm.canUseFullScreenIntent();
+                if (allowFullScreen) {
+                    b.setFullScreenIntent(fullScreenPi, true);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        Notification n = b.build();
         ringing = true;
         ringTime = time;
         ringLabel = label;
+        ringTone = tone != null && !tone.isEmpty() ? tone : "gentle_chime";
+        ringVibrate = vibrate;
         if (Build.VERSION.SDK_INT >= 34) {
             try {
                 startForeground(20260931, n,
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                SleepCorePlugin.onRingStateChanged(true);
                 return;
             } catch (Exception fgErr) {
-                // 复审 5.5：specialUse 类型被系统拒绝时会落到无类型 startForeground，
-                // 至少留痕——否则"闹钟响了但前台通知消失"无从排查
                 android.util.Log.w("AlarmRingService", "startForeground(specialUse) 被拒绝: " + fgErr);
             }
         }
         startForeground(20260931, n);
+        SleepCorePlugin.onRingStateChanged(true);
+    }
+
+    private AudioAttributes buildAlarmAudioAttributes() {
+        return new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void requestAlarmAudioFocus(AudioManager am, AudioAttributes alarmAttrs) {
+        if (audioFocusListener == null) {
+            audioFocusListener = focusChange -> { /* 闹钟铃声最高优先，不做让路 */ };
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(alarmAttrs)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener(audioFocusListener)
+                    .build();
+            am.requestAudioFocus(audioFocusRequest);
+        } else {
+            am.requestAudioFocus(audioFocusListener,
+                    AudioManager.STREAM_ALARM,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+        }
     }
 
     private void startSound(String tone) {
         try {
-            // 按 tone 映射铃声资源：三个 ogg 与 App 内"试听"（audioSynth.playAlarm）
-            // 的音符结构一致——此前只有一份 gentle_chime，选什么铃声早上都响同一个
+            // 按 tone 映射铃声资源：三个 ogg 与 App 内"试听"（audioSynth.playAlarm）一致
             String toneRes = "gentle_chime".equals(tone) || "aurora_melody".equals(tone)
                     || "radar_beep".equals(tone) ? tone : "gentle_chime";
             int resId = getResources().getIdentifier(toneRes, "raw", getPackageName());
             if (resId == 0) {
-                // res/raw 缺铃声资源时诚实静音并留日志。旧兜底从 assets/alarm/
-                // 复制播放——该目录从不存在，真走到只会 FileNotFoundException
-                // 被吞成静默无声，是个假路径
                 android.util.Log.w("AlarmRing", "铃声资源缺失: raw/" + toneRes);
                 return;
             }
+            AudioAttributes alarmAttrs = buildAlarmAudioAttributes();
             player = new MediaPlayer();
-            player.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build());
+            player.setAudioAttributes(alarmAttrs);
             android.content.res.AssetFileDescriptor afd = getResources().openRawResourceFd(resId);
             if (afd != null) {
                 try {
@@ -154,26 +247,18 @@ public class AlarmRingService extends Service {
                     afd.close();
                 }
             } else {
-                // 若 .ogg 未来意外被压缩导致 openRawResourceFd 返回 null，回退到 resource URI
                 player.setDataSource(this, android.net.Uri.parse(
                         "android.resource://" + getPackageName() + "/" + resId));
             }
             player.setLooping(true);
-            // 音频焦点（第 51 轮审计 P1）：无焦点时铃声与整夜助眠音景直接混叠、
-            // 被白噪音掩蔽——睡眠 App 最坏场景。拿 transient-loss 凭据，焦点
-            // 系统至少给其他规范播放器一个让路的信号
+            player.prepare();
             try {
-                android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
-                if (am != null && audioFocusListener == null) {
-                    audioFocusListener = new android.media.AudioManager.OnAudioFocusChangeListener() {
-                        @Override public void onAudioFocusChange(int focusChange) { /* 铃声优先，不做让路 */ }
-                    };
+                AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) {
+                    requestAlarmAudioFocus(am, alarmAttrs);
                 }
-                if (am != null) am.requestAudioFocus(audioFocusListener,
-                        android.media.AudioAttributes.CONTENT_TYPE_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
             } catch (Exception ignored) {
             }
-            player.prepare();
             player.start();
         } catch (Exception e) {
             android.util.Log.w("AlarmRing", "播放闹钟铃声失败: " + e.getMessage());
@@ -184,31 +269,45 @@ public class AlarmRingService extends Service {
         }
     }
 
-    private android.media.AudioManager.OnAudioFocusChangeListener audioFocusListener;
+    @SuppressWarnings("deprecation")
+    private Vibrator resolveVibrator() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            VibratorManager vm = (VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+            if (vm != null) return vm.getDefaultVibrator();
+        }
+        return (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+    }
 
+    @SuppressWarnings("deprecation")
     private void startVibrate() {
         try {
-            vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            vibrator = resolveVibrator();
             if (vibrator == null || !vibrator.hasVibrator()) {
                 vibrator = null;
                 return;
             }
             long[] pattern = {0, 600, 400, 600, 400};
-            if (Build.VERSION.SDK_INT >= 26) {
-                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+            if (Build.VERSION.SDK_INT >= 33) {
+                VibrationAttributes vAttrs = new VibrationAttributes.Builder()
+                        .setUsage(VibrationAttributes.USAGE_ALARM)
+                        .build();
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0), vAttrs);
+            } else if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0), buildAlarmAudioAttributes());
             } else {
-                vibrator.vibrate(pattern, 0);
+                vibrator.vibrate(pattern, 0, buildAlarmAudioAttributes());
             }
         } catch (Exception e) {
             vibrator = null;
         }
     }
 
+    @SuppressWarnings("deprecation")
     private void wakeScreen() {
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null) {
-                // 亮屏让用户看到（FULL_WAKE_LOCK 已废弃但仍是亮屏最可靠的兜底）
+                // 亮屏让用户看到（FULL/SCREEN_BRIGHT_WAKE_LOCK 已废弃但仍是熄屏点亮最可靠的兜底）
                 wakeLock = pm.newWakeLock(
                         PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
                         "somnacare:alarm_ring");
@@ -219,23 +318,38 @@ public class AlarmRingService extends Service {
     }
 
     private void stopRing() {
+        boolean wasRinging = ringing;
         ringing = false;
         ringTime = null;
         ringLabel = null;
+        ringTone = "gentle_chime";
+        ringVibrate = true;
         main.removeCallbacks(autoStop);
         releaseRingResources();
+        if (wasRinging) {
+            SleepCorePlugin.onRingStateChanged(false);
+        }
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
     /** 释放响铃资源（stopRing 与二次投递共用）。 */
+    @SuppressWarnings("deprecation")
     private void releaseRingResources() {
-        if (audioFocusListener != null) {
-            try {
-                android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
-                if (am != null) am.abandonAudioFocus(audioFocusListener);
-            } catch (Exception ignored) {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    if (audioFocusRequest != null) {
+                        am.abandonAudioFocusRequest(audioFocusRequest);
+                        audioFocusRequest = null;
+                    }
+                } else if (audioFocusListener != null) {
+                    am.abandonAudioFocus(audioFocusListener);
+                    audioFocusListener = null;
+                }
             }
+        } catch (Exception ignored) {
         }
         if (player != null) {
             try { player.stop(); player.release(); } catch (Exception ignored) { }
