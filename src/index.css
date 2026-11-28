@@ -207,6 +207,28 @@ html {
   animation: fade-in 200ms ease-out;
 }
 
+/* 二级子页原生级推入/退场（100% 不透明纯 GPU translate3d，彻底消灭 opacity:0 透底闪帧与骨架重影） */
+@keyframes subpage-push-in {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+@keyframes subpage-push-out {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
+}
+.animate-subpage-in {
+  animation: subpage-push-in 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform;
+  contain: layout paint style;
+  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.55);
+}
+.animate-subpage-out {
+  animation: subpage-push-out 170ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform;
+  contain: layout paint style;
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+}
+
 /* 品牌开屏三段式：水滴下落 / 涟漪扩散 / 月亮描边填充 / 极光浮现 / 文字上浮 */
 @keyframes splash-drop {
   0% { transform: translateY(-180px) scale(0.6); opacity: 0; }
@@ -265,7 +287,9 @@ html {
   .animate-tab-fade-in,
   .animate-cta-breathe,
   .animate-cta-breathe::after,
-  .animate-fadeIn {
+  .animate-fadeIn,
+  .animate-subpage-in,
+  .animate-subpage-out {
     animation: none;
   }
   /* 兜底：未逐一列举的 Tailwind 内置动画与 transition 一并静止

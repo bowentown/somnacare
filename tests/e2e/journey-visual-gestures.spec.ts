@@ -173,16 +173,35 @@ test('旅程26 池塘逐帧动画：pond-live 下画布持续变化', async ({ p
   expect(fBack1 - fBack0).toBeGreaterThanOrEqual(8);
 
   // M1 省电回归锁 ②：从首页打开全屏二级子页（如睡前仪式）遮挡池塘时同样立即停 rAF
+  // 同时验证 v1.44.1 二级子页防闪帧：外层采用 100% 不透明右滑推入（animate-subpage-in）、底栏保持挂载不闪消失
   await page.getByRole('button', { name: /睡前仪式/ }).first().click();
   await expect(page.getByRole('heading', { name: '睡前仪式', exact: true })).toBeVisible();
+  const subpageState = await page.evaluate(() => {
+    const host = document.querySelector('[data-subpage-phase="in"]');
+    const navEl = document.querySelector('nav[aria-label="主标签栏"]');
+    const shell = document.querySelector('[role="region"][aria-label="睡前仪式"]');
+    return {
+      hasPushIn: !!host?.classList.contains('animate-subpage-in'),
+      shellHasFadeIn: !!shell?.classList.contains('animate-fadeIn'),
+      navMounted: !!navEl,
+      navAriaHidden: navEl?.getAttribute('aria-hidden') ?? null,
+    };
+  });
+  expect(subpageState).toEqual({
+    hasPushIn: true,
+    shellHasFadeIn: false,
+    navMounted: true,
+    navAriaHidden: 'true',
+  });
   await page.waitForTimeout(150);
   const fSub0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
   await page.waitForTimeout(600);
   const fSub1 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
   expect(fSub1 - fSub0).toBe(0);
 
-  // 返回首页后 rAF 恢复
+  // 返回首页后底栏立刻恢复可交互，池塘 rAF 恢复
   await page.getByRole('button', { name: '返回' }).click();
+  await expect(page.getByRole('navigation', { name: '主标签栏' })).toBeVisible();
   await page.waitForTimeout(200);
   const fRes0 = await page.evaluate(() => (window as any).__pondFrames ?? 0);
   await page.waitForTimeout(600);

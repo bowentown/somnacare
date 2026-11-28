@@ -9,9 +9,16 @@ interface BottomNavBarProps {
   activeTab: NavTab;
   onChangeTab: (tab: NavTab) => void;
   theme: ThemeConfig;
+  /** 二级子页覆盖在上层时保持挂载不闪消失，仅隐藏无障碍树与指针交互 */
+  hidden?: boolean;
 }
 
-export const BottomNavBar: React.FC<BottomNavBarProps> = React.memo(function BottomNavBar({ activeTab, onChangeTab, theme }) {
+export const BottomNavBar: React.FC<BottomNavBarProps> = React.memo(function BottomNavBar({
+  activeTab,
+  onChangeTab,
+  theme,
+  hidden = false,
+}) {
   const tabs: { key: NavTab; label: string; icon: React.ElementType }[] = [
     { key: 'today', label: '睡眠', icon: Moon },
     { key: 'trends', label: '趋势', icon: BarChart2 },
@@ -25,7 +32,10 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = React.memo(function Bot
     <nav
       role="navigation"
       aria-label="主标签栏"
-      className={`fixed bottom-0 left-0 right-0 z-50 w-full select-none ${theme.navBg} border-t ${theme.navBorder} px-3 py-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.7)] transition-colors`}
+      aria-hidden={hidden || undefined}
+      className={`fixed bottom-0 left-0 right-0 z-50 w-full select-none ${theme.navBg} border-t ${theme.navBorder} px-3 py-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.7)] transition-colors ${
+        hidden ? 'pointer-events-none' : ''
+      }`}
     >
       <div className="relative grid grid-cols-5 items-center max-w-lg mx-auto">
         {/* 滑动胶囊：一枚共享的激活底片，比每格自己换背景更有连续感 */}
@@ -43,6 +53,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = React.memo(function Bot
             <button
               key={t.key}
               type="button"
+              tabIndex={hidden ? -1 : undefined}
               aria-current={isActive ? 'page' : undefined}
               onClick={() => {
                 if (!isActive) hapticPage();

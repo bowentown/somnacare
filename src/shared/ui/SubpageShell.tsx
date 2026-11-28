@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { ThemeConfig } from '../theme/themeStyles';
-import { popSubpage } from '../store/uiStore';
+import { popSubpage, uiStore } from '../store/uiStore';
 import { hasOpenModal } from '../utils/modalA11y';
 import { tapTick } from '../utils/haptics';
 
@@ -38,6 +38,7 @@ export const SubpageShell: React.FC<SubpageShellProps> = ({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (hasOpenModal()) return;
+      if (uiStore.getState().subpageStack.length === 0) return;
       e.preventDefault();
       if (onBack) onBack();
       else popSubpage();
@@ -51,7 +52,7 @@ export const SubpageShell: React.FC<SubpageShellProps> = ({
       data-no-swipe
       role="region"
       aria-label={title}
-      className={`fixed inset-0 z-[60] ${theme.pageBg} ${theme.textPrimary} flex flex-col overflow-hidden animate-fadeIn`}
+      className="w-full h-full flex flex-col overflow-hidden"
     >
       <div className="w-full flex-1 max-w-lg mx-auto flex flex-col min-h-0">
         <header className={`px-4 pt-5 pb-3.5 flex items-center justify-between gap-2 border-b ${theme.cardBorder} shrink-0`}>

@@ -310,10 +310,15 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* 二级子页栈 + 底栏 + 全局弹窗与状态条 */}
+      {/* 二级子页栈 + 底栏（子页打开时保持挂载不闪消失，仅退至 z-[60] 下层且隐藏交互）+ 全局弹窗与状态条 */}
       <SubpageHost />
-      {!chatTyping && !hasSubpage && (
-        <BottomNavBar activeTab={activeTab} onChangeTab={setActiveTab} theme={currentTheme} />
+      {!chatTyping && (
+        <BottomNavBar
+          activeTab={activeTab}
+          onChangeTab={setActiveTab}
+          theme={currentTheme}
+          hidden={hasSubpage}
+        />
       )}
       <AppOverlays />
     </div>
