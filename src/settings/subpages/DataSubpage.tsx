@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, RotateCcw, ShieldCheck, Upload } from 'lucide-react';
 import { SubpageShell } from '../../shared/ui/SubpageShell';
+import { alertDialog, confirmDialog } from '../../shared/ui/ConfirmDialogHost';
 import type { SleepRecord } from '../../shared/types/sleep';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import {
@@ -238,7 +239,11 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
         });
         if (!res?.uri) throw new Error('writeFile 未返回文件地址');
         markBackedUp();
-        alert(`备份已生成：${name}\n即将打开分享面板，请选择"保存到文件"或网盘完成导出。`);
+        await alertDialog({
+          title: '备份已生成',
+          message: `备份已生成：${name}\n即将打开分享面板，请选择"保存到文件"或网盘完成导出。`,
+          confirmText: '打开分享',
+        });
         try {
           await nativePlugin('Share')?.share({
             title: '睡眠数据备份',
@@ -252,7 +257,7 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
       }
     } catch (e) {
       console.warn('[export] 原生备份失败', e);
-      alert('备份导出失败，请重试');
+      void alertDialog({ title: '导出失败', message: '备份导出失败，请重试' });
       return;
     }
     try {
@@ -268,19 +273,21 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
       window.setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {
       console.warn('[export] 备份导出失败', e);
-      alert('备份导出失败，请重试');
+      void alertDialog({ title: '导出失败', message: '备份导出失败，请重试' });
     }
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // 立即清空 input 值：取消确认或导入失败后重选同一文件可再次触发 onChange
+    e.target.value = '';
     if (!file) return;
     if (file.size > IMPORT_MAX_BYTES) {
-      alert('导入失败：备份文件超过 20MB 上限');
+      void alertDialog({ title: '导入失败', message: '导入失败：备份文件超过 20MB 上限' });
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const parsedRaw = event.target?.result as string;
         const parsed = parseBackup(parsedRaw);
@@ -289,12 +296,15 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
             .map((r) => sanitizeRecord(r))
             .filter((r): r is SleepRecord => r !== null);
           if (cleaned.length === 0) {
-            alert('导入失败：文件里没有可识别的睡眠记录');
+            await alertDialog({ title: '导入失败', message: '导入失败：文件里没有可识别的睡眠记录' });
             return;
           }
-          void importLegacyRecords(cleaned);
-          if (cleaned.length < parsed.records.length) {
-            alert(`已导入 ${cleaned.length} 条记录，另有 ${parsed.records.length - cleaned.length} 条格式无效已跳过`);
+          const imported = await importLegacyRecords(cleaned);
+          if (imported && cleaned.length < parsed.records.length) {
+            await alertDialog({
+              title: '部分记录已跳过',
+              message: `已导入 ${cleaned.length} 条记录，另有 ${parsed.records.length - cleaned.length} 条格式无效已跳过`,
+            });
           }
           return;
         }
@@ -308,43 +318,70 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
             : 0;
         const chatCountText = `${chatCount} 段`;
         if (parsed.data.records.length === 0) {
-          if (!confirm('这份备份里没有任何睡眠记录。继续导入会清空当前的全部记录，确定？')) return;
+          const okEmpty = await confirmDialog({
+            title: '确认清空当前记录',
+            message: '这份备份里没有任何睡眠记录。继续导入会清空当前的全部记录，确定？',
+            confirmText: '继续导入',
+            danger: true,
+          });
+          if (!okEmpty) return;
         }
-        const ok = confirm(
-          `全量备份导入将覆盖当前的睡眠记录、朋友圈与聊天历史（图鉴与档案按文件内容恢复）。\n` +
+        const ok = await confirmDialog({
+          title: '导入全量备份',
+          message:
+            `全量备份导入将覆盖当前的睡眠记录、朋友圈与聊天历史（图鉴与档案按文件内容恢复）。\n` +
             `包含：记录 ${parsed.data.records.length} 条 · 朋友圈 ${parsed.data.moments.length} 条 · 聊天 ${chatCountText}。\n` +
-            `API 密钥不包含在备份中：覆盖安装会保留本机已填的值；卸载/换机迁移后需重新填写（DeepSeek / 自建 Key / HF token）。\n` +
+            `API 密钥不包含在备份中：覆盖安装会保留本机已填的值；卸载/换机迁移后需重新填写（DeepSeek / 自建 Key）。\n` +
             `手机使用信号数据也不参与备份，换机后需重新积累。继续？`,
-        );
+          confirmText: '覆盖导入',
+          danger: true,
+        });
         if (!ok) return;
         const r = restoreFullBackup(parsed.data);
-        const finishRestore = () => {
-          alert(
-            `已恢复全量备份：记录 ${r.records} 条 · 朋友圈 ${r.moments} 条 · 聊天 ${r.chat} 条${r.travel ? ' · 图鉴进度' : ''}${r.profile ? ' · 档案' : ''}。页面即将刷新。`,
-          );
-          window.location.reload();
-        };
         if (r.slices.includes('adSkip')) {
-          void pushRestoredAdSkipExcludedToNative().finally(finishRestore);
-        } else {
-          finishRestore();
+          try {
+            await pushRestoredAdSkipExcludedToNative();
+          } catch {
+            /* ignore */
+          }
         }
+        await alertDialog({
+          title: '全量备份已恢复',
+          message: `已恢复全量备份：记录 ${r.records} 条 · 朋友圈 ${r.moments} 条 · 聊天 ${r.chat} 条${r.travel ? ' · 图鉴进度' : ''}${r.profile ? ' · 档案' : ''}。页面即将刷新。`,
+          confirmText: '立即刷新',
+        });
+        window.location.reload();
       } catch (err) {
         const msg = err instanceof Error ? err.message : '';
         if (msg === 'bad-records') {
-          alert('这个备份文件的记录字段不是列表（可能已损坏或来自其他应用）——已取消导入，现有数据未改动。');
+          await alertDialog({
+            title: '导入失败',
+            message: '这个备份文件的记录字段不是列表（可能已损坏或来自其他应用）——已取消导入，现有数据未改动。',
+          });
         } else if (msg === 'too-many-records') {
-          alert('导入失败：记录条数超出上限（5 万条）——请拆分备份文件');
+          await alertDialog({
+            title: '导入失败',
+            message: '导入失败：记录条数超出上限（5 万条）——请拆分备份文件',
+          });
         } else if (msg === 'too-big') {
-          alert('导入失败：备份内容超过 20MB 上限');
+          await alertDialog({
+            title: '导入失败',
+            message: '导入失败：备份内容超过 20MB 上限',
+          });
         } else if (
           typeof DOMException !== 'undefined' &&
           err instanceof DOMException &&
           (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
         ) {
-          alert('导入失败：本机存储空间不足，请清理后重试');
+          await alertDialog({
+            title: '导入失败',
+            message: '导入失败：本机存储空间不足，请清理后重试',
+          });
         } else {
-          alert('导入失败：不是合法的备份 JSON 文件');
+          await alertDialog({
+            title: '导入失败',
+            message: '导入失败：不是合法的备份 JSON 文件',
+          });
         }
       }
     };
@@ -393,7 +430,7 @@ export const DataSubpage: React.FC<DataSubpageProps> = ({ autoCheck }) => {
 
         <button
           type="button"
-          onClick={resetToDemoData}
+          onClick={() => void resetToDemoData()}
           className={`w-full py-2.5 rounded-xl ${theme.cardInnerBg} hover:opacity-80 border ${theme.cardInnerBorder} ${theme.textMuted} hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
         >
           <RotateCcw className="w-3.5 h-3.5 opacity-60" />

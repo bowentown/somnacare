@@ -729,13 +729,20 @@ public class EyeCareService extends Service {
         }
     }
 
-    private static int parseSafe(String hex, int fallbackRgb) {
-        if (hex == null || hex.length() < 7 || !hex.startsWith("#")) return fallbackRgb;
-        try {
-            return android.graphics.Color.parseColor(hex) & 0x00FFFFFF;
-        } catch (Exception e) {
-            return fallbackRgb;
+    static int parseSafe(String hex, int fallbackRgb) {
+        if (hex == null) return fallbackRgb;
+        String s = hex.trim();
+        if (!s.startsWith("#")) return fallbackRgb;
+        String digits = s.substring(1);
+        int len = digits.length();
+        if (len != 6 && len != 8) return fallbackRgb;
+        int val = 0;
+        for (int i = 0; i < len; i++) {
+            int d = Character.digit(digits.charAt(i), 16);
+            if (d < 0) return fallbackRgb;
+            val = (val << 4) | d;
         }
+        return val & 0x00FFFFFF;
     }
 
     /** 窗口级透明度上限：单层安全封顶 0.85，并在 Android 12+ 自动贴合系统触摸穿透豁免上限 */
@@ -898,6 +905,16 @@ public class EyeCareService extends Service {
      * 前台通知：按「护眼滤镜运行中」与「仅 20-20-20 远眺提醒」区分文案与关闭动作，
      * 避免仅开远眺时点"关闭护眼"毫无反应的僵尸通知问题。
      */
+    private static int resolveMoonSmallIcon(Context context, int fallbackRes) {
+        try {
+            int resId = context.getResources().getIdentifier(
+                    "ic_stat_moon", "drawable", context.getPackageName());
+            if (resId != 0) return resId;
+        } catch (Exception ignored) {
+        }
+        return fallbackRes;
+    }
+
     private void startForegroundCompat() {
         Notification notif = null;
         try {
@@ -939,7 +956,7 @@ public class EyeCareService extends Service {
                     ? new Notification.Builder(this, CHANNEL_ID)
                     : new Notification.Builder(this);
             notif = builder
-                    .setSmallIcon(getApplicationInfo().icon)
+                    .setSmallIcon(resolveMoonSmallIcon(this, getApplicationInfo().icon))
                     .setContentTitle(title)
                     .setContentText(text)
                     .addAction(new Notification.Action.Builder(

@@ -25,7 +25,7 @@ public class PetEnergyWidgetProvider extends AppWidgetProvider {
         WidgetTheme theme = WidgetTheme.of(WidgetStore.themeId(context));
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_pet_energy);
-        views.setInt(R.id.widget_pet_root, "setBackgroundColor", theme.bg);
+        views.setInt(R.id.widget_pet_root, "setBackgroundResource", theme.bgDrawableRes);
         views.setTextColor(R.id.widget_pet_title, theme.textPrimary);
         views.setTextColor(R.id.widget_pet_pct, theme.accent);
         views.setTextColor(R.id.widget_pet_mood, theme.textSecondary);

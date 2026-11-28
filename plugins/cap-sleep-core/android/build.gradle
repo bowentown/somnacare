@@ -34,6 +34,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 repositories {
@@ -47,4 +50,5 @@ dependencies {
     // FileProvider（APK 安装授权）：Capacitor 以 implementation 引入 AndroidX，
     // 不会传递到插件编译类路径，这里必须显式声明
     implementation 'androidx.core:core:1.17.0'
+    testImplementation 'junit:junit:4.13.2'
 }

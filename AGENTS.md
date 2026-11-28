@@ -12,7 +12,7 @@ npm install --legacy-peer-deps      # 必须带此 flag（React 19 的 peer 冲�
 npm run dev                         # 原生 vite → http://localhost:3000（纯前端开发与 e2e 预览）
 npm run lint                        # tsc --noEmit —— 已在 CI 里，改动后本地先跑
 npm test                            # Vitest 并行行为单测（tests/unit/*.test.ts）
-npm run verify                      # 核心静态/安全/原生门禁 12 条（另 4 条产物门禁在 verify:css，需先 build）
+npm run verify                      # 核心静态/安全/原生门禁 11 条（另 4 条产物门禁在 verify:css，需先 build）
 npm run build                       # vite build → dist/
 npm run verify:css                  # 校验 dist/ 里生成的 CSS 类名、兼容与主包架构（★ 必须先 build）
 npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vite dev server）
@@ -30,32 +30,31 @@ npx playwright test                 # 浏览器 e2e（自动拉起 :3000 的 vit
 | 路径 | 作用 |
 | --- | --- |
 | `src/` | React 应用，按领域模块化：`app/`（App 根壳、`SubpageHost` 懒加载二级子页栈、`AppOverlays`、`hooks/`）、`shared/`（`store/` 零依赖选择器 Store、`storage/` 42 键统一台账与 Backup v3、`native/nativeBridge.ts`、`theme/`、`types/`、`ui/`、`hooks/`、`utils/`）、`features/`（`sleep/`、`trends/`、`intervention/`、`widgets/`、`coach/`、`eyecare/`、`pet/`、`updates/`、`extensions/ad-skip/`）、`settings/`（偏好主菜单与二级子页）、`pond/`（"活的海"池塘引擎） |
-| `plugins/cap-gemma-llm/` | 本地插件（Java）：端侧 MediaPipe Gemma `.task` 推理与安全模型下载 |
-| `plugins/cap-sleep-core/` | 本地插件（Java）：闹钟持续响铃、作息到点提醒、深夜救援、应用内更新、电池白名单、主题换图标与开机重排 |
-| `plugins/cap-sleep-widgets/` | 本地插件（Java）：4 款桌面小组件（2×1 评分 / 2×2 睡前快捷 / 4×2 7 晚节律 / 2×2 大肥鱼能量）、独立 `WidgetSnapshot` 存储与 DeepLink 路由 |
-| `plugins/cap-eye-care/` | 本地插件（Java）：全局暖色/减光护眼悬浮窗、20-20-20 远眺提醒、`护眼滤镜` 与 `极暗夜读` 双快捷磁贴、跨插件切换接收器 |
-| `plugins/cap-pet-overlay/` | 本地插件（Java）：鲸鱼娘桌宠悬浮窗（4 键扇面：消息 / 护眼 / 跳广告 / 缩放）、`大肥鱼桌宠` 快捷磁贴、深夜高刺激刷屏超时轻提醒、SurfaceView 独立渲染线程与精灵图素材（保留 `NOTICE.md` 非商授权） |
-| `plugins/cap-ad-skip/` | 本地插件（Java）：开屏与应用内广告跳过无障碍服务、按应用排除不跳名单、`广告跳过` 快捷磁贴、显式切换广播接收器、GKD 规则表与 Shizuku 守护 |
-| `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合，自动提议的数据源） |
-| `tools/` | `verify-*.mts` 静态与产物门禁（16 条）、`patch-android-host.mts` 结构化宿主补丁、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
-| `tests/` | `tests/unit/`（Vitest 并行领域行为单测）与 `tests/e2e/`（Playwright 端到端回归） |
-| `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（wav）、通知小图标 |
-| `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK（含 7 插件快速预编译）；打 `v*` tag 自动发 Release |
+| `plugins/cap-sleep-core/` | 本地插件（Java）：闹钟持续响铃（`setAlarmClock` + 贪睡）、作息到点提醒、应用内更新、电池白名单、主题换图标与开机/覆盖更新重排 |
+| `plugins/cap-sleep-widgets/` | 本地插件（Java）：4 款圆角主题桌面小组件（2×1 评分 / 2×2 睡前快捷 / 4×2 7 晚节律 / 2×2 大肥鱼能量）、独立 `WidgetSnapshot` 存储与 DeepLink 路由 |
+| `plugins/cap-eye-care/` | 本地插件（Java）：数学无损单层护眼悬浮窗、原生定时日变、相机/相册/全屏视频自动暂避、20-20-20 远眺提醒、`护眼滤镜` 与 `极暗夜读` 双快捷磁贴、跨插件切换接收器 |
+| `plugins/cap-pet-overlay/` | 本地插件（Java）：鲸鱼娘桌宠悬浮窗（4 键扇面：消息 / 护眼 / 跳广告 / 缩放）、`大肥鱼桌宠` 快捷磁贴、任意本机 App 深夜高刺激刷屏劝睡、SurfaceView 独立渲染线程与 WebP 精灵图素材（保留 `NOTICE.md` 非商授权） |
+| `plugins/cap-ad-skip/` | 本地插件（Java）：开屏与应用内广告跳过无障碍服务（页面级防误点 `excludes` + 未收录 App 智能门控）、按应用排除不跳名单、`广告跳过` 快捷磁贴、显式切换广播接收器、GKD 规则表（含手动刷新）与 Shizuku 守护 |
+| `plugins/cap-usage-signal/` | 本地插件（Java）：使用行为信号（亮屏/解锁事件聚合、用眼日报、睡前一小时榜，自动提议的数据源） |
+| `tools/` | `verify-*.mts` 静态与产物门禁（15 条）、`patch-android-host.mts` 结构化宿主补丁、GKD 规则导入/刷新、图标与开屏 PNG 生成器、`android-signing.gradle` |
+| `tests/` | `tests/unit/`（Vitest 并行领域行为单测）与 `tests/e2e/`（Playwright 端到端回归）；4 个原生插件含 `android/src/test/` JUnit 4 JVM 单测 |
+| `native-resources/` | 全密度图标、四主题图标、自适应前景、铃声（ogg）、通知小图标（`ic_stat_moon`） |
+| `.github/workflows/build-apk.yml` | 唯一 CI：构建 APK（含 6 插件快速预编译 + 4 模块 JVM 单测 + 缓存加速）；打 `v*` tag 自动提取更新日志发布 Release |
 | `docs/screenshots/` | 仅供 README 引用（无架构文档；README 本身就是最完整的说明） |
 
 ## ★ 没有 `android/` 目录：原生工程由 CI 生成
 
 `android/` 不在仓库里，CI 用 `npx cap add android && npx cap sync android` 现场生成：
 
-- **各领域权限、服务、接收器与 Provider 均已归属到 7 个本地插件各自的 `plugins/cap-*/android/src/main/AndroidManifest.xml`**，由 Android Gradle Plugin Manifest Merger 自动合并；
+- **各领域权限、服务、接收器与 Provider 均已归属到 6 个本地插件各自的 `plugins/cap-*/android/src/main/AndroidManifest.xml`**，由 Android Gradle Plugin Manifest Merger 自动合并；
 - **宿主级修补统一收口到可单测脚本 `tools/patch-android-host.mts`**（取代百行脆弱 `sed`）：负责 `file_paths.xml` 追加更新下载路径、`allowBackup="false"` 与 `usesCleartextTraffic="false"` 安全加固、`minSdkVersion >= 24`（只升不降）及 `gradle.properties` 幂等补齐；
 - 改动插件清单或宿主补丁时，须同步保持 `tools/verify-apk-build-hardening.mts` 与 `tests/unit/patchAndroidHost.test.ts` 全绿。
 
 ## CI 流程（`.github/workflows/build-apk.yml`）
 
-Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-effort，审计不过关自动回退内置版本）
+Node 22 + JDK 21 → 命中 npm/Playwright/Gradle 缓存 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-effort，审计不过关自动回退内置版本）
 → `npm run lint` → `npm test` → `npm run verify` → `npm run build` → `npm run verify:css` → Playwright → `cap add/sync android`
-→ `patch-android-host.mts` + 7 插件 Java 预编译快速失败检查 → `gradlew` 出包 → **`v*` tag** 时创建 GitHub Release。
+→ `patch-android-host.mts` + 6 插件 Java 预编译与 4 模块 JUnit 4 JVM 单测快速失败检查 → `gradlew` 出包（校验体积与资产完整性）→ **`v*` tag** 时自动生成更新说明并创建 GitHub Release。
 
 - push 到 `main`/`master` 也会构建（不进 Release）。并发组按 `${{ github.ref }}` 分组：
   **main 与 v* 标签永不互杀**（曾因固定组名竞态取消了 tag run，Release 静默未发）。
@@ -66,7 +65,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
 测试体系分为三层，避免用脆弱的源码文本正则阻塞重构：
 
 1. **领域与行为单测（`npm test` → Vitest）**：`tests/unit/*.test.ts` 并行执行，覆盖睡眠模型、SRI/MSFsc/规律度、提议引擎、黄金样本、夜归属迁移全组合、备份与凭据脱敏、分享卡隐私与布局、LLM 提示词隐私、周报连胜等全部核心算法不变量。
-2. **高价值静态/产物门禁（`npm run verify` + `npm run verify:css`，共 16 条）**：保留单测测不到的构建产物、旧 WebView 兼容（`no-oklch` / `transform-compat` / `class-gen` / `bundle`）、WCAG AA 对比度、禁止临床医疗声称、原生桥安全边界与 APK 构建加固门禁。`verify-guards-wired.mts` 确保剩余 `tools/verify-*.mts` 全部接线且无 `|| true` 吞错旁路。
+2. **高价值静态/产物门禁（`npm run verify` + `npm run verify:css`，共 15 条）**：保留单测测不到的构建产物、旧 WebView 兼容（`no-oklch` / `transform-compat` / `class-gen` / `bundle`）、WCAG AA 对比度、禁止临床医疗声称、原生桥安全边界与 APK 构建加固门禁。`verify-guards-wired.mts` 确保剩余 `tools/verify-*.mts` 全部接线且无 `|| true` 吞错旁路。
 3. **浏览器 E2E 回归（`npx playwright test`）**：验证真实交互、手势、路由与零控制台错误。
 
 ## 领域规则（最容易改错的地方）
@@ -82,7 +81,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   绝不把估算写成实测。零记录时不得生成"看起来很专业"的默认报告。
 - **LLM 不许编数字**：提示词只允许引用由真实记录产出的"事实清单"，返回文案要过**数字白名单**校验，
   编造的评分/时长整条拒收并退回本地模板。
-- **离线优先**：除"用户显式点击的更新检查/APK 下载"和"用户自配的云端 AI"外，不得发起网络请求。
+- **离线优先**：除"用户显式点击的更新检查/APK 下载"、"用户显式点击的 GKD 规则刷新"和"用户自配的云端 AI"外，不得发起网络请求。
   音效是 Web Audio **实时合成**（零音频文件），池塘/桌宠全部本地。
 
 ## 授权边界（真的会卡住复用）
@@ -100,7 +99,7 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   塞进 `window.Capacitor` 里 → `isNativePlatform()` 恒 `false` → 依赖 `native` 的分支不渲染。
   正确写法：`(window as any).CapacitorCustomPlatform = { name: 'android' };`（可再加 `window.androidBridge = {}`）。
 - **原生桥访问一律走 `src/shared/native/nativeBridge.ts`**（第 94 轮收敛，`verify-native-bridge` 钉住）：
-  `isNativePlatform()` 判平台、`nativePlugin('SleepCore' | 'SleepWidgets' | 'EyeCare' | 'PetOverlay' | 'AdSkip' | 'GemmaLLM' | 'UsageSignal' | ...)`
+  `isNativePlatform()` 判平台、`nativePlugin('SleepCore' | 'SleepWidgets' | 'EyeCare' | 'PetOverlay' | 'AdSkip' | 'UsageSignal' | ...)`
   取插件（非原生平台一律返回 `null`）。业务代码里**不要**手写 `window.Capacitor?.Plugins`——
   那正是此前 20 处重复踩坑的来源（含"web 端漏出原生插件"这类静默失效）。
 - **点击前要等吸附动画**：底栏切换用指数缓出（前 100ms 走完约 80%），Playwright 的两帧稳定判定会在
@@ -123,19 +122,12 @@ Node 22 + JDK 21 → `npm ci --legacy-peer-deps` → 刷新 GKD 规则（best-ef
   （其他 worktree / 其他会话的残留进程），本服务注入的 HMR 客户端就会连到那个陌生
   服务端并抛 `WebSocket handshake: 400`，`expect(errors).toEqual([])` 把 30+ 条用例判红，
   看起来像代码回归。`playwright.config.ts` 的 webServer 已默认 `DISABLE_HMR=true` 规避。
-  想带 HMR 跑 dev 就用 `HMR_PORT=<空闲端口>` 换端口——注意 `DISABLE_HMR=true` 只阻止
-  客户端注入，**WS 监听仍会去抢 24678** 并打印一条占用错误（Vite 在 middlewareMode
-  下不认 `hmr: false`），所以 `server.ts` 里 `hmr` 必须显式给（inline `server` 对象会
-  覆盖 `vite.config.ts` 的同名字段）。
+  想带 HMR 跑 dev 就用 `HMR_PORT=<空闲端口>` 换端口（`vite.config.ts` 中已按环境变量配置 HMR 端口与关闭开关）。
 
 ## 交付约定
 
 - 工作按**轮次**组织：一轮 = **单一提交**（`fix(第 N 轮): …` / `perf(第 N 轮): …`，说明写清改了什么、
   为什么、怎么验证的），然后打 `vX.Y.Z` tag，CI 自动发布 Release。非必要不提交。
-- 改动后至少跑：`npm run lint` → `npm run verify` → `npm run build` → `npm run verify:css` →
-  `npx playwright test`。改了 Java 或 workflow 就必须看 CI 结果（本机测不了）。
-- README 里的数字（护栏条数、e2e 条数）由 `tools/verify-doc-counts.mts` 钉住：
-  改护栏/e2e 后忘了同步 README，这条护栏会在 CI 报红（改措辞也要同步它）。
-  "断言条数"是手工维护的实测下限（护栏在 verify 链内，跑 `npm run verify`
-  会无限递归，故无法自测）。
+- 改动后至少跑：`npm run lint` → `npm test` → `npm run verify` → `npm run build` → `npm run verify:css` →
+  `npx playwright test`。改了 Java 或 workflow 就必须看 CI 结果（原生插件 `compileDebugJavaWithJavac` 与 `testDebugUnitTest` 均在 CI 执行）。
 - `dist/`、`node_modules/`、`test-results/`、`.env*`（除 `.env.example`）、签名文件均已 gitignore。

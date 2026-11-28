@@ -17,7 +17,7 @@ import {
 import { CustomAlarmSetting } from '../../../shared/types/sleep';
 import { sleepAudio } from '../../intervention/utils/audioSynth';
 import { ThemeConfig } from '../../../shared/theme/themeStyles';
-import { Switch } from '../../../shared/ui';
+import { Switch, confirmDialog } from '../../../shared/ui';
 import {
   getExactAlarmStatus,
   isNativePlatform,
@@ -133,8 +133,14 @@ export const AlarmManager: React.FC<AlarmManagerProps> = ({ alarms, onUpdateAlar
     onUpdateAlarms((prev) => prev.map((a) => (a.id === id ? { ...a, enabled: !a.enabled } : a)));
   };
 
-  const handleDeleteAlarm = (id: string) => {
-    if (!window.confirm('删除这个闹钟？')) return;
+  const handleDeleteAlarm = async (id: string) => {
+    const ok = await confirmDialog({
+      title: '删除闹钟',
+      message: '删除这个闹钟？',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     onUpdateAlarms((prev) => prev.filter((a) => a.id !== id));
   };
 

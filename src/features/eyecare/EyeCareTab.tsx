@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   BedDouble,
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { EyeCareConfig, DEFAULT_EYE_CARE } from '../../shared/types/sleep';
 import { getCurrentTheme, profileStore, updateProfile, useProfileStore } from '../../shared/store/profileStore';
-import { pushSubpage, showToast } from '../../shared/store/uiStore';
+import { pushSubpage, showToast, useUIStore } from '../../shared/store/uiStore';
 import { useMinuteTick } from '../../shared/hooks/useMinuteTick';
 import { useModalA11y } from '../../shared/utils/modalA11y';
 import {
@@ -91,9 +91,12 @@ const EyeCareTabInner: React.FC = () => {
     : rawCfg;
 
   const native = isEyeCareNative();
+  const activeTab = useUIStore((s) => s.activeTab);
+  const subpageDepth = useUIStore((s) => s.subpageStack.length);
   const [granted, setGranted] = useState<boolean>(true);
   const [restEnabled, setRestEnabled] = useState<boolean>(false);
   const [nativeStatus, setNativeStatus] = useState<EyeCareNativeStatus | null>(null);
+  const syncSeqRef = useRef(0);
   const now = useMinuteTick();
   const [hue, setHue] = useState<number>(() => hexToHue(cfg.warmColor));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -102,26 +105,40 @@ const EyeCareTabInner: React.FC = () => {
   const patch = (p: Partial<EyeCareConfig>) => onUpdateProfile({ eyeCare: { ...cfg, ...p } });
 
   // 仅负责权限、远眺与原生真实状态反同步；滤镜应用与定时轮询已收敛到 App.tsx + 原生 AlarmManager，消除重复轮询
+  const syncNative = useCallback(() => {
+    if (!native) return;
+    const seq = ++syncSeqRef.current;
+    void eyeCarePermissionGranted()
+      .then((ok) => {
+        if (syncSeqRef.current === seq) setGranted(ok);
+      })
+      .catch(() => { /* ignore */ });
+    void getEyeRestStatus()
+      .then((r) => {
+        if (syncSeqRef.current === seq) setRestEnabled(r.enabled);
+      })
+      .catch(() => { /* ignore */ });
+    const latestCfg = profileStore.getState().profile.eyeCare ?? DEFAULT_EYE_CARE;
+    void syncEyeCareFromNative(latestCfg, (nextEnabled) => {
+      if (syncSeqRef.current !== seq) return;
+      onUpdateProfile((prev) => ({
+        eyeCare: { ...(prev.eyeCare ?? DEFAULT_EYE_CARE), enabled: nextEnabled },
+      }));
+    }).then((st) => {
+      if (st && syncSeqRef.current === seq) setNativeStatus(st);
+    });
+  }, [native, onUpdateProfile]);
+
+  // 切回护眼 Tab、子页返回（例如从用眼日报开关 20-20-20 返回）与 App 回前台时实时刷新徽章
+  useEffect(() => {
+    if (!native || activeTab !== 'eyecare' || subpageDepth !== 0) return;
+    syncNative();
+  }, [native, activeTab, subpageDepth, syncNative]);
+
   useEffect(() => {
     if (!native) return;
-    const syncNative = () => {
-      void eyeCarePermissionGranted().then(setGranted);
-      void getEyeRestStatus()
-        .then((r) => setRestEnabled(r.enabled))
-        .catch(() => { /* ignore */ });
-      const latestCfg = profileStore.getState().profile.eyeCare ?? DEFAULT_EYE_CARE;
-      void syncEyeCareFromNative(latestCfg, (nextEnabled) => {
-        onUpdateProfile((prev) => ({
-          eyeCare: { ...(prev.eyeCare ?? DEFAULT_EYE_CARE), enabled: nextEnabled },
-        }));
-      }).then((st) => {
-        if (st) setNativeStatus(st);
-      });
-    };
-    syncNative();
     return subscribeAppResume(syncNative);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [native]);
+  }, [native, syncNative]);
 
   const inWindow = isInEyeCareWindow(cfg, now);
   const active = cfg.enabled && inWindow;

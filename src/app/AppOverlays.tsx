@@ -22,6 +22,7 @@ import { BedtimeReminder } from '../features/sleep/components/BedtimeReminder';
 import { isNativePlatform } from '../features/sleep/utils/nativeAlarmScheduler';
 import { eyeCareInAppStyles, isInEyeCareWindow } from '../features/eyecare/utils/eyeCare';
 import { clearPendingArrival } from '../features/pet/services/travelService';
+import { ConfirmDialogHost } from '../shared/ui/ConfirmDialogHost';
 import { useAlarmRinging } from './hooks/useAlarmRinging';
 
 // 首屏不可见的全屏弹层（实时监测含 730 行 audioSynth、手动补录、图鉴与明信片）全部懒加载
@@ -243,6 +244,9 @@ export const AppOverlays: React.FC = () => {
           />
         </Suspense>
       )}
+
+      {/* 全局夜间主题确认/提示弹窗（替代原生白色 alert/confirm） */}
+      <ConfirmDialogHost />
     </>
   );
 };

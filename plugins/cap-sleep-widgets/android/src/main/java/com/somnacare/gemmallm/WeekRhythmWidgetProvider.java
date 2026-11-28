@@ -26,11 +26,11 @@ public class WeekRhythmWidgetProvider extends AppWidgetProvider {
             R.id.widget_day_6,
     };
 
-    private static int dotColor(String code) {
-        if ("G".equals(code)) return 0xFF10B981;
-        if ("Y".equals(code)) return 0xFFF59E0B;
-        if ("R".equals(code)) return 0xFFF43F5E;
-        return 0xFF334155;
+    private static int dotDrawable(String code) {
+        if ("G".equals(code)) return R.drawable.widget_dot_green;
+        if ("Y".equals(code)) return R.drawable.widget_dot_yellow;
+        if ("R".equals(code)) return R.drawable.widget_dot_red;
+        return R.drawable.widget_dot_none;
     }
 
     private static String dotSymbol(String code, boolean isLast) {
@@ -52,7 +52,7 @@ public class WeekRhythmWidgetProvider extends AppWidgetProvider {
         WidgetTheme theme = WidgetTheme.of(WidgetStore.themeId(context));
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_week_rhythm);
-        views.setInt(R.id.widget_rhythm_root, "setBackgroundColor", theme.bg);
+        views.setInt(R.id.widget_rhythm_root, "setBackgroundResource", theme.bgDrawableRes);
         views.setTextColor(R.id.widget_rhythm_title, theme.textPrimary);
         views.setTextColor(R.id.widget_rhythm_sri, theme.accent);
         views.setTextColor(R.id.widget_rhythm_footer, theme.textSecondary);
@@ -61,7 +61,7 @@ public class WeekRhythmWidgetProvider extends AppWidgetProvider {
 
         for (int i = 0; i < DAY_IDS.length; i++) {
             String code = i < dots.length ? dots[i].trim() : "N";
-            views.setInt(DAY_IDS[i], "setBackgroundColor", dotColor(code));
+            views.setInt(DAY_IDS[i], "setBackgroundResource", dotDrawable(code));
             views.setTextViewText(DAY_IDS[i], dotSymbol(code, i == DAY_IDS.length - 1));
         }
 

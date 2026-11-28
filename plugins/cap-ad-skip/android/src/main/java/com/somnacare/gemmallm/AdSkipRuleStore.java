@@ -52,7 +52,7 @@ final class AdSkipRuleStore {
 
     static final class NodeData {
         final AccessibilityNodeInfo node;
-        final Rect bounds = new Rect();
+        final Rect bounds;
         final String className;
         final String text;
         final String desc;
@@ -76,6 +76,7 @@ final class AdSkipRuleStore {
 
         NodeData(AccessibilityNodeInfo node, int parentIdx, int idxInParent, int parentChildCount) {
             this.node = node;
+            this.bounds = new Rect();
             this.parentIdx = parentIdx;
             this.idxInParent = idxInParent;
             this.parentChildCount = parentChildCount;
@@ -96,6 +97,29 @@ final class AdSkipRuleStore {
             enabled = node.isEnabled();
             focusable = node.isFocusable();
             scrollable = node.isScrollable();
+        }
+
+        /** 纯数据构造器（供 JVM 单元测试构造窗口树快照，不依赖 AccessibilityNodeInfo / Rect 运行时） */
+        NodeData(String className, String text, String desc, String fullId,
+                 boolean visible, boolean clickable,
+                 int parentIdx, int idxInParent, int parentChildCount, int childCount) {
+            this.node = null;
+            this.bounds = null;
+            this.parentIdx = parentIdx;
+            this.idxInParent = idxInParent;
+            this.parentChildCount = parentChildCount;
+            this.className = className == null ? "" : className;
+            this.text = text == null ? "" : text;
+            this.desc = desc == null ? "" : desc;
+            this.fullId = fullId == null ? "" : fullId;
+            int slash = this.fullId.lastIndexOf('/');
+            this.vid = slash >= 0 ? this.fullId.substring(slash + 1) : this.fullId;
+            this.childCount = childCount;
+            this.clickable = clickable;
+            this.visible = visible;
+            this.enabled = true;
+            this.focusable = false;
+            this.scrollable = false;
         }
     }
 
@@ -664,19 +688,19 @@ final class AdSkipRuleStore {
         if (field == null) return 0;
         switch (field) {
             case "width":
-                return node.bounds.width();
+                return node.bounds == null ? 0 : node.bounds.width();
             case "height":
-                return node.bounds.height();
+                return node.bounds == null ? 0 : node.bounds.height();
             case "childCount":
                 return node.childCount;
             case "top":
-                return node.bounds.top;
+                return node.bounds == null ? 0 : node.bounds.top;
             case "left":
-                return node.bounds.left;
+                return node.bounds == null ? 0 : node.bounds.left;
             case "right":
-                return node.bounds.right;
+                return node.bounds == null ? 0 : node.bounds.right;
             case "bottom":
-                return node.bounds.bottom;
+                return node.bounds == null ? 0 : node.bounds.bottom;
             case "index":
                 return node.idxInParent;
             case "parentChildCount":

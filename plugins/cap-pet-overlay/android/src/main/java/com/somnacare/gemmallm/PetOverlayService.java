@@ -1157,6 +1157,16 @@ public class PetOverlayService extends Service {
         }
     }
 
+    private static int resolveMoonSmallIcon(Context context, int fallbackRes) {
+        try {
+            int resId = context.getResources().getIdentifier(
+                    "ic_stat_moon", "drawable", context.getPackageName());
+            if (resId != 0) return resId;
+        } catch (Exception ignored) {
+        }
+        return fallbackRes;
+    }
+
     private void startForegroundCompat(String text) {
         Notification n = null;
         try {
@@ -1172,7 +1182,7 @@ public class PetOverlayService extends Service {
             Intent stop = new Intent(this, PetOverlayService.class).setAction(ACTION_STOP);
             PendingIntent stopPi = PendingIntent.getService(this, 5, stop,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            n = b.setSmallIcon(android.R.drawable.ic_menu_compass)
+            n = b.setSmallIcon(resolveMoonSmallIcon(this, android.R.drawable.ic_menu_compass))
                     .setContentTitle("大肥鱼陪着你")
                     .setContentText(text)
                     .setContentIntent(pi)

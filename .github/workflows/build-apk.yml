@@ -39,6 +39,18 @@ jobs:
           # npx cap 运行时才硬失败——必须在这里对齐）
           node-version: 22
 
+      - name: Cache npm, Playwright & Gradle
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/ms-playwright
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: somnacare-${{ runner.os }}-v1-${{ hashFiles('**/package-lock.json', '**/plugins/**/build.gradle', '**/tools/android-signing.gradle') }}
+          restore-keys: |
+            somnacare-${{ runner.os }}-v1-
+
       - name: Locate App Source & Normalize Root
         run: |
           echo "=== 检查仓库目录结构 ==="
@@ -211,7 +223,7 @@ jobs:
           # 主入口 LAUNCHER 意图移至 4 个 activity-alias（主题换图标机制）
           python3 tools/inject-aliases.py android/app/src/main/AndroidManifest.xml
 
-      - name: Pre-compile All 6 Native Plugin Modules (Fast Fail)
+      - name: Pre-compile All 6 Native Plugin Modules & Run JVM Unit Tests (Fast Fail)
         run: |
           cd android
           chmod +x gradlew
@@ -222,6 +234,10 @@ jobs:
             :cap-pet-overlay:compileDebugJavaWithJavac \
             :cap-ad-skip:compileDebugJavaWithJavac \
             :cap-usage-signal:compileDebugJavaWithJavac \
+            :cap-ad-skip:testDebugUnitTest \
+            :cap-eye-care:testDebugUnitTest \
+            :cap-sleep-core:testDebugUnitTest \
+            :cap-usage-signal:testDebugUnitTest \
             --no-daemon
 
       - name: Apply Fixed Signing Config (from GitHub Secrets)
@@ -272,11 +288,20 @@ jobs:
           else
             ./gradlew assembleDebug --no-daemon
           fi
-          APK_FILE=$(find app/build/outputs/apk -name '*.apk' | head -n 1)
-          [ -n "$APK_FILE" ] || { echo "::error::未找到 APK 产物"; exit 1; }
-          unzip -l "$APK_FILE" | grep -q 'assets/ad_skip_rules.json' || {
+          APK_FILE=$(find "app/build/outputs/apk/${SIGN_VARIANT}" -name '*.apk' | head -n 1)
+          [ -n "$APK_FILE" ] || { echo "::error::未找到 ${SIGN_VARIANT} 变体 APK 产物"; exit 1; }
+          APK_BYTES=$(stat -c%s "$APK_FILE")
+          APK_MB=$(awk "BEGIN { printf \"%.2f\", ${APK_BYTES} / 1048576 }")
+          echo "=== APK 实测体积：${APK_MB} MB (${APK_BYTES} bytes) → ${APK_FILE} ==="
+          # 避免 unzip -l | grep -q 在 bash -eo pipefail 下因 grep 提前关闭管道触发 SIGPIPE(141) 误报失败
+          APK_ENTRIES=$(unzip -Z1 "$APK_FILE")
+          grep -Fxq 'assets/ad_skip_rules.json' <<< "$APK_ENTRIES" || {
             echo "::error::APK 内缺少开屏规则表 assets/ad_skip_rules.json"; exit 1;
           }
+          if grep -q 'libllm_inference_engine_jni.so' <<< "$APK_ENTRIES"; then
+            echo "::error::APK 内意外包含已下线的 libllm_inference_engine_jni.so（包体瘦身回归）"
+            exit 1
+          fi
 
       - name: Upload Standalone Offline APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -297,6 +322,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Source Code (for Release Notes)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
       - name: Download built APK
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -315,28 +345,58 @@ jobs:
           [ -n "$APK_FILE" ] || { echo "::error::未找到 release 变体 APK——debug 变体禁止发布到公开 Release"; exit 1; }
           RELEASE_NAME="SomnaCare-${TAG}.apk"
           cp "$APK_FILE" "$RELEASE_NAME"
-          cat > release_notes.md <<'EOF'
-          ## 极光睡眠 SomnaCare
+          APK_BYTES=$(stat -c%s "$RELEASE_NAME")
+          APK_MB=$(awk "BEGIN { printf \"%.2f\", ${APK_BYTES} / 1048576 }")
 
-          **懂睡眠，更懂你。** 100% 离线优先的 Android 睡眠记录与分析应用。
+          # 自动提取真实版本更新说明：优先读取附注标签主题/正文（自动剥离 PGP/SSH 签名块），轻量标签回退自上一 v* 标签以来的提交日志
+          TAG_TYPE=$(git cat-file -t "refs/tags/${TAG}" 2>/dev/null || echo "commit")
+          TAG_SUBJECT=$(git for-each-ref --format='%(contents:subject)' "refs/tags/${TAG}")
+          TAG_BODY=$(git for-each-ref --format='%(contents:body)' "refs/tags/${TAG}")
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" --match 'v*' 2>/dev/null || true)
+          if [ -n "$PREV_TAG" ]; then
+            COMMIT_LOG=$(git log --no-merges --pretty=format:'- %s (`%h`)' "${PREV_TAG}..${TAG}")
+          else
+            COMMIT_LOG=$(git log --no-merges -n 10 --pretty=format:'- %s (`%h`)' "${TAG}")
+          fi
 
+          {
+            echo "## 极光睡眠 SomnaCare ${TAG}"
+            echo ""
+            echo "**懂睡眠，更懂你。** 100% 离线优先的 Android 睡眠记录与分析应用（安装包体积 **${APK_MB} MB**）。"
+            echo ""
+            if [ "$TAG_TYPE" = "tag" ] && { [ -n "$TAG_SUBJECT" ] || [ -n "$TAG_BODY" ]; }; then
+              echo "### 📝 本次更新"
+              [ -n "$TAG_SUBJECT" ] && echo "$TAG_SUBJECT"
+              if [ -n "$TAG_BODY" ]; then
+                echo ""
+                echo "$TAG_BODY"
+              fi
+              echo ""
+            elif [ -n "$COMMIT_LOG" ]; then
+              echo "### 📝 本次更新${PREV_TAG:+（自 ${PREV_TAG} 起）}"
+              echo "$COMMIT_LOG"
+              echo ""
+            fi
+            cat <<'EOF'
           ### 📱 安装
           1. 下载下方 Assets 中的 `.apk` 文件
           2. 手机上直接点开安装（需允许"安装未知来源应用"）
-          3. 从旧版本升级：直接覆盖安装即可，睡眠数据、图鉴进度全部保留
+          3. 从旧版本升级：直接覆盖安装即可，睡眠数据、图鉴进度与白名单全部保留
              （仅从早期"每次签名不同"的版本升级时需先卸载一次）
 
-          ### ✨ 功能
-          - 🌙 睡眠记录 + 床头实时声级监测（纯本地计算）
-          - 📊 趋势图表与 90 分钟睡眠周期推演（模型估算值，非医疗诊断）
-          - ✨ AI 睡眠顾问（DeepSeek / 自建 OpenAI 兼容接口 / 纯离线规则引擎）
-          - 👁 全局护眼滤镜（暖色减蓝 + 减光，四场景 + 自定义色，定时开关）
-          - 🔄 应用内更新（偏好页显式检查 GitHub Release；下载后校验签名/包名/版本）
-          - ⚙️ 四套主题（桌面图标联动换色）+ 原生精确闹钟 + 数据备份
+          ### ✨ 六大原生能力
+          - 🌙 **睡眠核心**：一键/自动睡眠记录 + 精准闹钟（`setAlarmClock` + 贪睡）+ 就寝到点提醒 + 应用内安全更新
+          - 📊 **趋势与桌面小组件**：7 晚节律/SRI 推演（模型估算，非医疗诊断）+ 4 款圆角主题桌面小组件
+          - 👁 **夜间护眼**：数学无损单层滤镜 + 原生定时日变 + 相机/相册/横屏视频自动暂避 + 20-20-20 远眺提醒
+          - 🐋 **大肥鱼桌宠**：低功耗悬浮陪伴、贴边平滑动画、任意本机 App 深夜刷屏劝睡与快捷磁贴双向同步
+          - ⚡ **摇一摇广告跳过**：GKD 关系链规则 + 页面级防误点排除 + 未收录 App 智能门控 + 误触一键排除与手动刷新
+          - ✨ **AI 睡眠顾问**：支持云端 DeepSeek / 自建 OpenAI 兼容接口 + 默认纯离线规则顾问
 
           ### 🔒 隐私
-          所有睡眠数据仅存本机；AI 云端功能需自备 API Key。详情见项目 README。
+          所有睡眠数据仅存本机；AI 云端功能、显式规则刷新与更新检查均仅在用户主动操作时联网。详情见项目 README。
           EOF
+          } > release_notes.md
+
           gh release create "$TAG" "$RELEASE_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "极光睡眠 SomnaCare $TAG" \

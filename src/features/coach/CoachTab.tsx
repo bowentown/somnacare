@@ -4,6 +4,7 @@ import type { ChatMessage, SleepRecord } from '../../shared/types/sleep';
 import { getCurrentTheme, useProfileStore } from '../../shared/store/profileStore';
 import { useSleepStore } from '../sleep/store/sleepStore';
 import { closeMoments, openMoments, showToast, useUIStore } from '../../shared/store/uiStore';
+import { confirmDialog } from '../../shared/ui/ConfirmDialogHost';
 import { generatePersonalInsights } from './utils/clinicalSleepEngine';
 import { nightsOnly } from '../sleep/utils/recordFilter';
 import {
@@ -160,9 +161,15 @@ const CoachTabInner: React.FC = () => {
     setShowSessions(false);
   };
 
-  const handleDeleteSession = (id: string) => {
+  const handleDeleteSession = async (id: string) => {
     const target = chat.sessions.find((s) => s.id === id);
-    if (!window.confirm(`删除对话「${target?.title ?? ''}」？删除后不可恢复。`)) return;
+    const ok = await confirmDialog({
+      title: '删除对话',
+      message: `删除对话「${target?.title ?? ''}」？删除后不可恢复。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     setChat((prev) => {
       const sessions = prev.sessions.filter((s) => s.id !== id);
       if (sessions.length === 0) {
@@ -173,8 +180,14 @@ const CoachTabInner: React.FC = () => {
     });
   };
 
-  const handleClearSessions = () => {
-    if (!window.confirm('清空全部对话？所有会话将被删除，不可恢复。')) return;
+  const handleClearSessions = async () => {
+    const ok = await confirmDialog({
+      title: '清空全部对话',
+      message: '清空全部对话？所有会话将被删除，不可恢复。',
+      confirmText: '清空全部',
+      danger: true,
+    });
+    if (!ok) return;
     const s = freshSession();
     setChat({ sessions: [s], activeId: s.id });
     setShowSessions(false);

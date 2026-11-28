@@ -15,7 +15,7 @@
  *
  * 方法论：反向自检——注入坏配置必须被同一判据抓住。
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -95,6 +95,26 @@ check('全部 4 份布局 XML 遵守 RemoteViews 安全子集（无 ConstraintLa
     && !w.layout.includes('ConstraintLayout')
     && !w.layout.includes('oklch')));
 
+const requiredDrawables = [
+  'widget_bg_midnight', 'widget_bg_pure_dark', 'widget_bg_warm_amber', 'widget_bg_serene_blue',
+  'widget_surface_midnight', 'widget_surface_pure_dark', 'widget_surface_warm_amber', 'widget_surface_serene_blue',
+  'widget_accent_midnight', 'widget_accent_pure_dark', 'widget_accent_warm_amber', 'widget_accent_serene_blue',
+  'widget_dot_green', 'widget_dot_yellow', 'widget_dot_red', 'widget_dot_none',
+];
+const missingDrawables = requiredDrawables.filter((name) => {
+  const p = join(ROOT, `${base}/res/drawable/${name}.xml`);
+  if (!existsSync(p)) return true;
+  const xml = readFileSync(p, 'utf-8');
+  return !xml.includes('<shape') || !xml.includes('<corners');
+});
+check('4 款小组件全部改用圆角 <shape> drawable（setBackgroundResource，零直角 setBackgroundColor）',
+  missingDrawables.length === 0
+  && widgets.every((w) =>
+    w.provider.includes('setBackgroundResource')
+    && !w.provider.includes('setBackgroundColor')
+    && w.layout.includes('@drawable/widget_bg_midnight')),
+  missingDrawables.length > 0 ? `缺失/缺圆角：${missingDrawables.join(', ')}` : '');
+
 check('DeepLink 与护眼就地切换：冷/热启动消费 + 睡前小组件显式广播护眼',
   themeHelper.includes('getLaunchIntentForPackage')
   && themeHelper.includes('FLAG_IMMUTABLE')
@@ -129,6 +149,9 @@ check('CI 接线：安装并预编译 :cap-sleep-widgets + WidgetRefreshReceiver
   const doctoredProvider = scoreProvider.split('"--"').join('"0"');
   check('反向自检：无记录冒充 0 分被检出',
     doctoredProvider.includes('score >= 0 ? String.valueOf(score) : "0"'));
+  const squareProvider = scoreProvider.replace('setBackgroundResource', 'setBackgroundColor');
+  check('反向自检：回退直角 setBackgroundColor 被检出',
+    squareProvider !== scoreProvider && squareProvider.includes('setBackgroundColor'));
 }
 
 if (failures > 0) {

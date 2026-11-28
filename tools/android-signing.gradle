@@ -19,7 +19,7 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.somnacareRelease
-            // 不开混淆/裁剪：Capacitor + MediaPipe LLM Inference 的反射面大，
+            // 不开混淆/裁剪：Capacitor 插件注解与反射面较大，
             // 保持与此前 debug 产物一致的行为；APK 体积优化另行评估
             minifyEnabled false
             shrinkResources false

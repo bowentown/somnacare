@@ -9,6 +9,7 @@ import { SleepRecord, WakingMood } from '../../../shared/types/sleep';
 import { HABIT_OPTIONS } from '../../intervention/utils/habitCatalog';
 import { ThemeConfig } from '../../../shared/theme/themeStyles';
 import { useModalA11y } from '../../../shared/utils/modalA11y';
+import { confirmDialog } from '../../../shared/ui/ConfirmDialogHost';
 import { tapTick } from '../../../shared/utils/haptics';
 import {
   ACTIVE_SLEEP_SESSION_KEY,
@@ -425,10 +426,18 @@ export const ActiveSleepModal: React.FC<ActiveSleepModalProps> = ({
           <span className={`text-xs font-medium ${theme.textSecondary}`}>极光睡眠监测中</span>
         </div>
         <button
-          onClick={() => {
+          onClick={async () => {
             // 会话进行中（>2 分钟）的关闭 = 丢弃未保存的整晚记录——破坏性
             // 操作与"取消记录"同防护级，必须确认（第 51 轮审计）
-            if (elapsedSeconds > 120 && !window.confirm(`已记录 ${Math.floor(elapsedSeconds / 60)} 分钟，关闭将丢弃本次未保存的整夜记录，确定？`)) return;
+            if (elapsedSeconds > 120) {
+              const ok = await confirmDialog({
+                title: '放弃未保存的记录',
+                message: `已记录 ${Math.floor(elapsedSeconds / 60)} 分钟，关闭将丢弃本次未保存的整夜记录，确定？`,
+                confirmText: '确认放弃',
+                danger: true,
+              });
+              if (!ok) return;
+            }
             clearActiveSleepSession();
             onClose();
           }}

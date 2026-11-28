@@ -18,6 +18,7 @@ import { nightsOnly, napsOnly } from '../utils/recordFilter';
 import { nightKeyOfBed, toLocalDateString, localDateOffset } from '../../../shared/utils/dateUtils';
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { queryWindDownApps, type WindDownResult } from '../utils/usageSignal';
+import { subscribeAppResume } from '../../../shared/utils/appResume';
 import { getDayPhase } from '../../../shared/utils/dayPhase';
 import { computeWeekReport } from '../../trends/utils/weekReport';
 import { getTravelProgress, loadTravelState, TRIP_ENERGY_TARGET } from '../../pet/services/travelService';
@@ -95,15 +96,25 @@ const TodayTabInner: React.FC = () => {
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;
-    void queryWindDownApps(windDownKey, userProfile.chronotype ?? 'night')
-      .then((r) => {
-        if (!cancelled && r) setWindDown(r);
-      })
-      .catch(() => {
-        /* 无权限/不支持：卡片不出现 */
-      });
+    let reqSeq = 0;
+    const activeChronotype = userProfile.chronotype ?? 'night';
+    const fetchWindDown = () => {
+      const mySeq = ++reqSeq;
+      const liveKey = activeChronotype === 'day' ? toLocalDateString() : localDateOffset(-1);
+      void queryWindDownApps(liveKey, activeChronotype)
+        .then((r) => {
+          if (!cancelled && mySeq === reqSeq) setWindDown(r);
+        })
+        .catch(() => {
+          /* 无权限/不支持：清空旧夜残留，避免隔夜回前台仍展示昨天榜单 */
+          if (!cancelled && mySeq === reqSeq) setWindDown(null);
+        });
+    };
+    fetchWindDown();
+    const unsub = subscribeAppResume(fetchWindDown);
     return () => {
       cancelled = true;
+      unsub();
     };
   }, [windDownKey, records.length, userProfile.chronotype]);
 

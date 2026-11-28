@@ -11,6 +11,7 @@ import {
 } from '../sleep/utils/usageSignal';
 import { forceRefreshUsage, getCachedUsageDays } from '../sleep/utils/usageStore';
 import { isNativePlatform } from '../sleep/utils/nativeAlarmScheduler';
+import { confirmDialog } from '../../shared/ui/ConfirmDialogHost';
 
 interface TrendsUsageCardProps {
   theme: ThemeConfig;
@@ -77,8 +78,14 @@ export const TrendsUsageCard: React.FC<TrendsUsageCardProps> = React.memo(functi
         {usagePerm === 'granted' && usageOpen && (
           <button
             type="button"
-            onClick={() => {
-              if (!window.confirm('清除本机缓存的手机使用对照数据？系统使用记录不受影响，可重新查询。')) return;
+            onClick={async () => {
+              const ok = await confirmDialog({
+                title: '清除手机使用缓存',
+                message: '清除本机缓存的手机使用对照数据？系统使用记录不受影响，可重新查询。',
+                confirmText: '确认清除',
+                danger: true,
+              });
+              if (!ok) return;
               clearUsageData();
               setUsageDays([]);
             }}

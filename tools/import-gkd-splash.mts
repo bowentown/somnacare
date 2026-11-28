@@ -1,6 +1,6 @@
 /**
  * 从 GKD_subscription 的 dist/gkd.json5 提取广告规则，生成
- * cap-gemma-llm 原生侧使用的安全子集规则表。
+ * cap-ad-skip 原生侧使用的安全子集规则表。
  *
  * 用法：
  *   npx tsx tools/import-gkd-splash.mts /path/to/GKD_subscription/dist/gkd.json5 [selector-library.json]

@@ -417,6 +417,16 @@ public class BedtimeOverlayService extends Service {
                 : new Notification.Builder(this);
     }
 
+    private static int resolveMoonSmallIcon(Context context, int fallbackRes) {
+        try {
+            int resId = context.getResources().getIdentifier(
+                    "ic_stat_moon", "drawable", context.getPackageName());
+            if (resId != 0) return resId;
+        } catch (Exception ignored) {
+        }
+        return fallbackRes;
+    }
+
     /** 无悬浮窗权限时的兜底：独立高优先级通知渠道（不被前台静音渠道锁死）。 */
     private void fallbackNotification() {
         try {
@@ -434,7 +444,7 @@ public class BedtimeOverlayService extends Service {
                             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
                     : null;
             Notification notif = createNotificationBuilder(FALLBACK_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                    .setSmallIcon(resolveMoonSmallIcon(this, android.R.drawable.ic_lock_idle_alarm))
                     .setContentTitle("夜深喽，该睡了")
                     .setContentText("距你的作息目标就寝时间已到")
                     .setContentIntent(pi)
@@ -463,7 +473,7 @@ public class BedtimeOverlayService extends Service {
                 }
             }
             Notification notif = createNotificationBuilder(FGS_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                    .setSmallIcon(resolveMoonSmallIcon(this, android.R.drawable.ic_lock_idle_alarm))
                     .setContentTitle("就寝提醒待确认")
                     .setOngoing(true)
                     .setOnlyAlertOnce(true)

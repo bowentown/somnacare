@@ -35,7 +35,7 @@ public class SleepWidgetProvider extends AppWidgetProvider {
         WidgetTheme theme = WidgetTheme.of(WidgetStore.themeId(context));
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.sleep_widget_layout);
-        views.setInt(R.id.widget_root, "setBackgroundColor", theme.bg);
+        views.setInt(R.id.widget_root, "setBackgroundResource", theme.bgDrawableRes);
         views.setTextColor(R.id.widget_score, theme.accent);
         views.setTextColor(R.id.widget_score_label, theme.textSecondary);
         views.setTextColor(R.id.widget_sub, theme.textMuted);

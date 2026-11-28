@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronRight,
@@ -14,11 +14,12 @@ import type { CustomAIConfig } from '../shared/types/sleep';
 import { APP_THEMES } from '../shared/theme/themeStyles';
 import { getCurrentTheme, updateProfile, useProfileStore } from '../shared/store/profileStore';
 import { useSleepStore } from '../features/sleep/store/sleepStore';
-import { pushSubpage, type SubpageId } from '../shared/store/uiStore';
+import { pushSubpage, useUIStore, type SubpageId } from '../shared/store/uiStore';
 import { CustomAISettingsModal } from '../features/coach/CustomAISettingsModal';
-import { isPetEnabled, isPetNative } from '../features/pet/utils/petOverlay';
+import { isPetEnabled, isPetNative, syncPetEnabledFromNative } from '../features/pet/utils/petOverlay';
 import { isNativePlatform } from '../features/sleep/utils/nativeAlarmScheduler';
 import { getAdSkipStatus, type AdSkipStatus } from '../features/extensions/ad-skip/adSkip';
+import { subscribeAppResume } from '../shared/utils/appResume';
 import { tapTick } from '../shared/utils/haptics';
 
 const CHRONOTYPE_LABEL: Record<string, string> = {
@@ -27,35 +28,69 @@ const CHRONOTYPE_LABEL: Record<string, string> = {
   irregular: '不规律',
 };
 
+function readLastBackupAt(): number {
+  try {
+    return Number(localStorage.getItem('somnacare_last_backup_at')) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 const SettingsTabInner: React.FC = () => {
   const userProfile = useProfileStore((s) => s.profile);
   const recordCount = useSleepStore((s) => s.records.length);
+  const activeTab = useUIStore((s) => s.activeTab);
+  const subpageDepth = useUIStore((s) => s.subpageStack.length);
   const theme = getCurrentTheme(userProfile);
 
   const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
   const [adSkip, setAdSkip] = useState<AdSkipStatus | null>(null);
+  const [petEnabled, setPetEnabled] = useState<boolean>(() => isPetEnabled());
+  const [lastBackupAt, setLastBackupAt] = useState<number>(() => readLastBackupAt());
+  const refreshSeqRef = useRef(0);
   const native = isNativePlatform();
+  const petNative = isPetNative();
 
+  const refreshBadges = useCallback(() => {
+    const seq = ++refreshSeqRef.current;
+    setLastBackupAt(readLastBackupAt());
+    setPetEnabled(isPetEnabled());
+    if (petNative) {
+      void syncPetEnabledFromNative()
+        .then((enabled) => {
+          if (refreshSeqRef.current === seq) setPetEnabled(enabled);
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    }
+    if (native) {
+      void getAdSkipStatus()
+        .then((status) => {
+          if (refreshSeqRef.current === seq) setAdSkip(status);
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    }
+  }, [native, petNative]);
+
+  // 切回偏好 Tab、子页返回（subpageDepth 归零）与 App 回前台时实时刷新徽章（跳广告/桌宠/上次备份时间）
   useEffect(() => {
-    if (!native) return;
-    void getAdSkipStatus().then(setAdSkip);
-  }, [native]);
+    if (activeTab === 'settings' && subpageDepth === 0) {
+      refreshBadges();
+    }
+  }, [activeTab, subpageDepth, refreshBadges]);
+
+  useEffect(() => subscribeAppResume(refreshBadges), [refreshBadges]);
 
   const activeThemeName =
     APP_THEMES[(userProfile.themeColor || 'midnight') as keyof typeof APP_THEMES]?.name ?? '深空午夜';
   const enabledAlarms = (userProfile.alarms || []).filter((a) => a.enabled).length;
   const chronotypeText = CHRONOTYPE_LABEL[userProfile.chronotype ?? 'night'] ?? '夜间为主';
 
-  const petNative = isPetNative();
-  const petStatus = !petNative ? '安装 APK 后可用' : isPetEnabled() ? '已开启' : '已关闭';
+  const petStatus = !petNative ? '安装 APK 后可用' : petEnabled ? '已开启' : '已关闭';
 
-  const lastBackupAt = (() => {
-    try {
-      return Number(localStorage.getItem('somnacare_last_backup_at')) || 0;
-    } catch {
-      return 0;
-    }
-  })();
   const backupDays = lastBackupAt ? Math.floor((Date.now() - lastBackupAt) / 86400000) : null;
   const backupWarn = backupDays === null ? recordCount >= 7 : backupDays > 30;
   const backupSummary = `${recordCount} 条 · ${

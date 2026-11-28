@@ -180,10 +180,12 @@ test('旅程5 删除：旅行能量回退 + 影子诊断条目同步清理', asy
   await page.waitForTimeout(4200);
   await navTo(page, '趋势');
   await page.getByRole('button', { name: /历史记录/ }).click();
-  // 删除有 window.confirm：Playwright 默认 dismiss = 取消，必须显式接受
-  page.once('dialog', (d) => void d.accept());
+  // 删除弹出夜间主题 alertdialog 确认框
   await page.getByRole('button', { name: new RegExp(`删除 ${dstr(-1, fixed)}`) }).click();
-  // confirm 走浏览器原生确认框
+  const deleteDialog = page.getByRole('alertdialog', { name: '删除睡眠记录' });
+  await expect(deleteDialog).toBeVisible({ timeout: 5000 });
+  await deleteDialog.getByRole('button', { name: '删除' }).click();
+  await expect(deleteDialog).toBeHidden({ timeout: 5000 });
   const travel = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_travel_state') || '{}'));
   expect(travel.countedScores?.[dstr(-1, fixed)]).toBeUndefined();
   expect(travel.currentEnergy).toBeLessThan(77);
@@ -425,8 +427,11 @@ test('旅程20 删除撤销：恢复记录 + 能量只补实际扣掉的差额',
 
   await navTo(page, '趋势');
   await page.getByRole('button', { name: /历史记录/ }).click();
-  page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: new RegExp(`删除 ${date}`) }).click();
+  const deleteDialog = page.getByRole('alertdialog', { name: '删除睡眠记录' });
+  await expect(deleteDialog).toBeVisible({ timeout: 5000 });
+  await deleteDialog.getByRole('button', { name: '删除' }).click();
+  await expect(deleteDialog).toBeHidden({ timeout: 5000 });
 
   await expect(page.getByRole('button', { name: '撤销' })).toBeVisible();
   await page.getByRole('button', { name: '撤销' }).click();

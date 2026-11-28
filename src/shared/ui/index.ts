@@ -5,3 +5,10 @@ export { Progress, Skeleton } from './Progress';
 export { Illustration, type IllustrationName } from './Illustration';
 export { EmptyState } from './EmptyState';
 export { Switch } from './Switch';
+export {
+  ConfirmDialogHost,
+  alertDialog,
+  confirmDialog,
+  type AlertDialogOptions,
+  type ConfirmDialogOptions,
+} from './ConfirmDialogHost';

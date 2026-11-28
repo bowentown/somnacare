@@ -29,13 +29,33 @@ test('旅程6 导入旧备份：records-only 自动迁移为夜归属', async ({
     mkRecord(dstr(-1, fixed), '00:30', '07:30', 88),
     mkRecord(dstr(-2, fixed), '23:50', '08:00', 84),
   ]);
-  // 必须先挂 dialog 监听再触发文件选择：FileReader.onload 里的 confirm
-  // 可能在 setInputFiles 返回前就弹出，晚注册会被 Playwright 默认驳回
-  page.once('dialog', (d) => void d.accept());
-  await page.locator('input[type="file"]').setInputFiles({
+  const fileSpec = {
     name: 'old-records.json', mimeType: 'application/json', buffer: Buffer.from(payload),
-  });
-  await page.waitForTimeout(800);
+  };
+  // 首次选文件后按 Escape 关闭：验证只关 alertdialog 不误退数据备份子页，现有数据未变，且重选同一文件可再次触发
+  await page.locator('input[type="file"]').setInputFiles(fileSpec);
+  const escDialog = page.getByRole('alertdialog', { name: '确认导入记录' });
+  await expect(escDialog).toBeVisible({ timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await expect(escDialog).toBeHidden({ timeout: 5000 });
+  await expect(page.getByRole('region', { name: '数据备份与诊断' })).toBeVisible();
+
+  // 第二次选同一文件后点击「取消」：验证现有数据未变，且 input 重置后重选同一文件可再次触发主题弹窗
+  await page.locator('input[type="file"]').setInputFiles(fileSpec);
+  const firstDialog = page.getByRole('alertdialog', { name: '确认导入记录' });
+  await expect(firstDialog).toBeVisible({ timeout: 5000 });
+  await firstDialog.getByRole('button', { name: '取消' }).click();
+  await expect(firstDialog).toBeHidden({ timeout: 5000 });
+  const afterCancel = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
+  expect(afterCancel.length).toBe(0);
+
+  // 第三次重选同一份文件并确认覆盖导入
+  await page.locator('input[type="file"]').setInputFiles(fileSpec);
+  const secondDialog = page.getByRole('alertdialog', { name: '确认导入记录' });
+  await expect(secondDialog).toBeVisible({ timeout: 5000 });
+  await secondDialog.getByRole('button', { name: '覆盖导入' }).click();
+  await expect(secondDialog).toBeHidden({ timeout: 5000 });
+  await page.waitForTimeout(600);
   const recs = await page.evaluate(() => JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'));
   // 醒来日口径 → 夜归属：00:30 凌晨觉归前一天；23:50 前夜觉也归前一天
   expect(recs.some((r: any) => r.date === dstr(-2, fixed))).toBe(true);
@@ -405,11 +425,19 @@ test('旅程29 全量备份恢复：schema2 导入真正落盘（行为覆盖）
     chat: [],
     petPrefs: { skin: 'sakura', bubbleEvery: 4, enabled: true },
   });
-  page.once('dialog', (d) => void d.accept());
   await page.locator('input[type="file"]').setInputFiles({
     name: 'full-backup.json', mimeType: 'application/json', buffer: Buffer.from(payload),
   });
-  await page.waitForTimeout(1200);   // 恢复后 window.location.reload()
+  const confirmModal = page.getByRole('alertdialog', { name: '导入全量备份' });
+  await expect(confirmModal).toBeVisible({ timeout: 5000 });
+  await confirmModal.getByRole('button', { name: '覆盖导入' }).click();
+  const doneModal = page.getByRole('alertdialog', { name: '全量备份已恢复' });
+  await expect(doneModal).toBeVisible({ timeout: 5000 });
+  await Promise.all([
+    page.waitForEvent('load'),
+    doneModal.getByRole('button', { name: '立即刷新' }).click(),
+  ]);
+  await page.waitForTimeout(800);   // 等待刷新后本地状态落稳
 
   const after = await page.evaluate(() => ({
     records: JSON.parse(localStorage.getItem('somnacare_sleep_records') || '[]'),

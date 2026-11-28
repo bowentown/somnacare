@@ -1081,7 +1081,7 @@ public class AdSkipService extends AccessibilityService {
         return cand;
     }
 
-    private boolean activityMatches(String current, String[] ids) {
+    static boolean activityMatches(String current, String[] ids) {
         if (ids == null || ids.length == 0) return true;
         if (current == null || current.isEmpty()) return false;
         for (String id : ids) {

@@ -1,6 +1,7 @@
 import { createStore } from '../../../shared/store/createStore';
 import { profileStore } from '../../../shared/store/profileStore';
 import { showToast, uiStore } from '../../../shared/store/uiStore';
+import { confirmDialog } from '../../../shared/ui/ConfirmDialogHost';
 import type { SleepRecord } from '../../../shared/types/sleep';
 import { hapticConfirm } from '../../../shared/utils/haptics';
 import { getInitialSleepLogs } from '../utils/sleepScore';
@@ -198,7 +199,7 @@ export function replaceSleepRecords(next: SleepRecord[]): void {
   pruneShadowEntries(new Set(nightsOnly(next).map((r) => r.date)));
 }
 
-export async function importLegacyRecords(imported: SleepRecord[]): Promise<void> {
+export async function importLegacyRecords(imported: SleepRecord[]): Promise<boolean> {
   const chronotype = profileStore.getState().profile.chronotype ?? 'night';
   const currentCount = sleepStore.getState().records.length;
   const migratedImport = migrateRecordDatesToNightKey(imported, chronotype).records;
@@ -215,7 +216,7 @@ export async function importLegacyRecords(imported: SleepRecord[]): Promise<void
   const mergedCount = migratedImport.length - deduped.length;
   if (deduped.length === 0) {
     showToast('备份里没有可导入的记录，已取消（现有记录未改动）');
-    return;
+    return false;
   }
   const sorted = [...deduped].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
@@ -224,7 +225,13 @@ export async function importLegacyRecords(imported: SleepRecord[]): Promise<void
     mergedCount > 0
       ? `导入将替换当前的 ${currentCount} 条记录（共导入 ${sorted.length} 条，其中 ${mergedCount} 条同夜重复已合并），继续？`
       : `导入将替换当前的 ${currentCount} 条记录（共导入 ${sorted.length} 条），继续？`;
-  if (!window.confirm(confirmMsg)) return;
+  const confirmed = await confirmDialog({
+    title: '确认导入记录',
+    message: confirmMsg,
+    confirmText: '覆盖导入',
+    danger: true,
+  });
+  if (!confirmed) return false;
 
   markRecordDateMigrationDone();
   const { rescoreRecords } = await import('../utils/scoreMigration');
@@ -239,13 +246,18 @@ export async function importLegacyRecords(imported: SleepRecord[]): Promise<void
       ? `已导入 ${sorted.length} 条记录（合并 ${mergedCount} 条同夜重复）`
       : `已成功导入 ${imported.length} 条睡眠记录`,
   );
+  return true;
 }
 
-export function resetToDemoData(): void {
+export async function resetToDemoData(): Promise<void> {
   const currentCount = sleepStore.getState().records.length;
-  if (!window.confirm(`将用 7 天演示数据替换当前全部 ${currentCount} 条真实记录（不可恢复），继续？`)) {
-    return;
-  }
+  const confirmed = await confirmDialog({
+    title: '恢复示例数据',
+    message: `将用 7 天演示数据替换当前全部 ${currentCount} 条真实记录（不可恢复），继续？`,
+    confirmText: '确认替换',
+    danger: true,
+  });
+  if (!confirmed) return;
   const initial = getInitialSleepLogs();
   markRecordDateMigrationDone();
   sleepStore.setState({ undoDeleted: null });

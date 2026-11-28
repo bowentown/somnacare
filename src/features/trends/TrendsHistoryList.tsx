@@ -4,7 +4,7 @@ import type { SleepRecord } from '../../shared/types/sleep';
 import type { ThemeConfig } from '../../shared/theme/themeStyles';
 import { napsOnly, nightsOnly } from '../sleep/utils/recordFilter';
 import { formatDurationChinese } from '../sleep/utils/sleepScore';
-import { EmptyState } from '../../shared/ui';
+import { EmptyState, confirmDialog } from '../../shared/ui';
 import { hapticStep } from '../../shared/utils/haptics';
 
 /** 历史记录窗口化：固定行高 64px、可视 320px（5 行），上下各 4 行 overscan */
@@ -105,9 +105,15 @@ const HistoryList = React.memo(function HistoryList({
                   <button
                     type="button"
                     aria-label={`删除 ${r.date} ${r.bedtime} 的睡眠记录`}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (confirm(`确认删除 ${r.date} 的睡眠记录？`)) {
+                      const ok = await confirmDialog({
+                        title: '删除睡眠记录',
+                        message: `确认删除 ${r.date} 的睡眠记录？`,
+                        confirmText: '删除',
+                        danger: true,
+                      });
+                      if (ok) {
                         onDeleteRecord(r.id);
                       }
                     }}

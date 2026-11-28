@@ -15,6 +15,7 @@ import {
 import { CustomAIConfig, AIProvider } from '../../shared/types/sleep';
 import { ThemeConfig } from '../../shared/theme/themeStyles';
 import { useModalA11y } from '../../shared/utils/modalA11y';
+import { alertDialog } from '../../shared/ui/ConfirmDialogHost';
 
 const DEFAULT_PERSONA =
   '你是一位资深临床睡眠医学与生理节律顾问。以温暖、关怀、专业的语气为用户提供科学根据的睡眠调优与助眠行动方案。';
@@ -110,7 +111,10 @@ export const CustomAISettingsModal: React.FC<CustomAISettingsModalProps> = ({
   const ensureHttpsEndpoint = (): boolean => {
     if (provider === 'custom_openai' && customBaseUrl.trim()
       && !customBaseUrl.trim().startsWith('https://')) {
-      alert('自定义端点必须是 https:// 地址（明文 http 会把睡眠数据裸露在网络上）');
+      void alertDialog({
+        title: '不安全的接口地址',
+        message: '自定义端点必须是 https:// 地址（明文 http 会把睡眠数据裸露在网络上）',
+      });
       return false;
     }
     return true;

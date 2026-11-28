@@ -2,13 +2,13 @@
  * Android 宿主工程结构化补丁脚本（Phase 3 替代 build-apk.yml 内百行脆弱 sed）。
  *
  * 各领域插件（cap-sleep-core / cap-sleep-widgets / cap-eye-care / cap-pet-overlay /
- * cap-ad-skip / cap-gemma-llm / cap-usage-signal）已在各自 AndroidManifest.xml 中声明
+ * cap-ad-skip / cap-usage-signal）已在各自 AndroidManifest.xml 中声明
  * 权限、服务与接收器，交由 Android Gradle Plugin Manifest Merger 合并。
  *
  * 本脚本只负责无法下沉到插件的 4 项宿主级修补，并在修改后立即执行配对校验断言：
  *  1. res/xml/file_paths.xml：向 Capacitor 模板自带的 FileProvider 追加更新下载路径 somnacare_updates；
  *  2. app/src/main/AndroidManifest.xml：强制关闭 allowBackup="false" 与 usesCleartextTraffic="false"（安全审计 A2/A13）；
- *  3. variables.gradle：只升不降，保证 minSdkVersion >= 24（MediaPipe 最低要求）；
+ *  3. variables.gradle：只升不降，保证 minSdkVersion >= 24；
  *  4. gradle.properties：幂等补齐 android.useAndroidX=true 与 android.enableJetifier=true。
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';

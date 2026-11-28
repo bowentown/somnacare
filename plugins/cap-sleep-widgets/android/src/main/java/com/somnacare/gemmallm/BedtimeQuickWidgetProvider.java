@@ -28,17 +28,18 @@ public class BedtimeQuickWidgetProvider extends AppWidgetProvider {
         WidgetTheme theme = WidgetTheme.of(WidgetStore.themeId(context));
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_bedtime_quick);
-        views.setInt(R.id.widget_bedtime_root, "setBackgroundColor", theme.bg);
+        views.setInt(R.id.widget_bedtime_root, "setBackgroundResource", theme.bgDrawableRes);
         views.setTextColor(R.id.widget_bedtime_title, theme.textSecondary);
         views.setTextColor(R.id.widget_bedtime_clock, theme.accent);
         views.setTextViewText(R.id.widget_bedtime_clock, bed);
 
-        views.setInt(R.id.widget_btn_sleep, "setBackgroundColor", theme.surface);
+        views.setInt(R.id.widget_btn_sleep, "setBackgroundResource", theme.surfaceDrawableRes);
         views.setTextColor(R.id.widget_btn_sleep, theme.textPrimary);
-        views.setInt(R.id.widget_btn_breathe, "setBackgroundColor", theme.surface);
+        views.setInt(R.id.widget_btn_breathe, "setBackgroundResource", theme.surfaceDrawableRes);
         views.setTextColor(R.id.widget_btn_breathe, theme.textPrimary);
 
-        views.setInt(R.id.widget_btn_eyecare, "setBackgroundColor", eyeOn ? theme.accent : theme.surface);
+        views.setInt(R.id.widget_btn_eyecare, "setBackgroundResource",
+                eyeOn ? theme.accentDrawableRes : theme.surfaceDrawableRes);
         views.setTextColor(R.id.widget_btn_eyecare, eyeOn ? 0xFF0B1220 : theme.textSecondary);
         views.setTextViewText(R.id.widget_btn_eyecare, eyeOn ? "👁 护眼 开" : "👁 护眼 关");
 

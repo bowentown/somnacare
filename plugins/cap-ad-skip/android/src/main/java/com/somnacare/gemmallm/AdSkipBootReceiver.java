@@ -34,6 +34,16 @@ public class AdSkipBootReceiver extends BroadcastReceiver {
         }
     }
 
+    private static int resolveMoonSmallIcon(Context context, int fallbackRes) {
+        try {
+            int resId = context.getResources().getIdentifier(
+                    "ic_stat_moon", "drawable", context.getPackageName());
+            if (resId != 0) return resId;
+        } catch (Exception ignored) {
+        }
+        return fallbackRes;
+    }
+
     private static void postAdSkipReminder(Context context) {
         try {
             NotificationManager nm = (NotificationManager) context
@@ -56,7 +66,7 @@ public class AdSkipBootReceiver extends BroadcastReceiver {
             Notification.Builder b = Build.VERSION.SDK_INT >= 26
                     ? new Notification.Builder(context, channel)
                     : new Notification.Builder(context);
-            b.setSmallIcon(android.R.drawable.ic_dialog_info)
+            b.setSmallIcon(resolveMoonSmallIcon(context, android.R.drawable.ic_dialog_info))
                     .setContentTitle("广告跳过服务已被系统关闭")
                     .setContentText("点此打开极光睡眠，在偏好页重新开启")
                     .setContentIntent(pi)

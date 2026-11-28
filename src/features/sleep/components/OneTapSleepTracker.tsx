@@ -23,6 +23,7 @@ import {
 import { isNativePlatform } from '../utils/nativeAlarmScheduler';
 import { ThemeConfig } from '../../../shared/theme/themeStyles';
 import { useModalA11y } from '../../../shared/utils/modalA11y';
+import { confirmDialog } from '../../../shared/ui/ConfirmDialogHost';
 import { hapticConfirm, hapticNegate, hapticStep, tapTick } from '../../../shared/utils/haptics';
 import { getDayPhase } from '../../../shared/utils/dayPhase';
 
@@ -492,9 +493,15 @@ export const OneTapSleepTracker: React.FC<OneTapSleepTrackerProps> = React.memo(
     onSaveRecord(newRecord);
   };
 
-  const handleCancelSession = () => {
+  const handleCancelSession = async () => {
     // 进行中的整夜会话一键丢弃不可恢复——破坏性与删除记录同防护级
-    if (!window.confirm('取消本次夜间监测？已记录的时长不会保存。')) return;
+    const ok = await confirmDialog({
+      title: '取消夜间监测',
+      message: '取消本次夜间监测？已记录的时长不会保存。',
+      confirmText: '放弃记录',
+      danger: true,
+    });
+    if (!ok) return;
     localStorage.removeItem('somnacare_bedtime_start');
     setSleepStartTime(null);
   };

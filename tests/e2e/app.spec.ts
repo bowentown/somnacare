@@ -205,11 +205,19 @@ test('备份往返：导出 JSON → 导入恢复 → 记录无损', async ({ pa
   expect(backup.records.length).toBe(3);
   expect(backup.app).toBe('somnacare');
 
-  // 导入同一份文件（原生 confirm → 自动接受）。导入入口是包着 hidden
-  // file input 的 label——直接对 input 设文件，无需点击 label
-  page.once('dialog', (d) => d.accept());
+  // 导入同一份文件（夜间主题确认弹窗 → 覆盖导入 → 完成提示立即刷新）。
+  // 导入入口是包着 hidden file input 的 label——直接对 input 设文件，无需点击 label
   await page.setInputFiles('input[type="file"]', path);
-  await page.waitForTimeout(1200);
+  const confirmModal = page.getByRole('alertdialog', { name: '导入全量备份' });
+  await expect(confirmModal).toBeVisible({ timeout: 5000 });
+  await confirmModal.getByRole('button', { name: '覆盖导入' }).click();
+  const doneModal = page.getByRole('alertdialog', { name: '全量备份已恢复' });
+  await expect(doneModal).toBeVisible({ timeout: 5000 });
+  await Promise.all([
+    page.waitForEvent('load'),
+    doneModal.getByRole('button', { name: '立即刷新' }).click(),
+  ]);
+  await page.waitForTimeout(800);
 
   const after = await readStore(page, 'somnacare_sleep_records');
   expect((after as any[]).length).toBe(3);   // 往返无损
